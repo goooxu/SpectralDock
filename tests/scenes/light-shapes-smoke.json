@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "camera": {
+    "look_from": [3.0, 2.2, 5.0], "look_at": [0.0, 0.5, 0.0],
+    "up": [0.0, 1.0, 0.0], "vfov": 38.0,
+    "aperture": 0.0, "focus_distance": 5.0
+  },
+  "background": {
+    "type": "constant", "color": [0.005, 0.005, 0.008],
+    "exposure": 0.0
+  },
+  "render": {
+    "width": 64, "height": 64, "spp": 4,
+    "max_depth": 4, "seed": 7, "denoise": false
+  },
+  "textures": [],
+  "materials": [
+    {"name": "white", "type": "lambertian", "base_color": [0.72, 0.72, 0.72]},
+    {"name": "blue", "type": "lambertian", "base_color": [0.08, 0.18, 0.78]}
+  ],
+  "objects": [
+    {"name": "floor", "type": "rectangle", "p1": [-3.0, 0.0, 2.0],
+     "p2": [-3.0, 0.0, -3.0], "p3": [3.0, 0.0, -3.0], "material": "white"},
+    {"name": "ball", "type": "sphere", "center": [0.0, 0.75, 0.0],
+     "radius": 0.75, "material": "blue"}
+  ],
+  "lights": [
+    {"name": "sphere_key", "type": "sphere", "position": [-1.4, 2.6, 0.4],
+     "radius": 0.25, "emission": [22.0, 17.0, 12.0]},
+    {"name": "disk_fill", "type": "disk", "position": [1.7, 2.2, 0.3],
+     "normal": [-0.6, -0.8, -0.1], "radius": 0.45,
+     "emission": [5.0, 7.0, 12.0]}
+  ]
+}

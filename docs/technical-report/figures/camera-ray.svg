@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 560" role="img" aria-labelledby="title desc">
+  <title id="title">从像素到相机射线</title>
+  <desc id="desc">左侧显示相机坐标基、焦平面与像素内部样本；右侧比较针孔相机和薄透镜相机的射线路径。</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+      <path d="M0,0 L10,4 L0,8 Z" fill="#dbeafe"/>
+    </marker>
+    <marker id="cyanArrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+      <path d="M0,0 L10,4 L0,8 Z" fill="#22d3ee"/>
+    </marker>
+    <style>
+      .h { font: 700 22px system-ui, sans-serif; fill: #f8fafc; }
+      .t { font: 16px system-ui, sans-serif; fill: #dbeafe; }
+      .s { font: 14px system-ui, sans-serif; fill: #93c5fd; }
+      .axis { stroke-width: 3; marker-end: url(#arrow); }
+      .ray { stroke: #22d3ee; stroke-width: 3; fill: none; marker-end: url(#cyanArrow); }
+    </style>
+  </defs>
+  <rect width="1080" height="560" rx="18" fill="#07111f"/>
+  <rect x="24" y="24" width="520" height="512" rx="14" fill="#0f2035" stroke="#284565"/>
+  <rect x="560" y="24" width="496" height="512" rx="14" fill="#0f2035" stroke="#284565"/>
+
+  <text x="48" y="62" class="h">像素样本与相机坐标系</text>
+  <circle cx="142" cy="326" r="9" fill="#fbbf24"/>
+  <text x="78" y="354" class="t">相机 C</text>
+  <line x1="142" y1="326" x2="252" y2="326" class="axis" stroke="#fb7185"/>
+  <line x1="142" y1="326" x2="142" y2="210" class="axis" stroke="#4ade80"/>
+  <line x1="142" y1="326" x2="88" y2="390" class="axis" stroke="#a78bfa"/>
+  <text x="258" y="332" class="t">u（右）</text>
+  <text x="151" y="207" class="t">v（上）</text>
+  <text x="48" y="414" class="t">w（后）</text>
+  <line x1="142" y1="326" x2="205" y2="252" stroke="#fbbf24" stroke-width="2" stroke-dasharray="5 5" marker-end="url(#arrow)"/>
+  <text x="210" y="246" class="s">−w（前）</text>
+
+  <polygon points="346,142 488,188 488,422 346,468" fill="#153a5c" stroke="#60a5fa" stroke-width="2"/>
+  <text x="366" y="126" class="t">焦平面</text>
+  <rect x="405" y="280" width="34" height="34" fill="#1d4ed8" stroke="#bfdbfe" stroke-width="2" transform="rotate(9 422 297)"/>
+  <circle cx="424" cy="295" r="5" fill="#fbbf24"/>
+  <text x="355" y="350" class="s">像素内随机样本</text>
+  <line x1="142" y1="326" x2="424" y2="295" class="ray"/>
+  <text x="245" y="285" class="t">d</text>
+  <path d="M165 326 A26 26 0 0 0 163 317" fill="none" stroke="#fbbf24" stroke-width="2"/>
+  <text x="174" y="309" class="s">视场角决定张开程度</text>
+
+  <text x="584" y="62" class="h">针孔与薄透镜（侧视）</text>
+  <text x="584" y="104" class="t">针孔：所有射线共用一个起点</text>
+  <circle cx="674" cy="174" r="7" fill="#fbbf24"/>
+  <line x1="674" y1="174" x2="930" y2="126" class="ray"/>
+  <line x1="674" y1="174" x2="930" y2="174" class="ray"/>
+  <line x1="674" y1="174" x2="930" y2="222" class="ray"/>
+  <line x1="930" y1="105" x2="930" y2="242" stroke="#60a5fa" stroke-width="3"/>
+  <text x="938" y="178" class="s">虚拟像平面</text>
+
+  <line x1="584" y1="274" x2="1032" y2="274" stroke="#284565"/>
+  <text x="584" y="316" class="t">薄透镜：起点在光圈圆盘上变化，仍会聚于焦点</text>
+  <line x1="674" y1="344" x2="674" y2="464" stroke="#fbbf24" stroke-width="7" stroke-linecap="round"/>
+  <circle cx="674" cy="370" r="6" fill="#f8fafc"/>
+  <circle cx="674" cy="438" r="6" fill="#f8fafc"/>
+  <circle cx="908" cy="404" r="8" fill="#fb7185"/>
+  <line x1="674" y1="370" x2="908" y2="404" class="ray"/>
+  <line x1="674" y1="438" x2="908" y2="404" class="ray"/>
+  <line x1="908" y1="334" x2="908" y2="476" stroke="#60a5fa" stroke-width="3"/>
+  <text x="922" y="398" class="s">焦平面</text>
+  <text x="594" y="490" class="s">光圈直径 aperture</text>
+  <path d="M650 464 L650 344" stroke="#93c5fd" stroke-width="1.5"/>
+  <path d="M642 464 L658 464 M642 344 L658 344" stroke="#93c5fd" stroke-width="1.5"/>
+</svg>

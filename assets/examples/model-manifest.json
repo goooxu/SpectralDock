@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "name": "capsule-mascot",
+  "asset": "models/capsule-mascot.obj",
+  "description": "Original modular low-poly capsule robot mascot with visor, eyes, asymmetric antenna, gloves, boots, and belt flange.",
+  "generator": "spectraldock-mascot-generator/1.0",
+  "license": "CC0-1.0",
+  "license_file": "models/CC0-1.0.txt",
+  "source_archives_in_distribution": false,
+  "coordinate_system": {
+    "up": "+Y",
+    "front": "+Z",
+    "ground_y": 0.0,
+    "units": "scene units"
+  },
+  "vertices": 2936,
+  "triangles": 5816,
+  "components": [
+    "mascot_torso",
+    "mascot_visor",
+    "mascot_eye_left",
+    "mascot_eye_right",
+    "mascot_belt_flange",
+    "mascot_arm_left",
+    "mascot_glove_left",
+    "mascot_arm_right",
+    "mascot_glove_right",
+    "mascot_leg_left",
+    "mascot_boot_left",
+    "mascot_leg_right",
+    "mascot_boot_right",
+    "mascot_antenna_stem",
+    "mascot_antenna_tip"
+  ],
+  "bounds": {
+    "min": [
+      -0.7,
+      0.0,
+      -0.5
+    ],
+    "max": [
+      0.7,
+      2.0,
+      0.5
+    ]
+  },
+  "obj_sha256": "7ede1bead96ecbd2d495e8d6e44a6b0a01a8c5a97456fd54887808d8e132322e",
+  "obj_bytes": 180514
+}

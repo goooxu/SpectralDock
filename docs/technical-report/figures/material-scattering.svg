@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1160 590" role="img" aria-labelledby="title desc">
+  <title id="title">四种表面散射形状</title>
+  <desc id="desc">四个面板依次展示 Lambert 宽散射、低粗糙度 GGX、高粗糙度 GGX，以及介电质的离散反射和折射。</desc>
+  <defs>
+    <marker id="arr" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><path d="M0 0L9 3.5L0 7Z" fill="#22d3ee"/></marker>
+    <marker id="in" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><path d="M0 0L9 3.5L0 7Z" fill="#fbbf24"/></marker>
+    <style>.h{font:700 20px system-ui,sans-serif;fill:#f8fafc}.t{font:15px system-ui,sans-serif;fill:#dbeafe}.s{font:13px system-ui,sans-serif;fill:#93c5fd}.base{stroke:#94a3b8;stroke-width:5}.out{stroke:#22d3ee;stroke-width:2.5;marker-end:url(#arr)}.incoming{stroke:#fbbf24;stroke-width:3;marker-end:url(#in)}</style>
+  </defs>
+  <rect width="1160" height="590" rx="18" fill="#07111f"/>
+  <text x="32" y="42" class="h">同一束入射光，在不同材质上产生不同方向分布</text>
+
+  <g transform="translate(24 66)">
+    <rect width="268" height="492" rx="14" fill="#102238" stroke="#284565"/>
+    <text x="20" y="38" class="h">Lambert 漫反射</text>
+    <line x1="24" y1="342" x2="244" y2="342" class="base"/>
+    <line x1="54" y1="108" x2="132" y2="342" class="incoming"/>
+    <path d="M24 342 A110 110 0 0 1 244 342 L134 342 Z" fill="#1d4ed8" fill-opacity=".38" stroke="#60a5fa" stroke-width="2"/>
+    <line x1="134" y1="342" x2="78" y2="224" class="out"/>
+    <line x1="134" y1="342" x2="134" y2="182" class="out"/>
+    <line x1="134" y1="342" x2="205" y2="238" class="out"/>
+    <text x="32" y="390" class="t">观察方向上均匀</text>
+    <text x="32" y="418" class="s">采样方向按 cosθ 加权</text>
+    <text x="32" y="448" class="s">BRDF = ρ / π</text>
+  </g>
+
+  <g transform="translate(306 66)">
+    <rect width="268" height="492" rx="14" fill="#102238" stroke="#284565"/>
+    <text x="20" y="38" class="h">低粗糙度 GGX</text>
+    <line x1="24" y1="342" x2="244" y2="342" class="base"/>
+    <line x1="54" y1="108" x2="132" y2="342" class="incoming"/>
+    <path d="M132 342 C145 246 166 142 191 118 C207 166 205 257 188 342Z" fill="#0891b2" fill-opacity=".46" stroke="#22d3ee" stroke-width="2"/>
+    <line x1="132" y1="342" x2="188" y2="142" class="out"/>
+    <line x1="132" y1="342" x2="174" y2="162" class="out"/>
+    <line x1="132" y1="342" x2="202" y2="176" class="out"/>
+    <text x="32" y="390" class="t">微法线集中</text>
+    <text x="32" y="418" class="s">高光窄而强</text>
+    <text x="32" y="448" class="s">roughness 较小</text>
+  </g>
+
+  <g transform="translate(588 66)">
+    <rect width="268" height="492" rx="14" fill="#102238" stroke="#284565"/>
+    <text x="20" y="38" class="h">高粗糙度 GGX</text>
+    <line x1="24" y1="342" x2="244" y2="342" class="base"/>
+    <line x1="54" y1="108" x2="132" y2="342" class="incoming"/>
+    <path d="M68 342 Q130 158 219 342Z" fill="#0891b2" fill-opacity=".42" stroke="#22d3ee" stroke-width="2"/>
+    <line x1="132" y1="342" x2="90" y2="245" class="out"/>
+    <line x1="132" y1="342" x2="145" y2="204" class="out"/>
+    <line x1="132" y1="342" x2="204" y2="252" class="out"/>
+    <text x="32" y="390" class="t">微法线更分散</text>
+    <text x="32" y="418" class="s">高光宽而柔</text>
+    <text x="32" y="448" class="s">仍是纯镜面微表面瓣</text>
+  </g>
+
+  <g transform="translate(870 66)">
+    <rect width="266" height="492" rx="14" fill="#102238" stroke="#284565"/>
+    <text x="20" y="38" class="h">光滑介电质</text>
+    <line x1="22" y1="270" x2="244" y2="270" class="base"/>
+    <rect x="22" y="270" width="222" height="72" fill="#1d4ed8" fill-opacity=".18"/>
+    <line x1="54" y1="82" x2="132" y2="270" class="incoming"/>
+    <line x1="132" y1="270" x2="202" y2="102" class="out"/>
+    <line x1="132" y1="270" x2="166" y2="424" class="out"/>
+    <line x1="132" y1="270" x2="132" y2="150" stroke="#e2e8f0" stroke-width="2" stroke-dasharray="5 5"/>
+    <text x="178" y="92" class="s">反射</text>
+    <text x="174" y="440" class="s">折射</text>
+    <text x="32" y="390" class="t">只有两个离散候选方向</text>
+    <text x="32" y="418" class="s">Fresnel 概率选择</text>
+    <text x="32" y="448" class="s">全反射时仅有反射</text>
+  </g>
+</svg>

@@ -1,0 +1,43 @@
+{
+  "scene": "scenes/celestial-archive.json",
+  "output": "docs/gallery/celestial-archive.png",
+  "hardware": {
+    "gpu": "NVIDIA GeForce RTX 5090",
+    "compute_capability": "12.0"
+  },
+  "versions": {
+    "driver": "610.47.04",
+    "cuda_driver_api": 13030,
+    "cuda_runtime": 13030,
+    "optix": 90100
+  },
+  "render": {
+    "width": 1920,
+    "height": 1080,
+    "spp": 512,
+    "max_depth": 12,
+    "seed": 303,
+    "denoised": true
+  },
+  "timings_ms": {
+    "bvh_build": 2.6786880493164063,
+    "render": 606.9308471679688,
+    "denoise": 14.530176162719727,
+    "total": 1345.68231
+  },
+  "memory": {
+    "peak_device_bytes": 1388642304,
+    "peak_tracked_device_bytes": 519831092
+  },
+  "geometry": {
+    "objects": 9,
+    "instances": 9,
+    "unique_meshes": 1,
+    "mesh_triangles": 5816,
+    "gas_count": 9
+  },
+  "performance": {
+    "traced_rays": 3143769772,
+    "rays_per_second": 5179782485.384135
+  }
+}

@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 650" role="img" aria-labelledby="title desc">
+  <title id="title">直接光采样、BSDF 采样与 MIS</title>
+  <desc id="desc">上方两个面板展示从表面主动连接灯光和按 BSDF 方向命中灯光；下方曲线展示两个方向概率密度及 MIS 权重。</desc>
+  <defs>
+    <marker id="cyan" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><path d="M0 0L9 3.5L0 7Z" fill="#22d3ee"/></marker>
+    <marker id="yellow" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><path d="M0 0L9 3.5L0 7Z" fill="#fbbf24"/></marker>
+    <style>.h{font:700 21px system-ui,sans-serif;fill:#f8fafc}.t{font:16px system-ui,sans-serif;fill:#dbeafe}.s{font:14px system-ui,sans-serif;fill:#93c5fd}.surf{stroke:#94a3b8;stroke-width:5;fill:none}</style>
+  </defs>
+  <rect width="1120" height="650" rx="18" fill="#07111f"/>
+  <rect x="24" y="24" width="526" height="330" rx="14" fill="#102238" stroke="#284565"/>
+  <rect x="570" y="24" width="526" height="330" rx="14" fill="#102238" stroke="#284565"/>
+  <text x="48" y="62" class="h">策略 L：在灯面取点（NEE）</text>
+  <path d="M72 286 Q260 214 480 286" class="surf"/>
+  <circle cx="260" cy="250" r="9" fill="#fb7185"/>
+  <rect x="394" y="92" width="98" height="20" rx="7" fill="#fbbf24"/>
+  <circle cx="438" cy="102" r="6" fill="#fff7cc"/>
+  <line x1="260" y1="250" x2="438" y2="102" stroke="#fbbf24" stroke-width="3" marker-end="url(#yellow)"/>
+  <line x1="260" y1="250" x2="124" y2="128" stroke="#22d3ee" stroke-width="3" marker-end="url(#cyan)"/>
+  <text x="410" y="80" class="t">选中的灯面点 y</text>
+  <text x="280" y="160" class="s">阴影射线测试 V</text>
+  <text x="82" y="116" class="t">上一顶点</text>
+  <text x="76" y="318" class="s">方向概率由灯面积与几何换元得到 pL</text>
+
+  <text x="594" y="62" class="h">策略 B：按 BSDF 选方向</text>
+  <path d="M618 286 Q806 214 1026 286" class="surf"/>
+  <circle cx="806" cy="250" r="9" fill="#fb7185"/>
+  <rect x="940" y="92" width="98" height="20" rx="7" fill="#fbbf24"/>
+  <line x1="806" y1="250" x2="984" y2="102" stroke="#22d3ee" stroke-width="3" marker-end="url(#cyan)"/>
+  <line x1="806" y1="250" x2="670" y2="128" stroke="#22d3ee" stroke-width="3" marker-end="url(#cyan)"/>
+  <text x="886" y="160" class="s">随机方向恰好命中灯</text>
+  <text x="626" y="116" class="t">上一顶点</text>
+  <text x="622" y="318" class="s">方向概率由材质散射瓣得到 pB</text>
+
+  <rect x="24" y="374" width="1072" height="252" rx="14" fill="#102238" stroke="#284565"/>
+  <text x="48" y="412" class="h">同一方向测度上的 PDF 与 power heuristic</text>
+  <line x1="88" y1="574" x2="666" y2="574" stroke="#94a3b8" stroke-width="2"/>
+  <line x1="88" y1="574" x2="88" y2="446" stroke="#94a3b8" stroke-width="2"/>
+  <path d="M88 568 C228 558 276 536 354 492 C414 458 474 470 666 566" fill="none" stroke="#22d3ee" stroke-width="4"/>
+  <path d="M88 572 C396 570 488 554 526 454 C558 554 594 570 666 572" fill="none" stroke="#fbbf24" stroke-width="4"/>
+  <text x="284" y="480" style="font:16px system-ui,sans-serif;fill:#22d3ee">pB：材质瓣</text>
+  <text x="542" y="464" style="font:16px system-ui,sans-serif;fill:#fbbf24">pL：灯方向</text>
+  <text x="374" y="602" class="s">方向 ω</text>
+  <rect x="720" y="438" width="330" height="148" rx="12" fill="#0b1728" stroke="#284565"/>
+  <text x="748" y="476" class="t">wL = pL² / (pL² + pB²)</text>
+  <text x="748" y="516" class="t">wB = pB² / (pB² + pL²)</text>
+  <text x="748" y="550" class="s">同一对 PDF 时：wL + wB = 1</text>
+  <text x="748" y="574" class="s">RR 生存率不进入 MIS PDF</text>
+</svg>

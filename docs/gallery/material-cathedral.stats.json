@@ -1,0 +1,43 @@
+{
+  "scene": "scenes/material-cathedral.json",
+  "output": "docs/gallery/material-cathedral.png",
+  "hardware": {
+    "gpu": "NVIDIA GeForce RTX 5090",
+    "compute_capability": "12.0"
+  },
+  "versions": {
+    "driver": "610.47.04",
+    "cuda_driver_api": 13030,
+    "cuda_runtime": 13030,
+    "optix": 90100
+  },
+  "render": {
+    "width": 1920,
+    "height": 1080,
+    "spp": 512,
+    "max_depth": 12,
+    "seed": 101,
+    "denoised": true
+  },
+  "timings_ms": {
+    "bvh_build": 3.0536320209503174,
+    "render": 1096.2254638671875,
+    "denoise": 15.482720375061035,
+    "total": 1877.055812
+  },
+  "memory": {
+    "peak_device_bytes": 1371865088,
+    "peak_tracked_device_bytes": 507250148
+  },
+  "geometry": {
+    "objects": 15,
+    "instances": 15,
+    "unique_meshes": 1,
+    "mesh_triangles": 5816,
+    "gas_count": 13
+  },
+  "performance": {
+    "traced_rays": 5830761817,
+    "rays_per_second": 5318943966.536451
+  }
+}

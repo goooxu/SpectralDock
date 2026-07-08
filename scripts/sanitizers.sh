@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+source "$(dirname "$0")/common.sh"
+SCENE="${1:-tests/scenes/mesh-composite-smoke.json}"
+OUT="${2:-output/sanitizer-mesh-composite.png}"
+
+require_file "${ROOT}/build/Debug/spectraldock"
+require_file "${ROOT}/${SCENE}"
+mkdir -p "${ROOT}/$(dirname "${OUT}")"
+
+COMMON=(
+  build/Debug/spectraldock
+  --scene "${SCENE}" --output "${OUT}"
+  --width 64 --height 64 --spp 1 --max-depth 6 --seed 1
+  --no-denoise
+)
+for tool in memcheck initcheck racecheck; do
+  echo "== compute-sanitizer ${tool} =="
+  gpu_container compute-sanitizer --tool "${tool}" --error-exitcode 99 "${COMMON[@]}"
+done
+
+gpu_container python3 tests/check_mesh_smoke.py \
+  "${SCENE}" tests/assets/uv-quad.obj "${OUT}" \
+  "${OUT%.png}.stats.json" \
+  tests/golden/mesh-composite-smoke-64x64-spp1-depth6-seed1.sha256
+copy_back output

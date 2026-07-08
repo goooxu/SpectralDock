@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 700" role="img" aria-labelledby="title desc">
+  <title id="title">SpectralDock OptiX 管线的数据与程序关系</title>
+  <desc id="desc">图中从场景数据、GAS IAS 和 SBT 到 raygen、radiance shadow trace，最后输出浮点图像。</desc>
+  <defs>
+    <marker id="arr" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0 0L10 4L0 8Z" fill="#93c5fd"/></marker>
+    <marker id="cyan" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0 0L10 4L0 8Z" fill="#22d3ee"/></marker>
+    <style>.h{font:700 21px system-ui,sans-serif;fill:#f8fafc}.t{font:16px system-ui,sans-serif;fill:#dbeafe}.s{font:14px system-ui,sans-serif;fill:#93c5fd}.b{fill:#102b46;stroke:#60a5fa;stroke-width:2}.g{fill:#134e4a;stroke:#2dd4bf;stroke-width:2}.p{fill:#3b1d62;stroke:#c084fc;stroke-width:2}.line{stroke:#93c5fd;stroke-width:2.5;fill:none;marker-end:url(#arr)}</style>
+  </defs>
+  <rect width="1180" height="700" rx="18" fill="#07111f"/>
+  <text x="34" y="44" class="h">主机准备的数据</text>
+  <rect x="30" y="66" width="216" height="72" rx="12" class="b"/><text x="58" y="96" class="t">材质 / 纹理 / 灯</text><text x="68" y="122" class="s">全局数组</text>
+  <rect x="30" y="164" width="216" height="72" rx="12" class="b"/><text x="84" y="194" class="t">LaunchParams</text><text x="55" y="220" class="s">相机、缓冲区、IAS handle</text>
+  <rect x="30" y="262" width="216" height="72" rx="12" class="b"/><text x="92" y="292" class="t">SBT records</text><text x="53" y="318" class="s">每对象 × 每射线类型</text>
+
+  <text x="334" y="44" class="h">两级加速结构</text>
+  <rect x="328" y="66" width="206" height="64" rx="12" class="g"/><text x="404" y="104" class="t">IAS</text>
+  <rect x="290" y="176" width="142" height="66" rx="12" class="g"/><text x="318" y="205" class="t">mesh GAS</text><text x="306" y="228" class="s">可被多实例共享</text>
+  <rect x="454" y="176" width="142" height="66" rx="12" class="g"/><text x="474" y="205" class="t">primitive GAS</text><text x="478" y="228" class="s">每对象一份</text>
+  <line x1="401" y1="130" x2="360" y2="176" class="line"/><line x1="465" y1="130" x2="524" y2="176" class="line"/>
+
+  <text x="674" y="44" class="h">GPU 路径循环</text>
+  <rect x="654" y="66" width="482" height="482" rx="16" fill="#111c33" stroke="#475569" stroke-width="2"/>
+  <rect x="788" y="92" width="214" height="62" rx="12" class="p"/><text x="818" y="130" class="t">__raygen__pathtrace</text>
+  <rect x="708" y="208" width="170" height="66" rx="12" class="p"/><text x="732" y="236" class="t">radiance trace</text><text x="730" y="259" class="s">最近 SurfaceHit</text>
+  <rect x="912" y="208" width="170" height="66" rx="12" class="p"/><text x="928" y="236" class="t">条件性 shadow trace</text><text x="950" y="259" class="s">0/1 可见性</text>
+  <rect x="708" y="334" width="374" height="78" rx="12" class="p"/><text x="748" y="365" class="t">发光 / 直接光 / BSDF / MIS / RR</text><text x="786" y="392" class="s">更新 radiance、throughput、PDF</text>
+  <rect x="788" y="466" width="214" height="54" rx="12" class="p"/><text x="830" y="499" class="t">下一 bounce</text>
+  <line x1="895" y1="154" x2="793" y2="208" class="line"/>
+  <line x1="793" y1="274" x2="824" y2="334" class="line"/><line x1="997" y1="274" x2="966" y2="334" class="line"/>
+  <path d="M1040 334 C1110 320 1110 286 1068 266" class="line"/>
+  <line x1="895" y1="412" x2="895" y2="466" class="line"/>
+  <path d="M788 492 C650 492 650 124 788 124" stroke="#22d3ee" stroke-width="3" fill="none" marker-end="url(#cyan)"/>
+  <text x="665" y="450" class="s">迭代循环</text>
+
+  <line x1="246" y1="200" x2="654" y2="200" class="line"/>
+  <line x1="246" y1="298" x2="654" y2="298" class="line"/>
+  <line x1="534" y1="98" x2="654" y2="98" class="line"/>
+  <line x1="246" y1="102" x2="654" y2="150" class="line"/>
+
+  <rect x="370" y="602" width="440" height="64" rx="12" fill="#164e63" stroke="#22d3ee" stroke-width="2"/>
+  <text x="425" y="630" class="t">线性 HDR：beauty + 首命中 albedo/normal</text>
+  <text x="489" y="653" class="s">每像素 spp 平均后写出</text>
+  <line x1="895" y1="548" x2="762" y2="602" class="line"/>
+  <text x="650" y="686" class="s">pipeline maxTraceDepth = 1；多次反弹由 raygen 循环完成</text>
+</svg>

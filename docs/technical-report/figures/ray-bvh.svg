@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 620" role="img" aria-labelledby="title desc">
+  <title id="title">BVH 射线遍历和 OptiX 两级加速结构</title>
+  <desc id="desc">左边一条射线只进入相交的包围盒并找到最近表面；右边从 IAS 实例节点连接到共享或独立的 GAS。</desc>
+  <defs>
+    <marker id="arr" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0 0L10 4L0 8Z" fill="#22d3ee"/></marker>
+    <marker id="linearr" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><path d="M0 0L9 3.5L0 7Z" fill="#94a3b8"/></marker>
+    <style>.h{font:700 21px system-ui,sans-serif;fill:#f8fafc}.t{font:16px system-ui,sans-serif;fill:#dbeafe}.s{font:14px system-ui,sans-serif;fill:#93c5fd}.box{fill:none;stroke-width:2.5}.node{fill:#15314f;stroke:#60a5fa;stroke-width:2}</style>
+  </defs>
+  <rect width="1120" height="620" rx="18" fill="#07111f"/>
+  <rect x="24" y="24" width="520" height="572" rx="14" fill="#102238" stroke="#284565"/>
+  <rect x="560" y="24" width="536" height="572" rx="14" fill="#102238" stroke="#284565"/>
+  <text x="48" y="62" class="h">BVH：先测盒子，再测表面</text>
+  <rect x="104" y="114" width="356" height="356" class="box" stroke="#64748b"/>
+  <rect x="132" y="148" width="132" height="142" class="box" stroke="#a78bfa"/>
+  <rect x="298" y="174" width="126" height="238" class="box" stroke="#4ade80"/>
+  <circle cx="192" cy="222" r="42" fill="#7c3aed" fill-opacity=".45" stroke="#c4b5fd" stroke-width="2"/>
+  <polygon points="328,365 370,202 405,362" fill="#16a34a" fill-opacity=".48" stroke="#86efac" stroke-width="2"/>
+  <line x1="56" y1="430" x2="474" y2="188" stroke="#22d3ee" stroke-width="4" marker-end="url(#arr)"/>
+  <circle cx="356" cy="256" r="8" fill="#fbbf24"/>
+  <text x="365" y="246" class="t">最近命中</text>
+  <text x="82" y="510" class="s">射线错过紫色子盒 → 无需测试其中的球</text>
+  <text x="82" y="542" class="s">进入绿色子盒 → 再测试内部三角形</text>
+
+  <text x="584" y="62" class="h">SpectralDock：IAS → GAS → primitive</text>
+  <rect x="742" y="92" width="174" height="58" rx="10" class="node"/>
+  <text x="808" y="128" class="t">IAS</text>
+  <rect x="598" y="202" width="132" height="58" rx="10" class="node"/>
+  <rect x="762" y="202" width="132" height="58" rx="10" class="node"/>
+  <rect x="926" y="202" width="132" height="58" rx="10" class="node"/>
+  <text x="618" y="238" class="t">实例 0</text><text x="782" y="238" class="t">实例 1</text><text x="946" y="238" class="t">实例 2</text>
+  <line x1="792" y1="150" x2="664" y2="202" stroke="#94a3b8" stroke-width="2" marker-end="url(#linearr)"/>
+  <line x1="829" y1="150" x2="828" y2="202" stroke="#94a3b8" stroke-width="2" marker-end="url(#linearr)"/>
+  <line x1="866" y1="150" x2="992" y2="202" stroke="#94a3b8" stroke-width="2" marker-end="url(#linearr)"/>
+  <rect x="638" y="334" width="198" height="64" rx="10" fill="#164e63" stroke="#22d3ee" stroke-width="2"/>
+  <rect x="886" y="334" width="172" height="64" rx="10" fill="#14532d" stroke="#4ade80" stroke-width="2"/>
+  <text x="662" y="362" class="t">共享 mesh GAS</text>
+  <text x="674" y="386" class="s">一份三角形数据</text>
+  <text x="910" y="362" class="t">primitive GAS</text>
+  <text x="917" y="386" class="s">每对象一份</text>
+  <line x1="664" y1="260" x2="704" y2="334" stroke="#22d3ee" stroke-width="2" marker-end="url(#arr)"/>
+  <line x1="828" y1="260" x2="770" y2="334" stroke="#22d3ee" stroke-width="2" marker-end="url(#arr)"/>
+  <line x1="992" y1="260" x2="972" y2="334" stroke="#22d3ee" stroke-width="2" marker-end="url(#arr)"/>
+  <polygon points="676,486 718,432 746,494" fill="#0e7490" stroke="#67e8f9" stroke-width="2"/>
+  <polygon points="760,490 798,438 818,496" fill="#0e7490" stroke="#67e8f9" stroke-width="2"/>
+  <circle cx="968" cy="470" r="44" fill="#15803d" fill-opacity=".6" stroke="#86efac" stroke-width="2"/>
+  <text x="608" y="558" class="s">实例 0/1 可有不同 transform、材质和 SBT offset，底层 mesh GAS 仍共享</text>
+</svg>

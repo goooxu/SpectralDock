@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 580" role="img" aria-labelledby="title desc">
+  <title id="title">渲染方程的方向半球与递归光路</title>
+  <desc id="desc">左侧展示表面点、法线、入射与出射方向；右侧展示相机经过两个表面到达光源的递归光路。</desc>
+  <defs>
+    <marker id="aC" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0 0L10 4L0 8Z" fill="#22d3ee"/></marker>
+    <marker id="aY" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0 0L10 4L0 8Z" fill="#fbbf24"/></marker>
+    <marker id="aW" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0 0L10 4L0 8Z" fill="#e2e8f0"/></marker>
+    <style>
+      .h{font:700 22px system-ui,sans-serif;fill:#f8fafc}.t{font:16px system-ui,sans-serif;fill:#dbeafe}.s{font:14px system-ui,sans-serif;fill:#93c5fd}
+      .surface{stroke:#94a3b8;stroke-width:5;fill:none}.wi{stroke:#fbbf24;stroke-width:3;marker-end:url(#aY)}.wo{stroke:#22d3ee;stroke-width:3;marker-end:url(#aC)}
+    </style>
+  </defs>
+  <rect width="1100" height="580" rx="18" fill="#07111f"/>
+  <rect x="24" y="24" width="526" height="532" rx="14" fill="#102238" stroke="#284565"/>
+  <rect x="566" y="24" width="510" height="532" rx="14" fill="#102238" stroke="#284565"/>
+  <text x="48" y="64" class="h">一个表面点上的方向积分</text>
+  <line x1="72" y1="430" x2="506" y2="430" class="surface"/>
+  <circle cx="286" cy="430" r="8" fill="#fb7185"/>
+  <text x="272" y="458" class="t">x</text>
+  <path d="M114 430 A172 172 0 0 1 458 430" fill="#143657" stroke="#60a5fa" stroke-width="2" stroke-dasharray="7 7"/>
+  <text x="202" y="214" class="t">反射特例：H²(n)</text>
+  <line x1="286" y1="430" x2="286" y2="238" stroke="#e2e8f0" stroke-width="3" marker-end="url(#aW)"/>
+  <text x="300" y="252" class="t">n</text>
+  <line x1="286" y1="430" x2="164" y2="292" class="wi"/>
+  <text x="142" y="278" class="t">ωᵢ</text>
+  <line x1="286" y1="430" x2="430" y2="276" class="wo"/>
+  <text x="432" y="270" class="t">ωₒ</text>
+  <path d="M286 386 A44 44 0 0 0 257 397" fill="none" stroke="#fbbf24" stroke-width="2"/>
+  <text x="244" y="378" class="s">θ</text>
+  <text x="174" y="402" class="s">n · ωᵢ = cos θ</text>
+  <text x="72" y="500" class="s">把半球上所有微小方向 dω 的贡献相加</text>
+
+  <text x="590" y="64" class="h">入射光来自下一表面的出射光</text>
+  <circle cx="626" cy="198" r="26" fill="#1d4ed8" stroke="#93c5fd" stroke-width="2"/>
+  <circle cx="1020" cy="166" r="30" fill="#fbbf24"/>
+  <text x="596" y="154" class="t">相机</text>
+  <text x="976" y="118" class="t">面积光</text>
+  <text x="664" y="94" class="s">青线：相机端查询方向（光能传播方向相反）</text>
+  <path d="M652 205 L776 371 L916 291 L990 178" fill="none" stroke="#22d3ee" stroke-width="4" marker-end="url(#aC)"/>
+  <circle cx="776" cy="371" r="10" fill="#fb7185"/>
+  <circle cx="916" cy="291" r="10" fill="#fb7185"/>
+  <path d="M702 394 Q776 348 850 394" class="surface"/>
+  <path d="M856 314 Q920 272 978 306" class="surface"/>
+  <text x="690" y="438" class="t">表面 A 的 Lₒ</text>
+  <text x="872" y="354" class="t">表面 B 的 Lₒ</text>
+  <text x="666" y="276" class="s">相机查询 A</text>
+  <text x="786" y="330" class="s">A 的 Lᵢ 来自 B</text>
+  <text x="910" y="236" class="s">B 的 Lᵢ 来自灯</text>
+  <rect x="606" y="478" width="426" height="48" rx="10" fill="#0b1728" stroke="#284565"/>
+  <text x="624" y="509" class="t">Lₒ = Lₑ + ∫ BSDF · Lᵢ · |cosθ| dω</text>
+</svg>

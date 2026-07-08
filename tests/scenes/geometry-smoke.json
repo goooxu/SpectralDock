@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "camera": {
+    "look_from": [3.0, 3.0, 7.0], "look_at": [0.5, 0.4, 0.0],
+    "up": [0.0, 1.0, 0.0], "vfov": 28.0,
+    "aperture": 0.0, "focus_distance": 7.5
+  },
+  "background": {"type": "constant", "color": [0.01, 0.01, 0.015], "exposure": 0.0},
+  "render": {"width": 64, "height": 64, "spp": 4, "max_depth": 8, "seed": 19, "denoise": false},
+  "textures": [
+    {"name": "opaque_mask", "type": "constant", "color": [1.0, 1.0, 1.0]}
+  ],
+  "materials": [
+    {"name": "gray", "type": "lambertian", "base_color": [0.68, 0.68, 0.68]},
+    {"name": "red", "type": "lambertian", "base_color": [0.75, 0.05, 0.04]},
+    {"name": "metal", "type": "metal", "base_color": [0.9, 0.9, 0.9], "roughness": 0.08},
+    {"name": "glass", "type": "dielectric", "base_color": [0.98, 0.99, 1.0], "ior": 1.5}
+  ],
+  "objects": [
+    {"name": "ground", "type": "rectangle", "p1": [-2.0,0.0,2.0], "p2": [-2.0,0.0,-3.0], "p3": [2.5,0.0,-3.0], "material": "gray"},
+    {"name": "alpha_panel", "type": "sketch", "p1": [-1.2,0.05,0.8], "p2": [-1.2,1.35,0.8], "p3": [-0.4,1.35,0.8], "material": "red", "alpha_texture": "opaque_mask"},
+    {"name": "glass_ball", "type": "sphere", "center": [-0.6,0.55,-0.2], "radius": 0.55, "material": "glass"},
+    {"name": "short_cylinder", "type": "cylinder", "base": [0.7,0.0,0.5], "axis": [0,1,0], "height": 0.7, "radius": 0.35, "material": "gray"},
+    {"name": "cylinder_cap", "type": "disk", "center": [0.7,0.7,0.5], "normal": [0,1,0], "radius": 0.35, "material": "gray"},
+    {"name": "parabolic_mirror", "type": "parabola", "origin": [1.0,0.0,-2.0], "normal": [0,1,0], "focus": [1.0,0.0,-1.75], "clip": {"min": [-1.0,0.0,-2.0], "max": [1.5,1.3,2.0]}, "front_material": null, "back_material": "metal"}
+  ],
+  "lights": [
+    {"name": "sphere_key", "type": "sphere", "position": [-0.8,2.5,0.2], "radius": 0.18, "emission": [18.0,15.0,10.0]},
+    {"name": "disk_fill", "type": "disk", "position": [1.8,2.2,1.0], "normal": [-0.5,-0.8,-0.2], "radius": 0.35, "emission": [4.0,6.0,10.0]}
+  ]
+}

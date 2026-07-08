@@ -1,0 +1,45 @@
+{
+  "schema_version": 2,
+  "camera": {
+    "look_from": [0.0, 3.1, 10.8],
+    "look_at": [0.0, 2.0, -2.3],
+    "up": [0.0, 1.0, 0.0],
+    "vfov": 39.0,
+    "aperture": 0.11,
+    "focus_distance": 13.2
+  },
+  "background": {"type": "constant", "color": [0.001, 0.002, 0.006], "exposure": -0.25},
+  "render": {"width": 1920, "height": 1080, "spp": 512, "max_depth": 12, "seed": 202, "denoise": true},
+  "textures": [
+    {"name": "circuit", "type": "image", "path": "../assets/examples/textures/circuit-panel.png", "color_space": "srgb"},
+    {"name": "koi", "type": "image", "path": "../assets/examples/textures/koi-mask.png", "color_space": "srgb"}
+  ],
+  "materials": [
+    {"name": "circuit_wall", "type": "lambertian", "texture": "circuit", "base_color": [1.0, 1.0, 1.0]},
+    {"name": "wet_floor", "type": "metal", "base_color": [0.08, 0.11, 0.14], "roughness": 0.12},
+    {"name": "dark_wall", "type": "lambertian", "base_color": [0.015, 0.02, 0.03]},
+    {"name": "koi_glow", "type": "emitter", "texture": "koi", "emission": [3.8, 1.2, 0.38]},
+    {"name": "cyan_glow", "type": "emitter", "emission": [0.4, 8.0, 12.0]},
+    {"name": "magenta_glow", "type": "emitter", "emission": [11.0, 0.35, 6.8]}
+  ],
+  "meshes": [
+    {"name": "mascot", "path": "../assets/examples/models/capsule-mascot.obj"}
+  ],
+  "objects": [
+    {"name": "floor", "type": "rectangle", "p1": [-7.0, 0.0, 6.0], "p2": [-7.0, 0.0, -6.0], "p3": [7.0, 0.0, -6.0], "material": "wet_floor"},
+    {"name": "circuit_backdrop", "type": "rectangle", "p1": [-7.0, 0.0, -4.0], "p2": [-7.0, 5.5, -4.0], "p3": [7.0, 5.5, -4.0], "material": "circuit_wall"},
+    {"name": "left_wall", "type": "rectangle", "p1": [-7.0, 0.0, 6.0], "p2": [-7.0, 5.5, 6.0], "p3": [-7.0, 5.5, -4.0], "material": "dark_wall"},
+    {"name": "right_wall", "type": "rectangle", "p1": [7.0, 0.0, -4.0], "p2": [7.0, 5.5, -4.0], "p3": [7.0, 5.5, 6.0], "material": "dark_wall"},
+    {"name": "koi_left", "type": "sketch", "p1": [-4.0, 0.45, -3.82], "p2": [-4.0, 4.65, -3.82], "p3": [-1.2, 4.65, -3.82], "material": "koi_glow", "alpha_texture": "koi", "alpha_cutoff": 0.04},
+    {"name": "koi_right", "type": "sketch", "p1": [0.9, 0.7, -3.78], "p2": [0.9, 4.9, -3.78], "p3": [3.7, 4.9, -3.78], "material": "koi_glow", "alpha_texture": "koi", "alpha_cutoff": 0.04},
+    {"name": "cyan_strip", "type": "rectangle", "p1": [-6.9, 0.7, -2.5], "p2": [-6.9, 4.6, -2.5], "p3": [-6.9, 4.6, -1.9], "front_material": "cyan_glow"},
+    {"name": "magenta_strip", "type": "rectangle", "p1": [6.9, 0.7, -1.0], "p2": [6.9, 4.6, -1.0], "p3": [6.9, 4.6, -1.6], "front_material": "magenta_glow"},
+    {"name": "metal_mascot", "type": "mesh", "mesh": "mascot", "transform": {"translate": [0.1, 0.0, 0.4], "rotate_degrees": [0.0, 0.0, 0.0], "scale": [1.0, 1.0, 1.0]}, "material": "wet_floor"}
+  ],
+  "lights": [
+    {"name": "cyan_area", "type": "rectangle", "position": [-6.8, 0.8, -2.7], "edge_u": [0.0, 3.7, 0.0], "edge_v": [0.0, 0.0, 2.2], "emission": [0.5, 7.0, 11.0]},
+    {"name": "magenta_area", "type": "rectangle", "position": [6.8, 0.8, 0.0], "edge_u": [0.0, 3.7, 0.0], "edge_v": [0.0, 0.0, -2.2], "emission": [10.0, 0.4, 6.0]},
+    {"name": "soft_top", "type": "disk", "position": [0.0, 5.3, 0.0], "normal": [0.0, -1.0, -0.1], "radius": 1.8, "emission": [1.0, 1.1, 1.5]}
+  ]
+}
+
