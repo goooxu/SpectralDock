@@ -4,53 +4,53 @@
 
 ## 1. 在灯面上取一个随机点
 
-假设场景有 \(N_L\) 盏显式面积灯。算法先等概率选一盏，再在其面积 \(A\) 上均匀取点 \(\mathbf y\)。相对于面积的联合 PDF 是
+假设场景有 $N_L$ 盏显式面积灯。算法先等概率选一盏，再在其面积 $A$ 上均匀取点 $\mathbf y$。相对于面积的联合 PDF 是
 
-\[
+$$
 p_A(\mathbf y)=\frac{1}{N_L A}.
-\]
+$$
 
-矩形灯按两条边的均匀坐标取点；圆盘灯用 \(r=\sqrt\xi\) 均匀采面积；球灯均匀采整个球面。
+矩形灯按两条边的均匀坐标取点；圆盘灯用 $r=\sqrt\xi$ 均匀采面积；球灯均匀采整个球面。
 
-渲染方程却是对着色点 \(\mathbf x\) 周围的方向积分，所以必须把面积 PDF 换成方向 PDF。令
+渲染方程却是对着色点 $\mathbf x$ 周围的方向积分，所以必须把面积 PDF 换成方向 PDF。令
 
-\[
+$$
 \boldsymbol\omega_i=\frac{\mathbf y-\mathbf x}{\|\mathbf y-\mathbf x\|},
 \qquad
 r=\|\mathbf y-\mathbf x\|,
-\]
+$$
 
-灯面法线为 \(\mathbf n_l\)，则
+灯面法线为 $\mathbf n_l$，则
 
-\[
+$$
 p_\omega
 =p_A\left|\frac{dA}{d\omega}\right|
 =p_A\frac{r^2}{|\mathbf n_l\cdot(-\boldsymbol\omega_i)|}.
-\]
+$$
 
-代入 \(p_A=1/(N_LA)\)，得到
+代入 $p_A=1/(N_LA)$，得到
 
-\[
+$$
 \boxed{
 p_L(\boldsymbol\omega_i)=
 \frac{r^2}
 {N_L A\,|\mathbf n_l\cdot(-\boldsymbol\omega_i)|}
 }
-\]
+$$
 
-这正是第 2 章立体角关系的倒数变换。PDF 中必须有 \(1/N_L\) 的选灯概率；漏掉它会让灯越多，估计反而错误地越暗。
+这正是第 2 章立体角关系的倒数变换。PDF 中必须有 $1/N_L$ 的选灯概率；漏掉它会让灯越多，估计反而错误地越暗。
 
-例如 \(N_L=2\)、\(A=4\)、\(r=3\)、灯面余弦为 0.5 时，\(p_A=1/8\)，而 \(dA/d\omega=18\)，所以 \(p_\omega=2.25\ \mathrm{sr}^{-1}\)。距离越远，同一面积覆盖的方向范围越小，单位立体角的概率密度反而越大。
+例如 $N_L=2$、$A=4$、$r=3$、灯面余弦为 0.5 时，$p_A=1/8$，而 $dA/d\omega=18$，所以 $p_\omega=2.25\ \mathrm{sr}^{-1}$。距离越远，同一面积覆盖的方向范围越小，单位立体角的概率密度反而越大。
 
 当前场景接口中的显式灯都是单面：rectangle/disk 只从法线正面发光，sphere 只向外发光。设备结构预留了 `two_sided` 分支，但加载器未暴露它。球灯在整个球面均匀取点，背向着色点的样本会被余弦条件拒绝；这是正确但不够高效的选择。
 
 ## 2. 阴影射线只回答可见性
 
-从 \(\mathbf x\) 到 \(\mathbf y\) 发一条有限长度阴影射线。若中间没有其他几何体，记可见性 \(V(\mathbf x,\mathbf y)=1\)；被遮挡则为 0。
+从 $\mathbf x$ 到 $\mathbf y$ 发一条有限长度阴影射线。若中间没有其他几何体，记可见性 $V(\mathbf x,\mathbf y)=1$；被遮挡则为 0。
 
 一份灯光采样的直接光估计为
 
-\[
+$$
 \widehat{\mathbf L}_{\text{direct}}=
 \frac{
 V(\mathbf x,\mathbf y)
@@ -58,14 +58,14 @@ V(\mathbf x,\mathbf y)
 \odot f_s(\mathbf x,\boldsymbol\omega_i,\boldsymbol\omega_o)
 \,\max(0,\mathbf n\cdot\boldsymbol\omega_i)
 }{p_L(\boldsymbol\omega_i)}.
-\]
+$$
 
 一个公式同时解释了几个常见现象：
 
-- 遮挡让 \(V=0\)，形成阴影；
+- 遮挡让 $V=0$，形成阴影；
 - 面积灯上不同点可能部分可见，形成软阴影；
-- \(r^2\) 出现在 PDF 分母的倒数中，自然产生距离平方衰减；
-- 每次只选一盏灯，但 \(1/N_L\) 的概率已被权重补偿。
+- $r^2$ 出现在 PDF 分母的倒数中，自然产生距离平方衰减；
+- 每次只选一盏灯，但 $1/N_L$ 的概率已被权重补偿。
 
 阴影射线不计算第二个表面的完整材质，只需要判断“是否被挡”。当前实现因此把介电质也视作阴影遮挡物；alpha cutoff 可以让被裁掉的纹素不遮挡。
 
@@ -90,27 +90,27 @@ NEE 擅长寻找小而亮的灯，BSDF 采样擅长寻找尖锐材质瓣：
 
 ## 4. Power heuristic
 
-设灯光方向 PDF 为 \(p_L\)，BSDF 方向 PDF 为 \(p_B\)。当前实现每种策略各用一个样本，采用指数为 2 的 power heuristic：
+设灯光方向 PDF 为 $p_L$，BSDF 方向 PDF 为 $p_B$。当前实现每种策略各用一个样本，采用指数为 2 的 power heuristic：
 
-\[
+$$
 w_L=\frac{p_L^2}{p_L^2+p_B^2},
 \qquad
 w_B=\frac{p_B^2}{p_B^2+p_L^2}.
-\]
+$$
 
-当两侧使用同一对 \(p_L,p_B\) 时，\(w_L+w_B=1\)。更擅长生成该方向的策略得到更大权重，但另一策略并不会被硬切断。实现会先用 \(\max(p_L,p_B)\) 归一化两项再平方；这不改变公式，却避免大 PDF 平方溢出、小 PDF 平方同时下溢，或人为截断分母破坏互补性。
+当两侧使用同一对 $p_L,p_B$ 时，$w_L+w_B=1$。更擅长生成该方向的策略得到更大权重，但另一策略并不会被硬切断。实现会先用 $\max(p_L,p_B)$ 归一化两项再平方；这不改变公式，却避免大 PDF 平方溢出、小 PDF 平方同时下溢，或人为截断分母破坏互补性。
 
-- `sample_direct_light` 的 NEE 项乘 \(w_L\)；
-- BSDF 路径稍后命中绑定几何的 emitter 时乘 \(w_B\)；
+- `sample_direct_light` 的 NEE 项乘 $w_L$；
+- BSDF 路径稍后命中绑定几何的 emitter 时乘 $w_B$；
 - 两个 PDF 都以当前着色点的**方向测度**表示，才能放进同一公式。
 
-例如 \(p_L=0.8\)、\(p_B=0.2\) 时
+例如 $p_L=0.8$、$p_B=0.2$ 时
 
-\[
+$$
 w_L=\frac{0.64}{0.64+0.04}\approx0.941,
 \qquad
 w_B\approx0.059.
-\]
+$$
 
 这并不是说 94.1% 的光来自灯光采样，而是说在该方向上，灯光策略的估计通常更可靠。
 
@@ -125,15 +125,15 @@ MIS 只应比较两种策略都可能生成的路径：
 
 ## 6. 统一的 RR/MIS PDF 约定与末端深度
 
-SpectralDock 采用“RR 独立于 MIS”的约定。局部方向采样得到的 \(p_B\) 原样保存到 `previous_pdf`，不乘俄罗斯轮盘生存率 \(s\)。轮盘只对路径吞吐量进行期望补偿：
+SpectralDock 采用“RR 独立于 MIS”的约定。局部方向采样得到的 $p_B$ 原样保存到 `previous_pdf`，不乘俄罗斯轮盘生存率 $s$。轮盘只对路径吞吐量进行期望补偿：
 
-\[
+$$
 \boldsymbol\beta\leftarrow\frac{\boldsymbol\beta}{s},
 \qquad
 \texttt{previous\_pdf}=p_B.
-\]
+$$
 
-这样，NEE 在当前顶点计算 \(w_L\)，以及幸存 BSDF 路径稍后命中 emitter 时计算 \(w_B\)，始终使用相同的原始 \(p_L,p_B\)，互补关系不随 RR 改变。
+这样，NEE 在当前顶点计算 $w_L$，以及幸存 BSDF 路径稍后命中 emitter 时计算 $w_B$，始终使用相同的原始 $p_L,p_B$，互补关系不随 RR 改变。
 
 末端深度按“策略是否真实存在”处理：最后一个允许的表面事件仍执行完整 NEE，但因为不会追踪下一条 BSDF 射线，直接光权重为 1；累积直接光后立即结束，不再消耗 BSDF 或 RR 随机数。相机直接命中、delta 前驱、未绑定灯和末端 NEE 都由共享策略函数返回完整权重。
 
@@ -156,11 +156,11 @@ SpectralDock 采用“RR 独立于 MIS”的约定。局部方向采样得到的
 - `sample_light_surface`：矩形、圆盘和球面的面积采样；
 - `light_direction_pdf`：面积 PDF 到方向 PDF 的换元；
 - `trace_visible`：有限距离阴影射线；
-- `sample_direct_light`：NEE、BSDF 评估和 \(w_L\)；
+- `sample_direct_light`：NEE、BSDF 评估和 $w_L$；
 - `power_heuristic`：数值稳定的平方权重；
 - `resolve_continuation`：RR 存活、吞吐量补偿和原始 BSDF PDF；
 - `direct_light_mis_weight`、`emitter_hit_mis_weight`：只有竞争策略真实存在时才使用 MIS；
-- `__raygen__pathtrace` 的 emitter 分支：使用上一次 `previous_pdf` 计算 \(w_B\)。
+- `__raygen__pathtrace` 的 emitter 分支：使用上一次 `previous_pdf` 计算 $w_B$。
 
 下一章转向另一个基础问题：GPU 怎样快速回答数百万次“最近命中了哪个表面？”
 

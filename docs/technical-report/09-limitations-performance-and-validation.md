@@ -6,7 +6,7 @@
 
 | 类别 | 含义 | SpectralDock 中的例子 | 增加 spp 能否解决 |
 |---|---|---|---|
-| 随机方差 | 有限样本围绕目标波动 | 小灯、太阳瓣、尖锐高光的噪点 | 能缓解，约按 \(1/\sqrt N\) |
+| 随机方差 | 有限样本围绕目标波动 | 小灯、太阳瓣、尖锐高光的噪点 | 能缓解，约按 $1/\sqrt N$ |
 | 数值偏差 | 算法求解了近似目标 | `max_depth` 截断长路径 | 不能 |
 | 模型误差 | 数学模型省略现实机制 | RGB、无体积、无色散 | 不能 |
 | 实现缺陷 | 代码没有实现既定公式 | PDF 漏掉选灯概率、方向写反 | 不能，必须修代码 |
@@ -26,7 +26,7 @@
 
 ### 材质
 
-- `metal` 是纯 GGX 镜面微表面瓣，\(\mathbf F_0=\text{base_color}\)，不是通用 metallic workflow；
+- `metal` 是纯 GGX 镜面微表面瓣，$\mathbf F_0=\text{base_color}$，不是通用 metallic workflow；
 - GGX 采样普通 NDF 而非 VNDF，掠射角方差可能较高；
 - `dielectric` 是光滑 delta 界面，外部固定为空气，没有嵌套介质、粗糙折射或体吸收；
 - 场景解析不强制被动材质的 `base_color ≤ 1`，能量合理性部分依赖输入；
@@ -71,15 +71,15 @@
 
 每像素记录实际调用 `optixTrace` 的次数，包括 radiance 和 shadow ray：
 
-\[
+$$
 \text{rays/s}=
 \frac{\text{traced rays}}
 {\text{render\_ms}\times10^{-3}}.
-\]
+$$
 
 它不是纯 BVH microbenchmark：材质计算、随机数、分支、纹理和路径循环都在同一个 launch 内。不同场景的 rays/s 差异不应简单解释为硬件快慢。
 
-`traced_rays` 也不等于 \(W\times H\times spp\times max\_depth\)：路径可提前终止，普通表面还可能额外发一条 shadow ray。
+`traced_rays` 也不等于 $W\times H\times spp\times max\_depth$：路径可提前终止，普通表面还可能额外发一条 shadow ray。
 
 ## 5. 显存指标
 
@@ -106,7 +106,7 @@
 1. 在像素与镜头上取样，得到相机射线；
 2. OptiX 遍历 IAS/GAS/BVH，返回最近交点、法线、UV 和材质；
 3. 普通表面用 NEE 连接面积灯，以 shadow ray 判断可见性；
-4. BSDF 选择下一方向，吞吐量乘 `scatter.weight`；连续事件对应 \(f_s|\mathbf n\cdot\boldsymbol\omega_i|/p_B\)，介电 delta 分支按离散事件处理；
+4. BSDF 选择下一方向，吞吐量乘 `scatter.weight`；连续事件对应 $f_s|\mathbf n\cdot\boldsymbol\omega_i|/p_B$，介电 delta 分支按离散事件处理；
 5. NEE 与命中灯面的估计用 power heuristic MIS 分权；
 6. 路径在 miss、emitter、无效散射、轮盘或最大深度处结束；最大深度的最后一个表面事件仍先完整估计直接光；
 7. 多条路径的线性 RGB 平均成为 HDR beauty；

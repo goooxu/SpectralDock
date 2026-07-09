@@ -6,88 +6,88 @@
 
 先看一般积分
 
-\[
+$$
 I=\int_\Omega g(x)\,dx.
-\]
+$$
 
-若按概率密度函数 \(p(x)\) 生成 \(N\) 个独立样本 \(X_1,\ldots,X_N\)，Monte Carlo 估计量是
+若按概率密度函数 $p(x)$ 生成 $N$ 个独立样本 $X_1,\ldots,X_N$，Monte Carlo 估计量是
 
-\[
+$$
 \widehat I_N=
 \frac1N\sum_{j=1}^{N}\frac{g(X_j)}{p(X_j)}.
-\]
+$$
 
-除以 \(p\) 是关键：高概率区域会被更频繁抽到，所以每次代表的区域应更小；低概率样本罕见，但一旦出现就代表更大区域。只要 \(g(x)\ne0\) 的地方都有 \(p(x)>0\)，任意有限 \(N\) 都有 \(\mathbb E[\widehat I_N]=I\)；当 \(N\to\infty\) 时，样本平均再依大数定律收敛到 \(I\)。增加样本主要降低方差，不是让期望逐渐变正确。
+除以 $p$ 是关键：高概率区域会被更频繁抽到，所以每次代表的区域应更小；低概率样本罕见，但一旦出现就代表更大区域。只要 $g(x)\ne0$ 的地方都有 $p(x)>0$，任意有限 $N$ 都有 $\mathbb E[\widehat I_N]=I$；当 $N\to\infty$ 时，样本平均再依大数定律收敛到 $I$。增加样本主要降低方差，不是让期望逐渐变正确。
 
 ### 1.1 PDF 不是单点概率
 
 PDF 是“单位范围内的概率密度”，其数值可以大于 1。真正的概率来自对一个区域积分：
 
-\[
+$$
 P(X\in A)=\int_A p(x)\,dx.
-\]
+$$
 
-方向 PDF 的单位是 sr\(^{-1}\)，面积 PDF 的单位是场景面积单位\(^{-1}\)。不同测度下的 PDF 不能直接比较；第 5 章会先把灯面面积 PDF 转成方向 PDF，再进行 MIS。
+方向 PDF 的单位是 sr$^{-1}$，面积 PDF 的单位是场景面积单位$^{-1}$。不同测度下的 PDF 不能直接比较；第 5 章会先把灯面面积 PDF 转成方向 PDF，再进行 MIS。
 
 ### 1.2 为什么图像有噪声
 
 估计量方差为
 
-\[
+$$
 \operatorname{Var}[\widehat I_N]
 =\frac1N\left[
 \int_\Omega\frac{g(x)^2}{p(x)}\,dx-I^2
 \right].
-\]
+$$
 
-因此标准差大约按 \(1/\sqrt N\) 下降。把每像素样本数从 16 提高到 64，计算量约增至四倍，随机误差通常只减半。路径追踪中的颗粒并非算法“算错”，而是有限随机样本的统计波动。
+因此标准差大约按 $1/\sqrt N$ 下降。把每像素样本数从 16 提高到 64，计算量约增至四倍，随机误差通常只减半。路径追踪中的颗粒并非算法“算错”，而是有限随机样本的统计波动。
 
-**重要性采样**让 \(p\) 的形状接近 \(|g|\)：把样本集中在贡献大的方向，从而用同样样本数降低方差。Lambert 的余弦加权采样和 GGX 的微表面法线采样都属于重要性采样。
+**重要性采样**让 $p$ 的形状接近 $|g|$：把样本集中在贡献大的方向，从而用同样样本数降低方差。Lambert 的余弦加权采样和 GGX 的微表面法线采样都属于重要性采样。
 
 ## 2. 路径吞吐量
 
 令路径吞吐量初值为白色
 
-\[
+$$
 \boldsymbol\beta_0=(1,1,1).
-\]
+$$
 
-在第 \(k\) 个表面，按 BSDF PDF \(p_B\) 选择新方向后，更新
+在第 $k$ 个表面，按 BSDF PDF $p_B$ 选择新方向后，更新
 
-\[
+$$
 \boldsymbol\beta_{k+1}
 =\boldsymbol\beta_k\odot
 \frac{
 f_s(\boldsymbol\omega_i,\boldsymbol\omega_o)
 |\mathbf n\cdot\boldsymbol\omega_i|
 }{p_B(\boldsymbol\omega_i)}.
-\]
+$$
 
-对连续的 Lambert/GGX 分支，`sample_bsdf` 返回的 `weight` 正是这个分式。介电质是 delta 离散事件，不能用普通有限 BSDF 除以连续方向 PDF；其等价事件权重由反射/折射分支概率、`base_color` 和透射时的 \((\eta_i/\eta_t)^2\) 构成。\(\boldsymbol\beta\) 记录路径到当前位置的整体权重；它不是剩余光子数量，也不是概率，所以经过 PDF 或俄罗斯轮盘补偿后可以大于 1。
+对连续的 Lambert/GGX 分支，`sample_bsdf` 返回的 `weight` 正是这个分式。介电质是 delta 离散事件，不能用普通有限 BSDF 除以连续方向 PDF；其等价事件权重由反射/折射分支概率、`base_color` 和透射时的 $(\eta_i/\eta_t)^2$ 构成。$\boldsymbol\beta$ 记录路径到当前位置的整体权重；它不是剩余光子数量，也不是概率，所以经过 PDF 或俄罗斯轮盘补偿后可以大于 1。
 
 若路径未命中并到达背景，累积
 
-\[
+$$
 \widehat{\mathbf L}\mathrel{+}=
 \boldsymbol\beta_k\odot\mathbf L_{\text{env}}.
-\]
+$$
 
 若路径命中发光表面，累积
 
-\[
+$$
 \widehat{\mathbf L}\mathrel{+}=
 \boldsymbol\beta_k\odot\mathbf L_e\,w_{\text{hit}}.
-\]
+$$
 
-相机直接看见灯、delta 事件后命中灯，或不存在可竞争的显式灯采样时，\(w_{\text{hit}}=1\)；其他情况由 MIS 决定。
+相机直接看见灯、delta 事件后命中灯，或不存在可竞争的显式灯采样时，$w_{\text{hit}}=1$；其他情况由 MIS 决定。
 
 命中普通表面时还会加入一份直接光估计：
 
-\[
+$$
 \widehat{\mathbf L}\mathrel{+}=
 \boldsymbol\beta_k\odot
 \widehat{\mathbf L}_{\text{direct}}.
-\]
+$$
 
 ## 3. 一条样本路径如何运行
 
@@ -130,12 +130,12 @@ f_s(\boldsymbol\omega_i,\boldsymbol\omega_o)
 
 `spp` 是 samples per pixel。每条样本路径有独立的像素内抖动、镜头采样、灯面采样、BSDF 采样和轮盘决策。最终在线性空间中求平均：
 
-\[
+$$
 \overline{\mathbf L}_{xy}=
 \frac1{\mathrm{spp}}
 \sum_{s=1}^{\mathrm{spp}}
 \widehat{\mathbf L}_{xy,s}.
-\]
+$$
 
 不能先把每条样本色调映射到 8 bit 再平均，因为色调映射是非线性的，会改变估计目标。
 
@@ -147,31 +147,31 @@ f_s(\boldsymbol\omega_i,\boldsymbol\omega_o)
 
 生存概率为
 
-\[
+$$
 s=\operatorname{clamp}
 \left(
 \max(\beta_r,\beta_g,\beta_b),
 0.05,0.95
 \right).
-\]
+$$
 
-路径以概率 \(1-s\) 终止；若生存，则
+路径以概率 $1-s$ 终止；若生存，则
 
-\[
+$$
 \boldsymbol\beta\leftarrow\frac{\boldsymbol\beta}{s}.
-\]
+$$
 
 其期望保持不变：
 
-\[
+$$
 \mathbb E[\boldsymbol\beta']
 =s\frac{\boldsymbol\beta}{s}+(1-s)\mathbf0
 =\boldsymbol\beta.
-\]
+$$
 
-所以轮盘**单独看**不会系统性把画面变暗，而是用较高方差换取较少平均工作量。例如 \(s=0.2\) 时，平均五条路径只有一条继续，但幸存者权重乘 5，期望仍相同。
+所以轮盘**单独看**不会系统性把画面变暗，而是用较高方差换取较少平均工作量。例如 $s=0.2$ 时，平均五条路径只有一条继续，但幸存者权重乘 5，期望仍相同。
 
-SpectralDock 将 RR 与 MIS 分离：轮盘只决定路径是否继续，幸存时仅将 `throughput` 除以 \(s\)；`previous_pdf` 始终保存未乘生存率的局部立体角 BSDF PDF \(p_B\)。因此 NEE 与 BSDF-hit 两侧比较同一对 PDF。
+SpectralDock 将 RR 与 MIS 分离：轮盘只决定路径是否继续，幸存时仅将 `throughput` 除以 $s$；`previous_pdf` 始终保存未乘生存率的局部立体角 BSDF PDF $p_B$。因此 NEE 与 BSDF-hit 两侧比较同一对 PDF。
 
 ## 6. “无偏”需要谨慎使用
 

@@ -42,12 +42,12 @@ flowchart LR
 
 ## 全文方向约定
 
-在一个表面点 \(\mathbf x\) 上：
+在一个表面点 $\mathbf x$ 上：
 
-- \(\mathbf n\) 是朝向当前射线一侧的单位法线；
-- \(\boldsymbol\omega_o\) 从表面指向上一顶点或相机；
-- \(\boldsymbol\omega_i\) 从表面指向光源或下一顶点；
-- 两个方向都从交点向外。虽然 \(\boldsymbol\omega_i\) 叫“入射方向”，光实际沿 \(-\boldsymbol\omega_i\) 到达表面。
+- $\mathbf n$ 是朝向当前射线一侧的单位法线；
+- $\boldsymbol\omega_o$ 从表面指向上一顶点或相机；
+- $\boldsymbol\omega_i$ 从表面指向光源或下一顶点；
+- 两个方向都从交点向外。虽然 $\boldsymbol\omega_i$ 叫“入射方向”，光实际沿 $-\boldsymbol\omega_i$ 到达表面。
 
 这是 SpectralDock 源码采用的约定：`wo = -ray_direction`，新射线沿 `wi` 发出。统一方向后，点积、Fresnel、折射和 PDF 公式才不会互相矛盾。
 
@@ -55,14 +55,14 @@ flowchart LR
 
 | 符号 | 含义 | 单位或范围 |
 |---|---|---|
-| \(\mathbf x,\mathbf y\) | 三维空间中的点 | 场景长度单位 |
-| \(\mathbf v,\boldsymbol\omega\) | 向量；带帽或 \(\boldsymbol\omega\) 通常是单位方向 | 无量纲 |
-| \(\mathbf n\) | 单位表面法线 | 无量纲 |
-| \(L_i,L_o,L_e\) | 入射、出射、自发光辐亮度 | 本项目用线性 RGB 近似 |
-| \(f_s\) | BSDF，描述方向之间的散射比例 | sr\(^{-1}\)，delta 事件除外 |
-| \(p(\cdot)\) | 概率密度函数 PDF | 随测度而变 |
-| \(\boldsymbol\beta\) | 一条随机路径当前的 RGB 吞吐量 | 无量纲权重 |
-| \(\odot\) | RGB 逐分量相乘 | 例如 \((a_r b_r,a_g b_g,a_b b_b)\) |
+| $\mathbf x,\mathbf y$ | 三维空间中的点 | 场景长度单位 |
+| $\mathbf v,\boldsymbol\omega$ | 向量；带帽或 $\boldsymbol\omega$ 通常是单位方向 | 无量纲 |
+| $\mathbf n$ | 单位表面法线 | 无量纲 |
+| $L_i,L_o,L_e$ | 入射、出射、自发光辐亮度 | 本项目用线性 RGB 近似 |
+| $f_s$ | BSDF，描述方向之间的散射比例 | sr$^{-1}$，delta 事件除外 |
+| $p(\cdot)$ | 概率密度函数 PDF | 随测度而变 |
+| $\boldsymbol\beta$ | 一条随机路径当前的 RGB 吞吐量 | 无量纲权重 |
+| $\odot$ | RGB 逐分量相乘 | 例如 $(a_r b_r,a_g b_g,a_b b_b)$ |
 
 报告中的 RGB 指**线性 RGB**，除非明确写出 sRGB。公式中的颜色可以大于 1；它们会在最后统一映射到显示范围。
 
