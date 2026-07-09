@@ -81,6 +81,31 @@ $$
 
 三者互相垂直且长度为 1，构成相机的局部坐标系。若用户给出的上方向平行于观察方向，叉积为零，相机基会退化；场景加载器会明确拒绝这种输入。
 
+### 源码对照：主机端相机参数
+
+<!-- source-snippet id="camera-host-basis" path="src/optix_renderer.cpp" anchor="CameraData camera_for" -->
+```cpp
+CameraData camera_for(const Scene& scene, const RenderSettings& settings) {
+  const Vec3 w = normalize(scene.camera.look_from - scene.camera.look_at);
+  const Vec3 u = normalize(cross(scene.camera.up, w));
+  const Vec3 v = cross(w, u);
+  CameraData camera{};
+  camera.origin = f3(scene.camera.look_from);
+  camera.u = f3(u);
+  camera.v = f3(v);
+  camera.w = f3(w);
+  camera.tan_half_fov =
+      std::tan(scene.camera.vertical_fov_degrees * kPi / 360.0f);
+  camera.aspect =
+      static_cast<float>(settings.width) / static_cast<float>(settings.height);
+  camera.lens_radius = 0.5f * scene.camera.aperture;
+  camera.focus_distance = scene.camera.focus_distance;
+  return camera;
+}
+```
+
+公式中的 $\mathbf w,\mathbf u,\mathbf v$ 分别对应局部变量 `w`、`u`、`v`，随后被复制进设备端可见的 `camera`。角度从度转换到半角弧度，因此 `vertical_fov_degrees * kPi / 360.0f` 正是 $\theta_v/2$；`aspect`、`lens_radius` 和 `focus_distance` 则分别对应 $a$、$R$ 和 $F$。
+
 ## 4. 从像素坐标到焦平面
 
 设输出宽高为 $W,H$，当前像素为整数 $(x,y)$。每个样本先产生两个均匀随机数 $\xi_x,\xi_y\in[0,1)$，在像素内部取一点：
@@ -141,6 +166,38 @@ $$
 $$
 
 不同起点的射线仍会聚到同一个焦平面点；焦平面附近清晰，前后位置因射线不再汇聚而模糊。
+
+### 源码对照：从像素生成相机射线
+
+<!-- source-snippet id="camera-device-ray-generation" path="src/device_programs.cu" anchor="generate_camera_ray" -->
+```cpp
+static __forceinline__ __device__ void generate_camera_ray(
+    unsigned int x, unsigned int y, Pcg32& rng, float3& origin,
+    float3& direction) {
+  const float sx =
+      2.0f * ((static_cast<float>(x) + rng.next()) / params.width) - 1.0f;
+  const float sy =
+      1.0f - 2.0f * ((static_cast<float>(y) + rng.next()) / params.height);
+  const float3 focal_vector =
+      mul(add(add(neg(params.camera.w),
+                  mul(params.camera.u,
+                      sx * params.camera.aspect * params.camera.tan_half_fov)),
+              mul(params.camera.v, sy * params.camera.tan_half_fov)),
+          params.camera.focus_distance);
+  float3 lens_offset = f3(0.0f, 0.0f, 0.0f);
+  if (params.camera.lens_radius > 0.0f) {
+    const float2 lens = sample_disk(rng);
+    lens_offset =
+        mul(add(mul(params.camera.u, lens.x),
+                mul(params.camera.v, lens.y)),
+            params.camera.lens_radius);
+  }
+  origin = add(params.camera.origin, lens_offset);
+  direction = normalize3(sub(focal_vector, lens_offset));
+}
+```
+
+`sx`、`sy` 就是 $s_x,s_y$，其中两次 `rng.next()` 完成像素内抖动；`focal_vector` 对应 $\mathbf p$。光圈为零时 `lens_offset` 保持零，代码自然退化为针孔相机；否则 `sample_disk` 返回单位圆盘样本，再乘 `lens_radius` 得到 $\boldsymbol\delta$。最后两行逐字实现 $\mathbf o=\mathbf C+\boldsymbol\delta$ 与 $\mathbf d=\mathrm{normalize}(\mathbf p-\boldsymbol\delta)$，把两种相机统一在同一条控制流中。
 
 ![针孔相机、像素抖动与薄透镜景深](figures/camera-ray.svg)
 

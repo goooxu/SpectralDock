@@ -49,6 +49,26 @@
 
 [`RenderStats`](../../include/spectraldock/optix_renderer.h) 把一次渲染拆成几个指标。
 
+<!-- source-snippet id="validation-cuda-event-timer" path="src/optix_renderer.cpp" anchor="cudaEventElapsedTime" -->
+```cpp
+class Event {
+ public:
+  Event() { check_cuda(cudaEventCreate(&value_), "cudaEventCreate"); }
+  ~Event() { if (value_) cudaEventDestroy(value_); }
+  void record(cudaStream_t stream) {
+    check_cuda(cudaEventRecord(value_, stream), "cudaEventRecord");
+  }
+  void wait() { check_cuda(cudaEventSynchronize(value_), "cudaEventSynchronize"); }
+  double elapsed(const Event& start) const {
+    float ms = 0.0f;
+    check_cuda(cudaEventElapsedTime(&ms, start.value_, value_),
+               "cudaEventElapsedTime");
+    return ms;
+  }
+```
+
+各 GPU 分项都复用这个 CUDA event 包装：`record` 把时间点放进指定 stream，`wait` 等待结束事件，`cudaEventElapsedTime` 返回两个事件之间的毫秒数。因此它测量的是 GPU stream 区间，不是主机 `std::chrono` 墙钟。
+
 ### `timings_ms.bvh_build`
 
 从开始上传/构建被引用 mesh 和每对象 primitive GAS，到 IAS 构建及满足条件时的压缩完成。它包含相关 mesh 设备上传、GAS/IAS 构建及紧凑尺寸更小时的压缩，不包含此前的纹理解码/上传和 pipeline 创建。
@@ -81,6 +101,33 @@ $$
 
 `traced_rays` 也不等于 $W\times H\times \mathrm{spp}\times D_{\max}$，其中 $D_{\max}$ 对应 `max_depth`：路径可提前终止，普通表面还可能额外发一条 shadow ray。
 
+逐像素计数缓冲区在 launch 后回传到主机，并求和得到公式中的 $N_{\mathrm{rays}}$：
+
+<!-- source-snippet id="validation-ray-count-sum" path="src/optix_renderer.cpp" anchor="ray_count.download" -->
+```cpp
+  std::vector<unsigned long long> ray_counts(pixel_count);
+  output.download(rgba.data(), rgba.size(), stream);
+  ray_count.download(ray_counts.data(),
+                     ray_counts.size() * sizeof(unsigned long long), stream);
+  check_cuda(cudaStreamSynchronize(stream),
+             "cudaStreamSynchronize(output)");
+  unsigned long long traced_rays = 0;
+  for (const unsigned long long count : ray_counts)
+    traced_rays += count;
+  tracker.sample();
+```
+
+统计结构只保留求和结果，并用 `render_ms * 1.0e-3` 完成毫秒到秒的换算：
+
+<!-- source-snippet id="validation-rays-per-second" path="src/optix_renderer.cpp" anchor="result.stats.rays_per_second" -->
+```cpp
+  result.stats.traced_rays = traced_rays;
+  result.stats.rays_per_second =
+      render_ms > 0.0 ? traced_rays / (render_ms * 1.0e-3) : 0.0;
+```
+
+分母为零时明确返回 0，避免统计值成为无穷或 NaN。
+
 ## 5. 显存指标
 
 - `peak_tracked_device_bytes`：项目 RAII 分配器直接记账的峰值；
@@ -100,6 +147,34 @@ $$
 6. 素材与复现工具测试保护纹理接缝、确定性场景/模型生成、几何闭合性和资产哈希。
 
 唯一保留的像素 golden 是 mesh fixture 的 RTX 5090 基线；积分器对照的临时 PNG 和 stats 会自动清理，不保存哈希。mesh golden 只证明定向输出与已接受结果逐字节相同，不能独立证明物理正确；跨 GPU、编译器或 `--use_fast_math` 的少量浮点差异，也不自动等于数学回归。正式 gallery 与 stats 继续作为作品和一次运行记录保存，但不再是自动测试门禁；项目也不设置自动性能阈值或 profiling 验收。可靠结论仍需要公式审查、定向场景和数值/视觉证据结合。
+
+下面的 MIS 单元测试展示了这种“公式性质优先于某一张图片”的验证：
+
+<!-- source-snippet id="validation-mis-unit-test" path="tests/test_core.cpp" anchor="MIS weights must remain finite" -->
+```cpp
+void test_mis() {
+  near(power_heuristic(1.0f, 1.0f), 0.5f, 1.0e-7f, "equal MIS PDFs");
+  near(power_heuristic(1.0f, 2.0f), 0.2f, 1.0e-7f, "unequal MIS PDFs");
+  near(power_heuristic(0.0f, 0.0f), 0.0f, 1.0e-7f, "zero MIS PDFs");
+
+  const float pdf_pairs[][2] = {
+      {1.0f, 1.0f},
+      {1.0f, 2.0f},
+      {1.0e-30f, 2.0e-30f},
+      {1.0e30f, 2.0e30f},
+      {1.0e-30f, 1.0e30f},
+      {0.0f, 1.0f},
+  };
+  for (const auto& pdfs : pdf_pairs) {
+    const float a = power_heuristic(pdfs[0], pdfs[1]);
+    const float b = power_heuristic(pdfs[1], pdfs[0]);
+    check(std::isfinite(a) && std::isfinite(b),
+          "MIS weights must remain finite");
+    near(a + b, 1.0f, 1.0e-6f, "complementary MIS weights");
+  }
+```
+
+前三个断言锁定手算结果；随后用极小、极大和零 PDF 检查权重始终有限，并验证交换两种策略后 $w_A+w_B=1$。它不会证明整个积分器正确，但能直接捕获 power heuristic 的溢出、NaN 和互补性回归。
 
 ## 7. 从一个像素重新串起全文
 

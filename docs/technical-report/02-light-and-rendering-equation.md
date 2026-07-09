@@ -151,6 +151,87 @@ $$
 
 代码不是在网格上直接求解积分方程，也不是递归调用自身。它在 ray-generation 程序内部维护一条迭代路径；数学上的递归由循环中的下一条射线表示。
 
+### 5.1 路径状态与背景项
+
+<!-- source-snippet id="raygen-path-state-background" path="src/device_programs.cu" anchor="background(ray_direction)" -->
+```cpp
+  for (unsigned int sample_index = 0; sample_index < spp; ++sample_index) {
+    Pcg32 rng(params.seed, pixel, sample_index);
+    float3 ray_origin;
+    float3 ray_direction;
+    generate_camera_ray(launch_index.x, launch_index.y, rng, ray_origin,
+                        ray_direction);
+    float3 throughput = f3(1.0f, 1.0f, 1.0f);
+    float3 radiance = f3(0.0f, 0.0f, 0.0f);
+    float previous_pdf = 0.0f;
+    int previous_delta = 1;
+    int guide_written = 0;
+
+    for (unsigned int bounce = 0; bounce < params.max_depth; ++bounce) {
+      const SurfaceHit hit = trace_radiance(ray_origin, ray_direction, traced_rays);
+      if (hit.hit == 0) {
+        radiance =
+            add(radiance, mul(throughput, background(ray_direction)));
+        break;
+      }
+```
+
+`radiance` 是当前样本已经累计的 $L_o$ 估计，`throughput` 是此前各次散射权重的乘积 $\boldsymbol\beta$。初始吞吐量为 1；射线未命中时，方向背景就是路径末端的 $L_i$，因此累加式严格是 `radiance += throughput * background`。循环代替函数递归，`break` 表示这条光路已经终止。
+
+### 5.2 发光面项
+
+<!-- source-snippet id="raygen-emitter-accumulation" path="src/device_programs.cu" anchor="emitter_hit_mis_weight" -->
+```cpp
+      if (material.type == spectraldock::kMaterialEmitter) {
+        float3 emitted = material.emission;
+        if (material.texture_index >= 0) {
+          const float4 texel = sample_texture(material.texture_index, hit.uv);
+          emitted = mul(emitted, f3(texel.x, texel.y, texel.z));
+        }
+        const bool emitter_is_bound_to_light = hit.light_index >= 0;
+        const float light_pdf = emitter_is_bound_to_light
+            ? light_direction_pdf(hit.light_index, ray_origin, hit.position)
+            : 0.0f;
+        const float weight = spectraldock::emitter_hit_mis_weight(
+            previous_pdf, light_pdf, previous_delta != 0,
+            emitter_is_bound_to_light);
+        radiance = add(radiance, mul(mul(throughput, emitted), weight));
+        break;
+      }
+```
+
+这里的 `emitted` 对应 $L_e$，纹理只调制它的 RGB；`throughput` 仍是 $\boldsymbol\beta$。`weight` 是命中光源时避免与显式灯光采样重复计数的 MIS 权重，所以最终加入的是 $\boldsymbol\beta\odot L_e w$。Emitter 是终端材质，累加后立即 `break`。
+
+### 5.3 直接光与下一次散射
+
+<!-- source-snippet id="raygen-direct-and-scatter" path="src/device_programs.cu" anchor="sample_direct_light" -->
+```cpp
+      const float3 wo = neg(ray_direction);
+      const bool next_bsdf_ray_exists = bounce + 1u < params.max_depth;
+      const float3 direct =
+          sample_direct_light(hit, material, base_color, wo,
+                              next_bsdf_ray_exists, rng, traced_rays);
+      radiance = add(radiance, mul(throughput, direct));
+      if (!next_bsdf_ray_exists) {
+        break;
+      }
+
+      const BsdfSample scatter =
+          sample_bsdf(material, base_color, hit.normal, wo,
+                      hit.front_face, rng);
+      if (scatter.valid == 0) {
+        break;
+      }
+      throughput = clamp_nonnegative(mul(throughput, scatter.weight));
+      if (max_component(throughput) <= 0.0f) {
+        break;
+      }
+      previous_pdf = scatter.pdf;
+      previous_delta = scatter.delta;
+```
+
+`wo` 对应 $\boldsymbol\omega_o$；`direct` 是对渲染方程积分中显式灯光部分的一次估计，仍需乘当前 $\boldsymbol\beta$ 才能加入 `radiance`。随后 `sample_bsdf` 选出新的 $\boldsymbol\omega_i$：对 Lambert/GGX 连续分支，`weight` 包含 $f_s|\mathbf n\cdot\boldsymbol\omega_i|/p_B$；对 dielectric delta 分支，它是离散反射或折射事件的权重，透射时还包含 $(\eta_i/\eta_t)^2$。因此两类分支都只需一次乘法即可更新吞吐量。无下一跳、无效样本或零吞吐量都会尽早结束路径，避免无贡献追踪。
+
 下一章先研究方程中的材质项 $f_s$，再讨论如何用随机样本估计整个积分。
 
 [上一章：向量、射线与相机](01-vectors-rays-and-camera.md) · [返回目录](README.md) · [下一章：材质与 BSDF](03-materials-and-bsdf.md)

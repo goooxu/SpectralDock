@@ -57,6 +57,28 @@ $$
 
 这就是 [`sample_bsdf`](../../src/device_programs.cu) 的 Lambert 分支直接令 `sample.weight = base_color` 的原因。代码不是漏掉了 BRDF、余弦或 PDF；它们在代数上已经约掉。
 
+### 源码对照：Lambert 采样与化简后的权重
+
+<!-- source-snippet id="lambert-cosine-sampling" path="src/device_programs.cu" anchor="kMaterialLambertian" -->
+```cpp
+  if (material.type == spectraldock::kMaterialLambertian) {
+    const float r1 = rng.next();
+    const float r2 = rng.next();
+    const float radius = sqrtf(r1);
+    const float phi = 2.0f * kPi * r2;
+    const float3 local =
+        f3(radius * cosf(phi), radius * sinf(phi), sqrtf(1.0f - r1));
+    sample.wi = local_to_world(local, n);
+    sample.pdf = fmaxf(dot3(n, sample.wi), 0.0f) * kInvPi;
+    sample.weight = base_color;
+    sample.valid = sample.pdf > 0.0f;
+    sample.delta = 0;
+    return sample;
+  }
+```
+
+`r1`、`r2` 是两个均匀随机数，局部方向的 $z=\sqrt{1-r_1}$ 产生余弦加权半球分布；`local_to_world` 再把它绕法线 `n` 旋转到世界坐标。`sample.pdf` 逐字对应 $p_B=(\mathbf n\cdot\boldsymbol\omega_i)/\pi$，而 `sample.weight = base_color` 对应化简后的 $\boldsymbol\rho$。`delta = 0` 明确它是连续分布。
+
 ## 3. GGX 粗糙金属
 
 粗糙金属可想成大量方向不同的微小镜面。宏观法线是 $\mathbf n$，真正完成一次镜面反射的微表面法线是半程向量
@@ -110,6 +132,34 @@ $$
 (1-\boldsymbol\omega_o\cdot\mathbf h)^5.
 $$
 
+### 源码对照：GGX 的 $D$、$G_1$ 与 $\mathbf F$
+
+<!-- source-snippet id="ggx-distribution-geometry-fresnel" path="src/device_programs.cu" anchor="ggx_distribution" -->
+```cpp
+static __forceinline__ __device__ float ggx_distribution(
+    float no_h, float alpha) {
+  const float a2 = alpha * alpha;
+  const float d = no_h * no_h * (a2 - 1.0f) + 1.0f;
+  return a2 / fmaxf(kPi * d * d, 1.0e-20f);
+}
+
+static __forceinline__ __device__ float ggx_g1(float no_x, float alpha) {
+  const float a2 = alpha * alpha;
+  return 2.0f * no_x /
+         fmaxf(no_x + sqrtf(a2 + (1.0f - a2) * no_x * no_x), 1.0e-20f);
+}
+
+static __forceinline__ __device__ float3 fresnel_schlick(
+    float cos_theta, float3 f0) {
+  const float x = 1.0f - fminf(fmaxf(cos_theta, 0.0f), 1.0f);
+  const float x2 = x * x;
+  const float x5 = x2 * x2 * x;
+  return add(f0, mul(sub(f3(1.0f, 1.0f, 1.0f), f0), x5));
+}
+```
+
+`no_h`、`no_x` 和 `cos_theta` 分别承载 $\mathbf n\cdot\mathbf h$、$G_1$ 的余弦 $c$ 与 $\boldsymbol\omega_o\cdot\mathbf h$。实现预先计算 `a2`、`x2`、`x5`，减少重复乘法；分母用 `fmaxf(..., 1.0e-20f)` 防止极端方向产生除零或非有限值，Fresnel 输入则先钳到 $[0,1]$。
+
 于是 GGX BRDF 为
 
 $$
@@ -122,6 +172,31 @@ $$
 这里分母中的换行是普通乘法：即 $4\,n_o n_i$，不是加法。
 
 当前场景加载逻辑把 `metal` 的 `metallic` 固定为 1，所以实际的 $\mathbf F_0$ 直接取自 `base_color`。这是一种纯金属镜面微表面模型，不是常见的“金属度工作流”，也不含漫反射与镜面混合。
+
+### 源码对照：完整 BRDF 与方向 PDF
+
+<!-- source-snippet id="ggx-brdf-direction-pdf" path="src/device_programs.cu" anchor="half_vector" -->
+```cpp
+  const float3 half_vector = normalize3(add(wo, wi));
+  const float no_h = fmaxf(dot3(n, half_vector), 0.0f);
+  const float vo_h = fmaxf(dot3(wo, half_vector), 0.0f);
+  if (no_h <= 0.0f || vo_h <= 0.0f) {
+    return;
+  }
+  const float alpha =
+      fmaxf(material.roughness * material.roughness, 0.001f);
+  const float d = ggx_distribution(no_h, alpha);
+  const float g = ggx_g1(no_v, alpha) * ggx_g1(no_l, alpha);
+  const float3 dielectric_f0 = f3(0.04f, 0.04f, 0.04f);
+  const float3 f0 =
+      lerp3(dielectric_f0, base_color,
+            fminf(fmaxf(material.metallic, 0.0f), 1.0f));
+  const float3 fresnel = fresnel_schlick(vo_h, f0);
+  value = mul(fresnel, d * g / fmaxf(4.0f * no_v * no_l, 1.0e-20f));
+  pdf = d * no_h / fmaxf(4.0f * vo_h, 1.0e-20f);
+```
+
+`wo`、`wi`、`n` 分别对应 $\boldsymbol\omega_o$、$\boldsymbol\omega_i$、$\mathbf n$，而 `no_v`、`no_l` 是 BRDF 分母中的两个余弦。`value` 实现 $\mathbf F D G/(4n_on_i)$，`pdf` 实现 $D(\mathbf h)(\mathbf n\cdot\mathbf h)/(4|\boldsymbol\omega_o\cdot\mathbf h|)$；在已通过正半球检查的分支中 `vo_h` 为正，因而无需再次取绝对值。粗糙度下限与极小分母共同保护近 delta 情况下的数值稳定性。
 
 ### 3.3 GGX 采样密度
 
@@ -170,6 +245,38 @@ $$
 $$
 
 这是辐亮度传输穿过折射界面时的测度变换。进入较高折射率介质时它小于 1，离开时大于 1；理想的一进一出会互相抵消。
+
+### 源码对照：介电质的离散反射与折射
+
+<!-- source-snippet id="dielectric-reflect-refract" path="src/device_programs.cu" anchor="eta_i" -->
+```cpp
+    const float eta_i = front_face ? 1.0f : fmaxf(material.ior, 1.0e-3f);
+    const float eta_t = front_face ? fmaxf(material.ior, 1.0e-3f) : 1.0f;
+    const float eta = eta_i / eta_t;
+    const float cos_theta = fminf(dot3(wo, n), 1.0f);
+    const float sin2_theta = fmaxf(0.0f, 1.0f - cos_theta * cos_theta);
+    const float r0_base = (eta_i - eta_t) / (eta_i + eta_t);
+    const float r0 = r0_base * r0_base;
+    const float m = 1.0f - cos_theta;
+    const float reflectance = r0 + (1.0f - r0) * m * m * m * m * m;
+    bool transmitted = false;
+    if (eta * eta * sin2_theta > 1.0f || rng.next() < reflectance) {
+      sample.wi = normalize3(reflect3(neg(wo), n));
+    } else {
+      const float3 perpendicular =
+          mul(add(neg(wo), mul(n, cos_theta)), eta);
+      const float3 parallel =
+          mul(n, -sqrtf(fmaxf(0.0f, 1.0f - length2(perpendicular))));
+      sample.wi = normalize3(add(perpendicular, parallel));
+      transmitted = true;
+    }
+    sample.weight = transmitted ? mul(base_color, eta * eta) : base_color;
+    sample.pdf = 1.0f;
+    sample.valid = 1;
+    sample.delta = 1;
+```
+
+`front_face` 决定外侧和内侧折射率，`eta` 就是 $\eta_i/\eta_t$。条件 `eta * eta * sin2_theta > 1` 是全反射判定，否则 `rng.next() < reflectance` 以 Schlick 反射率选择离散反射事件；折射方向拆成法向平行与垂直分量，以 `fmaxf` 保护平方根。`sample.weight` 只在 `transmitted` 为真时乘 `eta * eta`，正好对应测度变换 $(\eta_i/\eta_t)^2$；最后三行把有效的反射或折射标记为 delta 事件，并用占位 PDF 1 记账。
 
 代码中的 `sample.pdf = 1` 只是 delta 分支的占位记账值，绝不表示“在整个球面均匀采样”。理想反射和折射只出现在一个方向上，应从离散事件理解。
 

@@ -64,11 +64,61 @@ $$
 \|\mathbf q_\perp\|^2=R^2.
 $$
 
-把射线代入后仍是二次方程。有限高度圆柱再检查
+把射线代入后仍是二次方程。
+
+有限高度圆柱还要检查
 
 $$
 0\le(\mathbf r(t)-\mathbf p_0)\cdot\mathbf a\le H.
 $$
+
+`d_perp` 与 `q_perp` 正是 $\mathbf d_\perp$ 和 $\mathbf q_\perp$；随后三行 `a`、`b`、`c` 构造侧壁二次方程。场景验证要求 cylinder 的 `height > 0`，所以合法 JSON 总是进入有限圆柱分支；`height <= 0` 时调用共享求根器只是防御性路径。
+
+<!-- source-snippet id="cylinder-quadratic-coefficients" path="src/device_programs.cu" anchor="__intersection__cylinder" -->
+```cpp
+extern "C" __global__ void __intersection__cylinder() {
+  const HitgroupData* record =
+      reinterpret_cast<const HitgroupData*>(optixGetSbtDataPointer());
+  const GeometryData& geometry = record->geometry;
+  const float3 origin = optixGetObjectRayOrigin();
+  const float3 direction = optixGetObjectRayDirection();
+  const float3 axis = normalize3(geometry.p1);
+  const float3 q = sub(origin, geometry.p0);
+  const float3 d_perp = sub(direction, mul(axis, dot3(direction, axis)));
+  const float3 q_perp = sub(q, mul(axis, dot3(q, axis)));
+  const float a = dot3(d_perp, d_perp);
+  const float b = 2.0f * dot3(d_perp, q_perp);
+  const float c =
+      dot3(q_perp, q_perp) - geometry.radius * geometry.radius;
+```
+
+有限圆柱实际使用普通二次公式计算两个根，再按从近到远排列。`valid_t` 检查当前 OptiX 射线区间，`s` 对应轴向坐标；只有 $s\in[0,H]$ 且位于构建时 AABB 内的根才会报告。
+
+<!-- source-snippet id="finite-cylinder-root-filter" path="src/device_programs.cu" anchor="const float roots[2]" -->
+```cpp
+  const float root = sqrtf(discriminant);
+  float t0 = (-b - root) / (2.0f * a);
+  float t1 = (-b + root) / (2.0f * a);
+  if (t1 < t0) {
+    const float temp = t0;
+    t0 = t1;
+    t1 = temp;
+  }
+  const float roots[2] = {t0, t1};
+  for (int i = 0; i < 2; ++i) {
+    const float t = roots[i];
+    if (!valid_t(t)) {
+      continue;
+    }
+    const float3 point = add(origin, mul(direction, t));
+    const float s = dot3(sub(point, geometry.p0), axis);
+    if (s >= 0.0f && s <= geometry.height && inside_aabb(point, geometry) &&
+        optixReportIntersection(t, 0u)) {
+      return;
+    }
+  }
+}
+```
 
 当前 cylinder **只有侧壁，没有上下端盖**。若需要封闭物体，场景必须另外添加圆盘。
 
@@ -80,7 +130,46 @@ $$
 x^2=4fy,
 $$
 
-其中 $f$ 是顶点到焦点的距离。射线的局部 $x(t),y(t)$ 都是 $t$ 的一次式，代入后得到二次方程。最终交点还必须位于用户给定的 AABB 内，因此实际几何是被包围盒裁剪的一段抛物柱面。
+其中 $f$ 是顶点到焦点的距离。射线的局部 $x(t),y(t)$ 都是 $t$ 的一次式，代入后得到二次方程。`__intersection__parabola` 把系数交给共享的 `report_quadratic`；这个 helper 也是上述 `height <= 0` cylinder 防御性路径所调用的求根器，但合法 JSON 中的有限圆柱不经过它。
+
+`report_quadratic` 避免直接计算两个 $(-b\pm\sqrt\Delta)/(2a)$，而是构造
+
+$$
+q=-\frac12\left(b+\mathrm{copysign}(\sqrt\Delta,b)\right),
+\qquad t_0=\frac qa,\quad t_1=\frac cq.
+$$
+
+这种写法让其中一个根避免两个接近数相减，另一个根再由韦达关系得到。共享函数在这段代码之前先处理退化的一次方程；下面的片段处理无实根、重根和从近到远报告交点。
+
+<!-- source-snippet id="stable-quadratic-roots" path="src/device_programs.cu" anchor="const float q = -0.5f" -->
+```cpp
+  const float discriminant = b * b - 4.0f * a * c;
+  if (discriminant < 0.0f) {
+    return;
+  }
+  const float root = sqrtf(discriminant);
+  const float q = -0.5f * (b + copysignf(root, b));
+  float t0;
+  float t1;
+  if (fabsf(q) > 1.0e-20f) {
+    t0 = q / a;
+    t1 = c / q;
+  } else {
+    t0 = -b / (2.0f * a);
+    t1 = t0;
+  }
+  if (t1 < t0) {
+    const float temp = t0;
+    t0 = t1;
+    t1 = temp;
+  }
+  if (!report_root(t0, geometry) && t1 > t0 + 1.0e-7f) {
+    report_root(t1, geometry);
+  }
+}
+```
+
+`report_root` 还要求最终交点位于用户给定的 AABB 内，因此实际几何是被包围盒裁剪的一段抛物柱面。
 
 圆盘、圆柱和抛物柱面的自定义求交分别位于 [`__intersection__disk`、`__intersection__cylinder`、`__intersection__parabola`](../../src/device_programs.cu)。
 
@@ -160,6 +249,45 @@ OptiX 把底层几何加速结构称为 GAS，把实例层称为 IAS：
 - 只有 mesh 对象支持 `T * Rz * Ry * Rx * S` 实例变换；缩放三分量必须严格大于零，不能用负缩放做镜像；其他 primitive 已在世界坐标中定义。
 
 构建标志使用 `ALLOW_COMPACTION | PREFER_FAST_TRACE`。前者允许在紧凑尺寸确实更小时减少最终 GAS 占用；快速追踪偏好适合“一次构建后发射大量射线”的离线渲染。
+
+mesh GAS 的所有权按资源而不是对象实例划分。`mesh_gpu_indices` 是资源 ID 到已构建 GPU 结构的缓存：遇到同一 OBJ 的后续实例时直接 `continue`，所以每份被引用 mesh 只上传、构建一次，再由多个 IAS 实例引用；构建结果只有在紧凑尺寸确实更小时才压缩。
+
+<!-- source-snippet id="mesh-gas-resource-reuse" path="src/optix_renderer.cpp" anchor="for (const Object& object : scene.objects)" -->
+```cpp
+    for (const Object& object : scene.objects) {
+      if (object.type != GeometryType::Mesh) continue;
+      const auto& instance = std::get<MeshInstanceData>(object.geometry);
+      if (instance.mesh_id < 0 ||
+          static_cast<std::size_t>(instance.mesh_id) >= scene.meshes.size())
+        throw std::runtime_error("mesh object has an invalid resource id: " + object.name);
+      std::int32_t& gpu_index = mesh_gpu_indices[instance.mesh_id];
+      if (gpu_index >= 0) continue;
+      gpu_index = static_cast<std::int32_t>(mesh_gpus.size());
+      const MeshResource& resource = scene.meshes[instance.mesh_id];
+      mesh_triangle_count += resource.mesh.indices.size();
+      mesh_gpus.push_back(build_mesh(
+          optix.context, stream, resource, tracker));
+      ++unique_mesh_count;
+    }
+```
+
+OptiX 先返回建议的 `compact_size`。只有该值非零且严格小于原输出缓冲区时才分配紧凑缓冲区并调用 `optixAccelCompact`；否则直接保留原 GAS，避免“压缩”反而增加或不减少占用。
+
+<!-- source-snippet id="conditional-gas-compaction" path="src/optix_renderer.cpp" anchor="compact_size < output.size()" -->
+```cpp
+  std::uint64_t compact_size=0; size_device.download(&compact_size,sizeof(compact_size),stream);
+  check_cuda(cudaStreamSynchronize(stream),"cudaStreamSynchronize(GAS)");
+  temp.reset(); size_device.reset();
+  if (compact_size && compact_size < output.size()) {
+    DeviceBuffer compact(tracker,compact_size); OptixTraversableHandle compact_handle=0;
+    check_optix(optixAccelCompact(context,stream,handle,compact.pointer(),compact.size(),
+                                  &compact_handle),"optixAccelCompact");
+    check_cuda(cudaStreamSynchronize(stream),"cudaStreamSynchronize(compact)");
+    return {std::move(compact),compact_handle};
+  }
+  return {std::move(output),handle};
+}
+```
 
 ## 7. 两类射线的不同答案
 

@@ -65,6 +65,24 @@ $$
 
 对连续的 Lambert/GGX 分支，`sample_bsdf` 返回的 `weight` 正是这个分式。介电质是 delta 离散事件，不能用普通有限 BSDF 除以连续方向 PDF；其等价事件权重由反射/折射分支概率、`base_color` 和透射时的 $(\eta_i/\eta_t)^2$ 构成。$\boldsymbol\beta$ 记录路径到当前位置的整体权重；它不是剩余光子数量，也不是概率，所以经过 PDF 或俄罗斯轮盘补偿后可以大于 1。
 
+下面是公式在路径循环中的落点：`scatter.weight` 对应分式，`throughput` 对应 $\boldsymbol\beta$。非负截断只消除浮点或实现错误产生的负分量；若三通道均为零，路径不可能再产生贡献。局部方向 PDF 和是否为 delta 事件则留给下一顶点的 MIS 使用。
+
+<!-- source-snippet id="path-throughput-update" path="src/device_programs.cu" anchor="throughput = clamp_nonnegative" -->
+```cpp
+      const BsdfSample scatter =
+          sample_bsdf(material, base_color, hit.normal, wo,
+                      hit.front_face, rng);
+      if (scatter.valid == 0) {
+        break;
+      }
+      throughput = clamp_nonnegative(mul(throughput, scatter.weight));
+      if (max_component(throughput) <= 0.0f) {
+        break;
+      }
+      previous_pdf = scatter.pdf;
+      previous_delta = scatter.delta;
+```
+
 若路径未命中并到达背景，累积
 
 $$
@@ -141,6 +159,24 @@ $$
 
 设备端 `Pcg32` 根据全局 `seed`、像素索引和样本索引建立伪随机流。相同程序、设备和参数能够复现随机序列；伪随机不等于真正无规律，它只是为数值积分提供分布良好的确定性样本。
 
+初始化完成后，每次 `next_uint` 先保存旧状态，再用 PCG 的线性同余转移推进状态；`x` 和 `r` 实现 XSH-RR 输出置换。`next` 取输出的高 24 bit 并乘 $2^{-24}$，得到 `float` 可精确表达的 $[0,1)$ 样本。
+
+<!-- source-snippet id="pcg32-output-sequence" path="src/device_programs.cu" anchor="unsigned int next_uint()" -->
+```cpp
+  __forceinline__ __device__ unsigned int next_uint() {
+    const unsigned long long old = state;
+    state = old * 6364136223846793005ull + increment;
+    const unsigned int x =
+        static_cast<unsigned int>(((old >> 18u) ^ old) >> 27u);
+    const unsigned int r = static_cast<unsigned int>(old >> 59u);
+    return (x >> r) | (x << ((0u - r) & 31u));
+  }
+
+  __forceinline__ __device__ float next() {
+    return static_cast<float>(next_uint() >> 8) * 0x1.0p-24f;
+  }
+```
+
 ## 5. 俄罗斯轮盘：随机终止低贡献路径
 
 无限反弹不可能实际计算。除了硬性的 `max_depth`，SpectralDock 从 `bounce >= 4` 的散射之后，也就是第五个或更晚的表面事件且仍允许生成下一事件时，使用俄罗斯轮盘。末端事件不执行没有后继射线的轮盘。
@@ -161,6 +197,23 @@ $$
 \boldsymbol\beta\leftarrow\frac{\boldsymbol\beta}{s}.
 $$
 
+路径循环直接把公式翻译为 `survival`，并从第五个事件开始调用共享策略。`continuation.bsdf_pdf` 原样写回，只有幸存路径才用 `throughput_scale` 缩放吞吐量。
+
+<!-- source-snippet id="path-russian-roulette-call" path="src/device_programs.cu" anchor="if (bounce >= 4u)" -->
+```cpp
+      if (bounce >= 4u) {
+        const float survival =
+            fminf(fmaxf(max_component(throughput), 0.05f), 0.95f);
+        const spectraldock::ContinuationResolution continuation =
+            spectraldock::resolve_continuation(previous_pdf, survival, rng.next());
+        previous_pdf = continuation.bsdf_pdf;
+        if (!continuation.survived) {
+          break;
+        }
+        throughput = mul(throughput, continuation.throughput_scale);
+      }
+```
+
 其期望保持不变：
 
 $$
@@ -172,6 +225,20 @@ $$
 所以轮盘**单独看**不会系统性把画面变暗，而是用较高方差换取较少平均工作量。例如 $s=0.2$ 时，平均五条路径只有一条继续，但幸存者权重乘 5，期望仍相同。
 
 SpectralDock 将 RR 与 MIS 分离：轮盘只决定路径是否继续，幸存时仅将 `throughput` 除以 $s$；`previous_pdf` 始终保存未乘生存率的局部立体角 BSDF PDF $p_B$。因此 NEE 与 BSDF-hit 两侧比较同一对 PDF。
+
+这个约定集中在 `resolve_continuation`：随机样本小于生存概率才继续，幸存缩放正是 $1/s$，返回的 `bsdf_pdf` 则不乘 $s$。共享 helper 让设备调用点与 CPU 单元测试使用完全相同的决策。
+
+<!-- source-snippet id="resolve-path-continuation" path="include/spectraldock/integrator_policy.h" anchor="ContinuationResolution resolve_continuation" -->
+```cpp
+SPECTRALDOCK_HD SPECTRALDOCK_INLINE ContinuationResolution resolve_continuation(
+    float bsdf_pdf, float survival_probability, float roulette_sample) {
+  const bool survived = survival_probability > 0.0f &&
+                        roulette_sample < survival_probability;
+  return {survived,
+          survived ? 1.0f / survival_probability : 0.0f,
+          bsdf_pdf};
+}
+```
 
 ## 6. “无偏”需要谨慎使用
 

@@ -42,6 +42,31 @@ $$
 
 例如 $N_L=2$、$A=4$、$r=3$、灯面余弦为 0.5 时，$p_A=1/8$，而 $dA/d\omega=18$，所以 $p_\omega=2.25\ \mathrm{sr}^{-1}$。距离越远，同一面积覆盖的方向范围越小，单位立体角的概率密度反而越大。
 
+`light_direction_pdf` 逐项实现了这个换元：`distance2` 是 $r^2$，`cos_light` 是灯面余弦，`area` 与 `light_count` 分别对应 $A$ 和 $N_L$。两面灯先对余弦取绝对值；单面灯背面或退化面积直接返回零。
+
+<!-- source-snippet id="light-area-to-solid-angle-pdf" path="src/device_programs.cu" anchor="return distance2 /" -->
+```cpp
+  const float3 displacement = sub(point, from);
+  const float distance2 = length2(displacement);
+  const float3 wi = normalize3(displacement);
+  const float3 light_normal = light.type == spectraldock::kLightSphere
+      ? normalize3(sub(point, light.p0))
+      : normalize3(light.normal);
+  float cos_light = dot3(light_normal, neg(wi));
+  if (light.two_sided != 0) {
+    cos_light = fabsf(cos_light);
+  }
+  const float area =
+      light.area > 0.0f ? light.area
+                        : length3(cross3(light.edge_u, light.edge_v));
+  if (cos_light <= 0.0f || area <= 0.0f) {
+    return 0.0f;
+  }
+  return distance2 /
+         (cos_light * area * static_cast<float>(params.light_count));
+}
+```
+
 当前场景接口中的显式灯都是单面：rectangle/disk 只从法线正面发光，sphere 只向外发光。设备结构预留了 `two_sided` 分支，但加载器未暴露它。球灯在整个球面均匀取点，背向着色点的样本会被余弦条件拒绝；这是正确但不够高效的选择。
 
 ## 2. 阴影射线只回答可见性
@@ -68,6 +93,51 @@ $$
 - 每次只选一盏灯，但 $1/N_L$ 的概率已被权重补偿。
 
 阴影射线不计算第二个表面的完整材质，只需要判断“是否被挡”。当前实现因此把介电质也视作阴影遮挡物；alpha cutoff 可以让被裁掉的纹素不遮挡。
+
+直接光函数的末尾把公式各项接在一起：先从表面沿法线偏移起点，再向灯点发有限阴影射线；不可见时贡献为零。可见时 `direct_light_mis_weight` 给出 $w_L$，返回值依次相乘 $f_s$、$L_e$、$\cos\theta$、$w_L$，最后除以 $p_L$。
+
+<!-- source-snippet id="direct-light-visibility-and-estimator" path="src/device_programs.cu" anchor="const float3 shadow_origin" -->
+```cpp
+  const float3 shadow_origin =
+      add(hit.position, mul(hit.normal, params.scene_epsilon * 2.0f));
+  const float3 shadow_displacement = sub(light_point, shadow_origin);
+  const float shadow_distance = length3(shadow_displacement);
+  if (shadow_distance <= params.scene_epsilon * 2.0f) {
+    return f3(0.0f, 0.0f, 0.0f);
+  }
+  const float3 shadow_direction =
+      divv(shadow_displacement, shadow_distance);
+  if (!trace_visible(shadow_origin, shadow_direction, shadow_distance,
+                     static_cast<int>(light_index), traced_rays)) {
+    return f3(0.0f, 0.0f, 0.0f);
+  }
+  const float mis = spectraldock::direct_light_mis_weight(
+      light_pdf, bsdf_pdf, light.geometry_index >= 0,
+      next_bsdf_ray_exists);
+  return mul(mul(bsdf, light.emission), no_l * mis / light_pdf);
+}
+```
+
+`trace_visible` 把 `tmax` 设在灯点之前，并同时启用“首个命中即终止”和“禁用 closest-hit”。因此它只返回二值可见性，不构造第二个表面的完整着色结果。
+
+<!-- source-snippet id="shadow-ray-visibility-query" path="src/device_programs.cu" anchor="OPTIX_RAY_FLAG_TERMINATE_ON_FIRST_HIT" -->
+```cpp
+static __forceinline__ __device__ bool trace_visible(
+    float3 origin, float3 direction, float distance, int light_index,
+    unsigned long long& traced_rays) {
+  unsigned int visible = 0u;
+  unsigned int target_light = static_cast<unsigned int>(light_index);
+  ++traced_rays;
+  optixTrace(params.traversable, origin, direction, params.scene_epsilon,
+             fmaxf(distance - params.scene_epsilon, params.scene_epsilon),
+             0.0f, OptixVisibilityMask(255),
+             OPTIX_RAY_FLAG_TERMINATE_ON_FIRST_HIT |
+                 OPTIX_RAY_FLAG_DISABLE_CLOSESTHIT,
+             spectraldock::kRayShadow, spectraldock::kRayTypeCount,
+             spectraldock::kRayShadow, visible, target_light);
+  return visible != 0u;
+}
+```
 
 ## 3. 为什么需要两种采样策略
 
@@ -98,7 +168,23 @@ w_L=\frac{p_L^2}{p_L^2+p_B^2},
 w_B=\frac{p_B^2}{p_B^2+p_L^2}.
 $$
 
-当两侧使用同一对 $p_L,p_B$ 时，$w_L+w_B=1$。更擅长生成该方向的策略得到更大权重，但另一策略并不会被硬切断。实现会先用 $\max(p_L,p_B)$ 归一化两项再平方；这不改变公式，却避免大 PDF 平方溢出、小 PDF 平方同时下溢，或人为截断分母破坏互补性。
+当 $p_L,p_B$ 至少一个为正，且两侧使用同一对 PDF 时，$w_L+w_B=1$。恰好一个 PDF 为零时，可生成该路径的策略权重为 1，另一策略为 0。两者都为零时，`power_heuristic` 返回 0；这个结果不参与有效贡献，因为调用点会先拒绝无效样本，例如 NEE 在 `bsdf_pdf <= 0` 时直接返回。更擅长生成该方向的策略得到更大权重，但另一策略并不会被硬切断。实现会先用 $\max(p_L,p_B)$ 归一化两项再平方；这不改变正 PDF 下的公式，却避免大 PDF 平方溢出、小 PDF 平方同时下溢，或人为截断分母破坏互补性。
+
+源码先用较大 PDF 作为 `scale`。两个 PDF 至少一个为正时，归一化后的 `a`、`b` 至少有一个为 1，二者平方后仍保留原比值；前两个提前返回分别覆盖待求权重的 PDF 非正，以及竞争 PDF 非正的情况。
+
+<!-- source-snippet id="stable-power-heuristic" path="include/spectraldock/integrator_policy.h" anchor="float power_heuristic" -->
+```cpp
+SPECTRALDOCK_HD SPECTRALDOCK_INLINE float power_heuristic(float pdf_a, float pdf_b) {
+  if (!(pdf_a > 0.0f)) return 0.0f;
+  if (!(pdf_b > 0.0f)) return 1.0f;
+  const float scale = pdf_a > pdf_b ? pdf_a : pdf_b;
+  const float a = pdf_a / scale;
+  const float b = pdf_b / scale;
+  const float aa = a * a;
+  const float bb = b * b;
+  return aa / (aa + bb);
+}
+```
 
 - `sample_direct_light` 的 NEE 项乘 $w_L$；
 - BSDF 路径稍后命中绑定几何的 emitter 时乘 $w_B$；
@@ -122,6 +208,27 @@ MIS 只应比较两种策略都可能生成的路径：
 - 没有可命中几何的解析面积灯只能由 NEE 得到，NEE 权重为 1；
 - 发光几何没有绑定到显式灯时，`light_direction_pdf` 为 0，路径命中贡献也保持完整权重；
 - 在最后一个 `max_depth` 表面事件，没有下一条 BSDF 射线参与竞争，即使灯绑定了几何，NEE 权重也为 1。
+
+两个共享策略函数把这些边界写成布尔条件。NEE 只有在灯可被后继射线命中且下一条 BSDF 射线确实存在时才竞争；emitter-hit 则在前驱为 delta 或 emitter 未绑定显式灯时保留完整贡献。
+
+<!-- source-snippet id="mis-competing-strategy-policy" path="include/spectraldock/integrator_policy.h" anchor="direct_light_mis_weight" -->
+```cpp
+SPECTRALDOCK_HD SPECTRALDOCK_INLINE float direct_light_mis_weight(
+    float light_pdf, float bsdf_pdf, bool light_can_be_hit,
+    bool next_bsdf_ray_exists) {
+  return light_can_be_hit && next_bsdf_ray_exists
+             ? power_heuristic(light_pdf, bsdf_pdf)
+             : 1.0f;
+}
+
+SPECTRALDOCK_HD SPECTRALDOCK_INLINE float emitter_hit_mis_weight(
+    float bsdf_pdf, float light_pdf, bool previous_event_was_delta,
+    bool emitter_is_bound_to_light) {
+  return previous_event_was_delta || !emitter_is_bound_to_light
+             ? 1.0f
+             : power_heuristic(bsdf_pdf, light_pdf);
+}
+```
 
 ## 6. 统一的 RR/MIS PDF 约定与末端深度
 
