@@ -26,7 +26,7 @@
 
 ### 材质
 
-- `metal` 是纯 GGX 镜面微表面瓣，$\mathbf F_0=\text{base_color}$，不是通用 metallic workflow；
+- `metal` 是纯 GGX 镜面微表面瓣，$\mathbf F_0=\text{base\_color}$，不是通用 metallic workflow；
 - GGX 采样普通 NDF 而非 VNDF，掠射角方差可能较高；
 - `dielectric` 是光滑 delta 界面，外部固定为空气，没有嵌套介质、粗糙折射或体吸收；
 - 场景解析不强制被动材质的 `base_color ≤ 1`，能量合理性部分依赖输入；
