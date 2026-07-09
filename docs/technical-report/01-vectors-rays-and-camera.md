@@ -66,11 +66,11 @@ $$
 令相机位置为 $\mathbf C$，观察目标为 $\mathbf T$，用户提供的上方向为 $\mathbf a$。SpectralDock 构造
 
 $$
-\mathbf w=\operatorname{normalize}(\mathbf C-\mathbf T),
+\mathbf w=\mathrm{normalize}(\mathbf C-\mathbf T),
 $$
 
 $$
-\mathbf u=\operatorname{normalize}(\mathbf a\times\mathbf w),
+\mathbf u=\mathrm{normalize}(\mathbf a\times\mathbf w),
 \qquad
 \mathbf v=\mathbf w\times\mathbf u.
 $$
@@ -112,7 +112,7 @@ $$
 $$
 \mathbf o=\mathbf C,
 \qquad
-\mathbf d=\operatorname{normalize}(\mathbf p).
+\mathbf d=\mathrm{normalize}(\mathbf p).
 $$
 
 此时改变 $F$ 不改变画面视角，因为单位化会消去公共比例；`focus_distance` 主要在启用景深后才有视觉作用。
@@ -137,7 +137,7 @@ $$
 $$
 \mathbf o=\mathbf C+\boldsymbol\delta,
 \qquad
-\mathbf d=\operatorname{normalize}(\mathbf p-\boldsymbol\delta).
+\mathbf d=\mathrm{normalize}(\mathbf p-\boldsymbol\delta).
 $$
 
 不同起点的射线仍会聚到同一个焦平面点；焦平面附近清晰，前后位置因射线不再汇聚而模糊。

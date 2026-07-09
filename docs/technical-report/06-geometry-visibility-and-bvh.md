@@ -103,7 +103,7 @@ $$
 这三个 $\lambda$ 是重心坐标。除判断交点外，它还能插值顶点属性：
 
 $$
-\mathbf n_s=\operatorname{normalize}
+\mathbf n_s=\mathrm{normalize}
 (\lambda_a\mathbf n_a+\lambda_b\mathbf n_b+\lambda_c\mathbf n_c),
 $$
 

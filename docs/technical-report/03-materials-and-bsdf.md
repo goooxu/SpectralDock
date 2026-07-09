@@ -63,7 +63,7 @@ $$
 
 $$
 \mathbf h=
-\operatorname{normalize}(\boldsymbol\omega_o+\boldsymbol\omega_i).
+\mathrm{normalize}(\boldsymbol\omega_o+\boldsymbol\omega_i).
 $$
 
 只有法线接近 $\mathbf h$ 的微镜面，才能把一个方向反射到另一个方向。

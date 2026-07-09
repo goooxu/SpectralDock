@@ -34,7 +34,7 @@ $$
 估计量方差为
 
 $$
-\operatorname{Var}[\widehat I_N]
+\mathrm{Var}[\widehat I_N]
 =\frac1N\left[
 \int_\Omega\frac{g(x)^2}{p(x)}\,dx-I^2
 \right].
@@ -148,7 +148,7 @@ $$
 生存概率为
 
 $$
-s=\operatorname{clamp}
+s=\mathrm{clamp}
 \left(
 \max(\beta_r,\beta_g,\beta_b),
 0.05,0.95
