@@ -26,7 +26,7 @@
 
 ### 材质
 
-- `metal` 是纯 GGX 镜面微表面瓣，$\mathbf F_0=\text{base\_color}$，不是通用 metallic workflow；
+- `metal` 是纯 GGX 镜面微表面瓣，$\mathbf F_0$ 直接取自 `base_color`，不是通用 metallic workflow；
 - GGX 采样普通 NDF 而非 VNDF，掠射角方差可能较高；
 - `dielectric` 是光滑 delta 界面，外部固定为空气，没有嵌套介质、粗糙折射或体吸收；
 - 场景解析不强制被动材质的 `base_color ≤ 1`，能量合理性部分依赖输入；
@@ -69,17 +69,17 @@
 
 ## 4. 射线吞吐量怎样理解
 
-每像素记录实际调用 `optixTrace` 的次数，包括 radiance 和 shadow ray：
+每像素记录实际调用 `optixTrace` 的次数，包括 radiance 和 shadow ray。令 $N_{\mathrm{rays}}$ 对应 `traced_rays`，$t_{\mathrm{render}}$ 对应以毫秒计的 `render_ms`：
 
 $$
 \text{rays/s}=
-\frac{\text{traced rays}}
-{\text{render\_ms}\times10^{-3}}.
+\frac{N_{\mathrm{rays}}}
+{t_{\mathrm{render}}\times10^{-3}}.
 $$
 
 它不是纯 BVH microbenchmark：材质计算、随机数、分支、纹理和路径循环都在同一个 launch 内。不同场景的 rays/s 差异不应简单解释为硬件快慢。
 
-`traced_rays` 也不等于 $W\times H\times spp\times max\_depth$：路径可提前终止，普通表面还可能额外发一条 shadow ray。
+`traced_rays` 也不等于 $W\times H\times \mathrm{spp}\times D_{\max}$，其中 $D_{\max}$ 对应 `max_depth`：路径可提前终止，普通表面还可能额外发一条 shadow ray。
 
 ## 5. 显存指标
 

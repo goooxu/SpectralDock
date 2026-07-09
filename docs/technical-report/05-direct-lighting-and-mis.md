@@ -130,7 +130,7 @@ SpectralDock 采用“RR 独立于 MIS”的约定。局部方向采样得到的
 $$
 \boldsymbol\beta\leftarrow\frac{\boldsymbol\beta}{s},
 \qquad
-\texttt{previous\_pdf}=p_B.
+p_{\mathrm{prev}}=p_B.
 $$
 
 这样，NEE 在当前顶点计算 $w_L$，以及幸存 BSDF 路径稍后命中 emitter 时计算 $w_B$，始终使用相同的原始 $p_L,p_B$，互补关系不随 RR 改变。
