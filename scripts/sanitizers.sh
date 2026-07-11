@@ -16,7 +16,8 @@ COMMON=(
 )
 for tool in memcheck initcheck racecheck; do
   echo "== compute-sanitizer ${tool} =="
-  gpu_container compute-sanitizer --tool "${tool}" --error-exitcode 99 "${COMMON[@]}"
+  gpu_container compute-sanitizer --tool "${tool}" \
+    --report-api-errors explicit --error-exitcode 99 "${COMMON[@]}"
 done
 
 gpu_container python3 tests/check_mesh_smoke.py \
