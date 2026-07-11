@@ -5,7 +5,7 @@
 ## 开发与测试
 
 1. 从当前分支创建主题分支，保持改动聚焦。
-2. 运行 ./scripts/test.sh；它会在不使用 GPU 或 OptiX 的 CPU 容器入口中执行 shell 检查、CPU CMake、CTest 和全部 pytest。
+2. 运行 ./scripts/test.sh；它会在不使用 GPU 或 OptiX 的 host-only 容器入口中执行 shell 检查、关闭 GPU 的 CMake、CTest 和全部 pytest。该入口不构建渲染器、不渲染图像，不应称为 CPU renderer 验收。
 3. GPU、OptiX、Compute Sanitizer 与像素 golden 由维护者在已记录的 RTX 5090 环境复核。
 4. 不要把 build、output、reports 或本地 SDK 加入提交。
 5. --preset final 会更新受版本控制的 docs/gallery，仅在维护者明确要求时使用。

@@ -28,9 +28,10 @@
 - [ ] 检查 `.gitignore`、`.dockerignore` 和 `.gitattributes`；确认 `build/`、`output/`、`reports/` 不会进入提交。
 - [ ] 确认五个场景仍引用同一个 `assets/examples/models/capsule-mascot.obj`，场景名、schema、CLI 和 gallery 路径未意外变化。
 
-## 4. CPU CI 与确定性
+## 4. Host-only CI 与确定性
 
 - [ ] 在 Ubuntu 24.04、关闭 GPU 构建的环境运行 shell 检查、CMake、CTest 和全部 pytest。
+- [ ] 确认 host-only CI 不构建 `spectraldock` 可执行文件、不渲染图像，不把它宣传为 CPU renderer 或 GPU 验收。
 - [ ] 确认吉祥物生成器输出与提交的 OBJ/manifest 一致。
 - [ ] 确认 Harbor 生成器输出与提交场景一致且非重叠检查通过。
 - [ ] 确认 GitHub Actions 使用固定主版本，且标准托管 runner 不宣称 GPU 验收。
@@ -44,13 +45,13 @@
 - [ ] 设置仅作用于本仓库的 GitHub noreply 提交邮箱，并核对作者信息。
 - [ ] 在第一次提交前逐项检查 staged 文件、权限位和体积。
 - [ ] 在 GitHub 创建名为 `spectraldock` 的空私有仓库，不自动添加 README、许可证或 `.gitignore`。
-- [ ] 推送 `main`，等待 CPU CI 全部通过；完成公开前检查后再转为 public。
+- [ ] 推送 `main`，等待现有 `CPU CI / Ubuntu 24.04 CPU` host-only 检查全部通过；完成公开前检查后再转为 public。
 
 ## 6. GitHub 保护设置
 
 - [ ] 启用 push protection。
 - [ ] 启用 secret scanning。
-- [ ] 为 `main` 配置分支保护和必需的 CPU CI 检查。
+- [ ] 为 `main` 配置分支保护，并保留现有 `CPU CI / Ubuntu 24.04 CPU` host-only required check 名称。
 - [ ] 启用私有漏洞报告。
 - [ ] 核对仓库可见性、Actions 权限和默认分支设置。
 
@@ -67,7 +68,7 @@
 ## 8. 发布 v0.1.0
 
 - [ ] 删除或确认未跟踪 `build/`、`output/`、`reports/` 及其他临时产物。
-- [ ] 在最终提交上重新运行凭据扫描、仓库体积检查和 CPU CI。
+- [ ] 在最终提交上重新运行凭据扫描、仓库体积检查和 host-only CI。
 - [ ] 确认发布说明明确唯一完整验证平台与已知限制。
 - [ ] 创建并推送源码标签 `v0.1.0`。
 - [ ] 创建 source-only GitHub Release；不附加二进制、容器镜像、CUDA SDK 或 OptiX SDK。

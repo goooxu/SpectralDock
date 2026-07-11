@@ -1,5 +1,4 @@
 #include "spectraldock/math.h"
-#include "spectraldock/integrator_policy.h"
 #include "spectraldock/obj_loader.h"
 #include "spectraldock/scene_types.h"
 
@@ -72,164 +71,12 @@ Vec3 apply_transform(const TransformMatrix3x4& matrix, Vec3 point) {
   };
 }
 
-void test_vectors_and_optics() {
+void test_vectors() {
   const Vec3 x{1.0f, 0.0f, 0.0f};
   const Vec3 y{0.0f, 1.0f, 0.0f};
   check(length_squared(cross(x, y) - Vec3{0.0f, 0.0f, 1.0f}) < 1.0e-12f, "cross product");
   near(dot(x, y), 0.0f, 1.0e-7f, "dot product");
   near(length(normalize(Vec3{2.0f, 3.0f, 4.0f})), 1.0f, 1.0e-6f, "normalize");
-
-  Vec3 refracted;
-  check(refract(Vec3{0.0f, -1.0f, 0.0f}, Vec3{0.0f, 1.0f, 0.0f}, 1.0f / 1.5f, refracted),
-        "normal-incidence refraction");
-  near(refracted.y, -1.0f, 1.0e-6f, "normal-incidence direction");
-  check(!refract(normalize(Vec3{0.9f, 0.4358899f, 0.0f}),
-                 Vec3{0.0f, -1.0f, 0.0f},
-                 1.5f,
-                 refracted),
-        "total internal reflection");
-  near(fresnel_schlick(1.0f, 1.0f, 1.5f), 0.04f, 1.0e-6f, "normal Fresnel");
-}
-
-void test_intersections() {
-  SurfaceHit hit;
-  check(intersect_sphere(Ray{{0.0f, 0.0f, 3.0f}, {0.0f, 0.0f, -1.0f}},
-                         Vec3{0.0f}, 1.0f, 0.001f, 100.0f, hit),
-        "sphere intersection");
-  near(hit.t, 2.0f, 1.0e-6f, "sphere distance");
-  near(hit.uv.x, 0.25f, 1.0e-6f, "sphere u coordinate");
-  near(hit.uv.y, 0.5f, 1.0e-6f, "sphere v coordinate");
-  check(hit.front_face, "sphere front face");
-  check(intersect_sphere(Ray{Vec3{0.0f}, Vec3{1.0f, 0.0f, 0.0f}},
-                         Vec3{0.0f}, 1.0f, 0.001f, 100.0f, hit),
-        "sphere inside intersection");
-  check(!hit.front_face && hit.normal.x < 0.0f, "sphere back face orientation");
-
-  const Vec3 p1{-1.0f, -1.0f, 0.0f};
-  const Vec3 p2{-1.0f, 1.0f, 0.0f};
-  const Vec3 p3{1.0f, 1.0f, 0.0f};
-  check(intersect_parallelogram(
-            Ray{{0.5f, -0.5f, 2.0f}, {0.0f, 0.0f, -1.0f}},
-            p1, p2, p3, 0.001f, 100.0f, hit),
-        "rectangle intersection");
-  near(hit.uv.x, 0.75f, 1.0e-6f, "rectangle u coordinate");
-  near(hit.uv.y, 0.25f, 1.0e-6f, "rectangle v coordinate");
-  check(hit.front_face, "rectangle front face");
-  check(intersect_parallelogram(
-            Ray{{0.0f, 0.0f, -2.0f}, {0.0f, 0.0f, 1.0f}},
-            p1, p2, p3, 0.001f, 100.0f, hit),
-        "rectangle back intersection");
-  check(!hit.front_face, "rectangle back face");
-
-  check(intersect_disk(Ray{{0.0f, 2.0f, 0.0f}, {0.0f, -1.0f, 0.0f}},
-                       Vec3{0.0f},
-                       Vec3{0.0f, 1.0f, 0.0f},
-                       1.0f,
-                       0.001f,
-                       100.0f,
-                       hit),
-        "disk intersection");
-  near(hit.t, 2.0f, 1.0e-6f, "disk distance");
-  near(hit.uv.x, 0.5f, 1.0e-6f, "disk center u");
-  near(hit.uv.y, 0.5f, 1.0e-6f, "disk center v");
-  check(hit.front_face, "disk front face");
-
-  check(intersect_cylinder(Ray{{2.0f, 1.0f, 0.0f}, {-1.0f, 0.0f, 0.0f}},
-                           Vec3{0.0f},
-                           Vec3{0.0f, 1.0f, 0.0f},
-                           2.0f,
-                           1.0f,
-                           0.001f,
-                           100.0f,
-                           hit),
-        "cylinder intersection");
-  near(hit.t, 1.0f, 1.0e-6f, "cylinder distance");
-  near(hit.outward_normal.x, 1.0f, 1.0e-6f, "cylinder normal");
-  near(hit.uv.x, 0.5f, 1.0e-6f, "cylinder axial u");
-  near(hit.uv.y, 1.0f, 1.0e-6f, "cylinder azimuth v");
-  check(!intersect_cylinder(Ray{{2.0f, 3.0f, 0.0f}, {-1.0f, 0.0f, 0.0f}},
-                            Vec3{0.0f},
-                            Vec3{0.0f, 1.0f, 0.0f},
-                            2.0f,
-                            1.0f,
-                            0.001f,
-                            100.0f,
-                            hit),
-        "cylinder height clipping");
-
-  const Aabb clip{{-2.0f, -2.0f, -1.0f}, {2.0f, 2.0f, 3.0f}};
-  check(intersect_parabola(Ray{{0.0f, 0.0f, -1.0f}, {0.0f, 0.0f, 1.0f}},
-                           Vec3{0.0f},
-                           Vec3{0.0f, 1.0f, 0.0f},
-                           Vec3{0.0f, 0.0f, 1.0f},
-                           clip,
-                           0.001f,
-                           100.0f,
-                           hit),
-        "parabola vertex intersection");
-  near(hit.t, 1.0f, 1.0e-5f, "parabola distance");
-  near(hit.outward_normal.z, -1.0f, 1.0e-5f, "parabola normal");
-}
-
-void test_color() {
-  near(linear_to_srgb(0.0f), 0.0f, 1.0e-7f, "sRGB black");
-  near(linear_to_srgb(1.0f), 1.0f, 1.0e-6f, "sRGB white");
-  near(srgb_to_linear(linear_to_srgb(0.18f)), 0.18f, 1.0e-5f, "sRGB round trip");
-  const Vec3 dark = aces_tonemap(Vec3{0.1f});
-  const Vec3 bright = aces_tonemap(Vec3{10.0f});
-  check(dark.x >= 0.0f && bright.x <= 1.0f && bright.x > dark.x, "ACES range and monotonicity");
-}
-
-void test_mis() {
-  near(power_heuristic(1.0f, 1.0f), 0.5f, 1.0e-7f, "equal MIS PDFs");
-  near(power_heuristic(1.0f, 2.0f), 0.2f, 1.0e-7f, "unequal MIS PDFs");
-  near(power_heuristic(0.0f, 0.0f), 0.0f, 1.0e-7f, "zero MIS PDFs");
-
-  const float pdf_pairs[][2] = {
-      {1.0f, 1.0f},
-      {1.0f, 2.0f},
-      {1.0e-30f, 2.0e-30f},
-      {1.0e30f, 2.0e30f},
-      {1.0e-30f, 1.0e30f},
-      {0.0f, 1.0f},
-  };
-  for (const auto& pdfs : pdf_pairs) {
-    const float a = power_heuristic(pdfs[0], pdfs[1]);
-    const float b = power_heuristic(pdfs[1], pdfs[0]);
-    check(std::isfinite(a) && std::isfinite(b),
-          "MIS weights must remain finite");
-    near(a + b, 1.0f, 1.0e-6f, "complementary MIS weights");
-  }
-
-  for (const float survival : {0.05f, 0.2f, 0.95f}) {
-    const ContinuationResolution continuation =
-        resolve_continuation(0.375f, survival, 0.0f);
-    check(continuation.survived, "roulette survivor");
-    near(continuation.bsdf_pdf, 0.375f, 0.0f,
-         "roulette must not change the BSDF PDF");
-    near(survival * continuation.throughput_scale, 1.0f, 1.0e-6f,
-         "roulette expected throughput compensation");
-  }
-  const ContinuationResolution boundary =
-      resolve_continuation(0.375f, 0.2f, 0.2f);
-  check(!boundary.survived && boundary.throughput_scale == 0.0f,
-        "roulette terminates at the survival boundary");
-  check(resolve_continuation(
-            0.375f, 0.2f, std::nextafter(0.2f, 0.0f)).survived,
-        "roulette survives immediately below the boundary");
-
-  near(direct_light_mis_weight(1.0f, 2.0f, true, true), 0.2f,
-       1.0e-7f, "nonterminal bound light uses MIS");
-  near(direct_light_mis_weight(1.0f, 2.0f, true, false), 1.0f,
-       1.0e-7f, "terminal direct light has full weight");
-  near(direct_light_mis_weight(1.0f, 2.0f, false, true), 1.0f,
-       1.0e-7f, "unbound direct light has full weight");
-  near(emitter_hit_mis_weight(2.0f, 1.0f, false, true), 0.8f,
-       1.0e-7f, "ordinary bound emitter hit uses MIS");
-  near(emitter_hit_mis_weight(2.0f, 1.0f, true, true), 1.0f,
-       1.0e-7f, "delta predecessor has full emitter weight");
-  near(emitter_hit_mis_weight(2.0f, 1.0f, false, false), 1.0f,
-       1.0e-7f, "unbound emitter hit has full weight");
 }
 
 void test_png() {
@@ -453,10 +300,7 @@ void test_scene_parser() {
 
 int main(int argc, char** argv) {
   try {
-    test_vectors_and_optics();
-    test_intersections();
-    test_color();
-    test_mis();
+    test_vectors();
     test_png();
     test_obj_loader();
     test_transform_order();

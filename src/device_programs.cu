@@ -3,7 +3,6 @@
 #include <cuda_runtime.h>
 
 #include "spectraldock/device_types.h"
-#include "spectraldock/integrator_policy.h"
 
 using spectraldock::AreaLight;
 using GeometryData = spectraldock::DeviceGeometryData;
@@ -72,6 +71,54 @@ static __forceinline__ __device__ float max_component(float3 a) {
 static __forceinline__ __device__ float3 clamp_nonnegative(float3 a) {
   return f3(fmaxf(a.x, 0.0f), fmaxf(a.y, 0.0f), fmaxf(a.z, 0.0f));
 }
+
+// Russian roulette scales path throughput, not the local solid-angle BSDF
+// density later used by MIS.
+struct ContinuationResolution {
+  bool survived = false;
+  float throughput_scale = 0.0f;
+  float bsdf_pdf = 0.0f;
+};
+
+static __forceinline__ __device__ ContinuationResolution resolve_continuation(
+    float bsdf_pdf, float survival_probability, float roulette_sample) {
+  const bool survived = survival_probability > 0.0f &&
+                        roulette_sample < survival_probability;
+  return {survived,
+          survived ? 1.0f / survival_probability : 0.0f,
+          bsdf_pdf};
+}
+
+// Normalize by the larger PDF before squaring to keep complementary weights
+// finite without imposing an arbitrary denominator floor.
+static __forceinline__ __device__ float power_heuristic(
+    float pdf_a, float pdf_b) {
+  if (!(pdf_a > 0.0f)) return 0.0f;
+  if (!(pdf_b > 0.0f)) return 1.0f;
+  const float scale = pdf_a > pdf_b ? pdf_a : pdf_b;
+  const float a = pdf_a / scale;
+  const float b = pdf_b / scale;
+  const float aa = a * a;
+  const float bb = b * b;
+  return aa / (aa + bb);
+}
+
+static __forceinline__ __device__ float direct_light_mis_weight(
+    float light_pdf, float bsdf_pdf, bool light_can_be_hit,
+    bool next_bsdf_ray_exists) {
+  return light_can_be_hit && next_bsdf_ray_exists
+             ? power_heuristic(light_pdf, bsdf_pdf)
+             : 1.0f;
+}
+
+static __forceinline__ __device__ float emitter_hit_mis_weight(
+    float bsdf_pdf, float light_pdf, bool previous_event_was_delta,
+    bool emitter_is_bound_to_light) {
+  return previous_event_was_delta || !emitter_is_bound_to_light
+             ? 1.0f
+             : power_heuristic(bsdf_pdf, light_pdf);
+}
+
 static __forceinline__ __device__ float3 reflect3(float3 incident, float3 n) {
   return sub(incident, mul(n, 2.0f * dot3(incident, n)));
 }
@@ -647,7 +694,7 @@ static __forceinline__ __device__ float3 sample_direct_light(
                      static_cast<int>(light_index), traced_rays)) {
     return f3(0.0f, 0.0f, 0.0f);
   }
-  const float mis = spectraldock::direct_light_mis_weight(
+  const float mis = direct_light_mis_weight(
       light_pdf, bsdf_pdf, light.geometry_index >= 0,
       next_bsdf_ray_exists);
   return mul(mul(bsdf, light.emission), no_l * mis / light_pdf);
@@ -836,7 +883,7 @@ extern "C" __global__ void __raygen__pathtrace() {
         const float light_pdf = emitter_is_bound_to_light
             ? light_direction_pdf(hit.light_index, ray_origin, hit.position)
             : 0.0f;
-        const float weight = spectraldock::emitter_hit_mis_weight(
+        const float weight = emitter_hit_mis_weight(
             previous_pdf, light_pdf, previous_delta != 0,
             emitter_is_bound_to_light);
         radiance = add(radiance, mul(mul(throughput, emitted), weight));
@@ -869,8 +916,8 @@ extern "C" __global__ void __raygen__pathtrace() {
       if (bounce >= 4u) {
         const float survival =
             fminf(fmaxf(max_component(throughput), 0.05f), 0.95f);
-        const spectraldock::ContinuationResolution continuation =
-            spectraldock::resolve_continuation(previous_pdf, survival, rng.next());
+        const ContinuationResolution continuation =
+            resolve_continuation(previous_pdf, survival, rng.next());
         previous_pdf = continuation.bsdf_pdf;
         if (!continuation.survived) {
           break;

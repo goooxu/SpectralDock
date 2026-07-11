@@ -197,15 +197,15 @@ $$
 \boldsymbol\beta\leftarrow\frac{\boldsymbol\beta}{s}.
 $$
 
-路径循环直接把公式翻译为 `survival`，并从第五个事件开始调用共享策略。`continuation.bsdf_pdf` 原样写回，只有幸存路径才用 `throughput_scale` 缩放吞吐量。
+路径循环直接把公式翻译为 `survival`，并从第五个事件开始调用设备局部策略。`continuation.bsdf_pdf` 原样写回，只有幸存路径才用 `throughput_scale` 缩放吞吐量。
 
 <!-- source-snippet id="path-russian-roulette-call" path="src/device_programs.cu" anchor="if (bounce >= 4u)" -->
 ```cpp
       if (bounce >= 4u) {
         const float survival =
             fminf(fmaxf(max_component(throughput), 0.05f), 0.95f);
-        const spectraldock::ContinuationResolution continuation =
-            spectraldock::resolve_continuation(previous_pdf, survival, rng.next());
+        const ContinuationResolution continuation =
+            resolve_continuation(previous_pdf, survival, rng.next());
         previous_pdf = continuation.bsdf_pdf;
         if (!continuation.survived) {
           break;
@@ -226,11 +226,11 @@ $$
 
 SpectralDock 将 RR 与 MIS 分离：轮盘只决定路径是否继续，幸存时仅将 `throughput` 除以 $s$；`previous_pdf` 始终保存未乘生存率的局部立体角 BSDF PDF $p_B$。因此 NEE 与 BSDF-hit 两侧比较同一对 PDF。
 
-这个约定集中在 `resolve_continuation`：随机样本小于生存概率才继续，幸存缩放正是 $1/s$，返回的 `bsdf_pdf` 则不乘 $s$。共享 helper 让设备调用点与 CPU 单元测试使用完全相同的决策。
+这个约定集中在 `device_programs.cu` 匿名命名空间内的 `resolve_continuation`：随机样本小于生存概率才继续，幸存缩放正是 $1/s$，返回的 `bsdf_pdf` 则不乘 $s$。它和调用点由同一份 OptiX IR 一起编译，不再维护或测试一份平行的 CPU 渲染策略副本。
 
-<!-- source-snippet id="resolve-path-continuation" path="include/spectraldock/integrator_policy.h" anchor="ContinuationResolution resolve_continuation" -->
+<!-- source-snippet id="resolve-path-continuation" path="src/device_programs.cu" anchor="ContinuationResolution resolve_continuation" -->
 ```cpp
-SPECTRALDOCK_HD SPECTRALDOCK_INLINE ContinuationResolution resolve_continuation(
+static __forceinline__ __device__ ContinuationResolution resolve_continuation(
     float bsdf_pdf, float survival_probability, float roulette_sample) {
   const bool survived = survival_probability > 0.0f &&
                         roulette_sample < survival_probability;

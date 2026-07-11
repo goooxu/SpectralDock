@@ -142,7 +142,7 @@ $$
 
 ## 5. 源码如何对应方程
 
-[`__raygen__pathtrace`](../../src/device_programs.cu) 是渲染方程的随机估计器：
+[`__raygen__pathtrace`](../../src/device_programs.cu) 及同一编译单元内的设备局部 helper 构成渲染方程的随机估计器；项目没有另一套 CPU 渲染实现：
 
 1. 射线未命中时，把背景辐亮度加入结果；
 2. 命中发光面时，把带路径吞吐量和必要 MIS 权重的 $L_e$ 加入结果；
@@ -192,7 +192,7 @@ $$
         const float light_pdf = emitter_is_bound_to_light
             ? light_direction_pdf(hit.light_index, ray_origin, hit.position)
             : 0.0f;
-        const float weight = spectraldock::emitter_hit_mis_weight(
+        const float weight = emitter_hit_mis_weight(
             previous_pdf, light_pdf, previous_delta != 0,
             emitter_is_bound_to_light);
         radiance = add(radiance, mul(mul(throughput, emitted), weight));

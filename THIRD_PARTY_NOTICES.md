@@ -27,7 +27,7 @@ the licenses identified below.
 - Author: Krzysztof Narkowicz
 - Source: https://knarkowicz.wordpress.com/2016/01/06/aces-filmic-tone-mapping-curve/
 - Upstream offer: CC0 or MIT; SpectralDock uses it under CC0-1.0.
-- Used in: include/spectraldock/math.h and src/postprocess.cu
+- Used in: src/postprocess.cu
 
 This compact per-channel fit is not the complete Academy Color Encoding
 System, and it does not implement ACES color-space transforms, RRT, ODT, or

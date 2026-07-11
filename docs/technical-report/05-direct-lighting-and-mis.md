@@ -111,7 +111,7 @@ $$
                      static_cast<int>(light_index), traced_rays)) {
     return f3(0.0f, 0.0f, 0.0f);
   }
-  const float mis = spectraldock::direct_light_mis_weight(
+  const float mis = direct_light_mis_weight(
       light_pdf, bsdf_pdf, light.geometry_index >= 0,
       next_bsdf_ray_exists);
   return mul(mul(bsdf, light.emission), no_l * mis / light_pdf);
@@ -172,9 +172,10 @@ $$
 
 源码先用较大 PDF 作为 `scale`。两个 PDF 至少一个为正时，归一化后的 `a`、`b` 至少有一个为 1，二者平方后仍保留原比值；前两个提前返回分别覆盖待求权重的 PDF 非正，以及竞争 PDF 非正的情况。
 
-<!-- source-snippet id="stable-power-heuristic" path="include/spectraldock/integrator_policy.h" anchor="float power_heuristic" -->
+<!-- source-snippet id="stable-power-heuristic" path="src/device_programs.cu" anchor="float power_heuristic" -->
 ```cpp
-SPECTRALDOCK_HD SPECTRALDOCK_INLINE float power_heuristic(float pdf_a, float pdf_b) {
+static __forceinline__ __device__ float power_heuristic(
+    float pdf_a, float pdf_b) {
   if (!(pdf_a > 0.0f)) return 0.0f;
   if (!(pdf_b > 0.0f)) return 1.0f;
   const float scale = pdf_a > pdf_b ? pdf_a : pdf_b;
@@ -209,11 +210,11 @@ MIS 只应比较两种策略都可能生成的路径：
 - 发光几何没有绑定到显式灯时，`light_direction_pdf` 为 0，路径命中贡献也保持完整权重；
 - 在最后一个 `max_depth` 表面事件，没有下一条 BSDF 射线参与竞争，即使灯绑定了几何，NEE 权重也为 1。
 
-两个共享策略函数把这些边界写成布尔条件。NEE 只有在灯可被后继射线命中且下一条 BSDF 射线确实存在时才竞争；emitter-hit 则在前驱为 delta 或 emitter 未绑定显式灯时保留完整贡献。
+两个设备局部策略函数把这些边界写成布尔条件。NEE 只有在灯可被后继射线命中且下一条 BSDF 射线确实存在时才竞争；emitter-hit 则在前驱为 delta 或 emitter 未绑定显式灯时保留完整贡献。
 
-<!-- source-snippet id="mis-competing-strategy-policy" path="include/spectraldock/integrator_policy.h" anchor="direct_light_mis_weight" -->
+<!-- source-snippet id="mis-competing-strategy-policy" path="src/device_programs.cu" anchor="direct_light_mis_weight" -->
 ```cpp
-SPECTRALDOCK_HD SPECTRALDOCK_INLINE float direct_light_mis_weight(
+static __forceinline__ __device__ float direct_light_mis_weight(
     float light_pdf, float bsdf_pdf, bool light_can_be_hit,
     bool next_bsdf_ray_exists) {
   return light_can_be_hit && next_bsdf_ray_exists
@@ -221,7 +222,7 @@ SPECTRALDOCK_HD SPECTRALDOCK_INLINE float direct_light_mis_weight(
              : 1.0f;
 }
 
-SPECTRALDOCK_HD SPECTRALDOCK_INLINE float emitter_hit_mis_weight(
+static __forceinline__ __device__ float emitter_hit_mis_weight(
     float bsdf_pdf, float light_pdf, bool previous_event_was_delta,
     bool emitter_is_bound_to_light) {
   return previous_event_was_delta || !emitter_is_bound_to_light
@@ -242,7 +243,7 @@ $$
 
 这样，NEE 在当前顶点计算 $w_L$，以及幸存 BSDF 路径稍后命中 emitter 时计算 $w_B$，始终使用相同的原始 $p_L,p_B$，互补关系不随 RR 改变。
 
-末端深度按“策略是否真实存在”处理：最后一个允许的表面事件仍执行完整 NEE，但因为不会追踪下一条 BSDF 射线，直接光权重为 1；累积直接光后立即结束，不再消耗 BSDF 或 RR 随机数。相机直接命中、delta 前驱、未绑定灯和末端 NEE 都由共享策略函数返回完整权重。
+末端深度按“策略是否真实存在”处理：最后一个允许的表面事件仍执行完整 NEE，但因为不会追踪下一条 BSDF 射线，直接光权重为 1；累积直接光后立即结束，不再消耗 BSDF 或 RR 随机数。相机直接命中、delta 前驱、未绑定灯和末端 NEE 都由设备局部策略函数返回完整权重。
 
 ## 7. 当前直接光采样的边界
 
@@ -258,7 +259,7 @@ $$
 
 ## 8. 对应实现
 
-设备端采样实现在 [`src/device_programs.cu`](../../src/device_programs.cu)，共享决策在 [`include/spectraldock/integrator_policy.h`](../../include/spectraldock/integrator_policy.h)：
+设备端采样与 RR/MIS 决策都实现在 [`src/device_programs.cu`](../../src/device_programs.cu)。相关 helper 位于该文件的匿名命名空间，与调用点一起编译为 OptiX IR；不存在需要同步维护的 CPU 渲染副本：
 
 - `sample_light_surface`：矩形、圆盘和球面的面积采样；
 - `light_direction_pdf`：面积 PDF 到方向 PDF 的换元；

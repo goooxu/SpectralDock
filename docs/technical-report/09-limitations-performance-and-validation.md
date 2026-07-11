@@ -139,7 +139,7 @@ $$
 
 测试不是渲染器的核心功能，而是按层保存其行为证据：
 
-1. CPU 单元测试检查向量、场景解析、OBJ、输入语义，以及 MIS 互补性、RR 补偿和末端策略权重；
+1. Host-only 单元测试检查向量、场景解析、OBJ、PNG I/O 和输入语义；
 2. parser fixtures 覆盖 primitive、灯、UV、alpha、实例与共享 GAS 的输入组合，但不执行 GPU 着色；
 3. 无 golden 的积分器 GPU 对照以 64×64、4 spp、depth 1、seed 1 渲染绑定/未绑定同一灯的两版 smoke 场景，要求解码 RGBA 逐字节相同且非空；
 4. 综合 mesh GPU fixture 定向覆盖共享 GAS、实例变换、UV、平滑法线、alpha 和 custom primitives；
@@ -148,33 +148,7 @@ $$
 
 唯一保留的像素 golden 是 mesh fixture 的 RTX 5090 基线；积分器对照的临时 PNG 和 stats 会自动清理，不保存哈希。mesh golden 只证明定向输出与已接受结果逐字节相同，不能独立证明物理正确；跨 GPU、编译器或 `--use_fast_math` 的少量浮点差异，也不自动等于数学回归。正式 gallery 与 stats 继续作为作品和一次运行记录保存，但不再是自动测试门禁；项目也不设置自动性能阈值或 profiling 验收。可靠结论仍需要公式审查、定向场景和数值/视觉证据结合。
 
-下面的 MIS 单元测试展示了这种“公式性质优先于某一张图片”的验证：
-
-<!-- source-snippet id="validation-mis-unit-test" path="tests/test_core.cpp" anchor="MIS weights must remain finite" -->
-```cpp
-void test_mis() {
-  near(power_heuristic(1.0f, 1.0f), 0.5f, 1.0e-7f, "equal MIS PDFs");
-  near(power_heuristic(1.0f, 2.0f), 0.2f, 1.0e-7f, "unequal MIS PDFs");
-  near(power_heuristic(0.0f, 0.0f), 0.0f, 1.0e-7f, "zero MIS PDFs");
-
-  const float pdf_pairs[][2] = {
-      {1.0f, 1.0f},
-      {1.0f, 2.0f},
-      {1.0e-30f, 2.0e-30f},
-      {1.0e30f, 2.0e30f},
-      {1.0e-30f, 1.0e30f},
-      {0.0f, 1.0f},
-  };
-  for (const auto& pdfs : pdf_pairs) {
-    const float a = power_heuristic(pdfs[0], pdfs[1]);
-    const float b = power_heuristic(pdfs[1], pdfs[0]);
-    check(std::isfinite(a) && std::isfinite(b),
-          "MIS weights must remain finite");
-    near(a + b, 1.0f, 1.0e-6f, "complementary MIS weights");
-  }
-```
-
-前三个断言锁定手算结果；随后用极小、极大和零 PDF 检查权重始终有限，并验证交换两种策略后 $w_A+w_B=1$。它不会证明整个积分器正确，但能直接捕获 power heuristic 的溢出、NaN 和互补性回归。
+需要特别区分：这组 host-only 检查不编译 CUDA/OptiX 渲染器，不执行路径着色，也不输出参考像素。因此它们不是 CPU reference renderer，不能代替上述 GPU 对照、sanitizer 或 golden。RR/MIS 实现现在只位于设备路径：第 4、5 章负责公式与源码审查，现有 GPU MIS 对照只覆盖末端 bound/unbound 策略，并不执行俄罗斯轮盘或构造极端 PDF；这些性质不再由 host-only CI 自动验证。
 
 ## 7. 从一个像素重新串起全文
 

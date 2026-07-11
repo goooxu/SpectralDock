@@ -103,3 +103,44 @@ def test_gallery_png_and_stats_names_stay_paired():
         "neon-koi",
         "reflector-laboratory",
     }
+
+
+def test_host_math_has_no_reference_rendering_implementation():
+    assert not (ROOT / "include/spectraldock/integrator_policy.h").exists()
+
+    host_math = (ROOT / "include/spectraldock/math.h").read_text(
+        encoding="utf-8"
+    )
+    forbidden_host_symbols = (
+        "SPECTRALDOCK_HD",
+        "SPECTRALDOCK_INLINE",
+        "kRayEpsilon",
+        "struct Ray",
+        "struct SurfaceHit",
+        "orient_hit(",
+        "reflect(",
+        "refract(",
+        "fresnel_schlick(",
+        "intersect_sphere(",
+        "intersect_parallelogram(",
+        "intersect_disk(",
+        "intersect_cylinder(",
+        "intersect_parabola(",
+        "contains(Vec3",
+        "linear_to_srgb(",
+        "srgb_to_linear(",
+        "aces_tonemap(",
+        "luminance(",
+    )
+    present = [symbol for symbol in forbidden_host_symbols if symbol in host_math]
+    assert not present, "host rendering symbols remain: {}".format(present)
+
+    core_tests = (ROOT / "tests/test_core.cpp").read_text(encoding="utf-8")
+    forbidden_tests = (
+        "test_vectors_and_optics",
+        "test_intersections",
+        "test_color",
+        "test_mis",
+    )
+    present = [name for name in forbidden_tests if name in core_tests]
+    assert not present, "CPU rendering tests remain: {}".format(present)

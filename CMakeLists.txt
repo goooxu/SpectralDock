@@ -45,8 +45,6 @@ if(SPECTRALDOCK_ENABLE_GPU)
     DEPENDS
       src/device_programs.cu
       include/spectraldock/device_types.h
-      include/spectraldock/integrator_policy.h
-      include/spectraldock/math.h
     VERBATIM)
   add_custom_target(spectraldock_device_ir DEPENDS "${OPTIX_IR}")
 

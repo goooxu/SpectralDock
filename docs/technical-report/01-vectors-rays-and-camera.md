@@ -59,6 +59,8 @@ $$
 
 其中 $\mathbf o$ 是起点，$\mathbf d$ 是单位方向，$t$ 是沿射线前进的距离。把几何体方程代入 $\mathbf r(t)$，求得的正数根就是交点；最小的有效正根代表肉眼能看到的最近表面。
 
+这里的“射线”是数学对象，不对应一条主机端 CPU 渲染路径。当前生产实现只在设备程序中用 `float3` 的 origin/direction 保存射线状态，再交给 OptiX 遍历；主机端 `math.h` 只保留场景解析、相机和实例变换需要的向量与 AABB 基础类型。
+
 实际浮点运算不精确。SpectralDock 把追踪区间下限设为 `scene_epsilon = 1e-4`；新 radiance/shadow 射线的起点还会沿出射一侧的着色法线偏移 `2 * scene_epsilon = 2e-4`。反射向法线正侧偏移，透射向负侧偏移。这是数值防护，不是物体的物理厚度。
 
 ## 3. 相机自己的三根坐标轴
@@ -215,9 +217,9 @@ $$
 
 ## 6. 对应实现
 
-- 向量、点积、叉积与射线类型：[`include/spectraldock/math.h`](../../include/spectraldock/math.h)
+- 主机场景使用的向量、点积、叉积与 AABB：[`include/spectraldock/math.h`](../../include/spectraldock/math.h)
 - 主机端相机基和视场参数：[`camera_for`](../../src/optix_renderer.cpp)
-- 像素抖动、圆盘采样与相机射线：[`sample_disk`、`generate_camera_ray`](../../src/device_programs.cu)
+- 像素抖动、圆盘采样、相机射线与 OptiX 追踪：[`sample_disk`、`generate_camera_ray`、`trace_radiance`](../../src/device_programs.cu)
 
 下一章将回答：这条射线进入场景后，渲染器究竟要计算什么物理量？
 
