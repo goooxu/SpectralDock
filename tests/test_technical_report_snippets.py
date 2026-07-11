@@ -22,6 +22,42 @@ LANGUAGES = {
     ".py": "python",
     ".sh": "bash",
 }
+REQUIRED_OPTIX_FLOW_SNIPPETS = {
+    "conditional-gas-compaction",
+    "mesh-gas-resource-reuse",
+    "optix-context-pipeline-setup",
+    "optix-ir-build-command",
+    "optix-ias-instance-binding",
+    "optix-launch-params-population",
+    "optix-mesh-upload-build-input",
+    "optix-radiance-traversal",
+    "optix-sbt-hit-records",
+    "optix-shallow-pipeline-stack",
+    "optix-state-teardown",
+    "optix-two-dimensional-launch",
+    "output-denoiser-guide-wiring",
+    "output-postprocess-kernel",
+    "shadow-ray-visibility-query",
+}
+OPTIX_CHAPTER_SNIPPET_ORDER = (
+    "optix-ir-build-command",
+    "optix-context-pipeline-setup",
+    "optix-shallow-pipeline-stack",
+    "optix-sbt-hit-records",
+    "optix-launch-params-population",
+    "optix-two-dimensional-launch",
+    "optix-radiance-traversal",
+    "optix-state-teardown",
+)
+STANDARD_OPTIX_STAGES = (
+    "准备 CUDA 几何数据",
+    "构建 GAS / IAS 加速结构",
+    "编译 RayGen、Miss、Hit 等程序",
+    "创建 Pipeline 和 Shader Binding Table",
+    "调用 optixLaunch",
+    "执行射线遍历、求交和自定义着色",
+    "使用 OptiX Denoiser 降噪",
+)
 
 
 def test_technical_report_source_snippets_match_the_repository():
@@ -103,3 +139,30 @@ def test_technical_report_source_snippets_match_the_repository():
             sorted(set(CHAPTERS) - covered_chapters)
         )
     )
+
+    missing_flow_snippets = REQUIRED_OPTIX_FLOW_SNIPPETS - identifiers
+    assert not missing_flow_snippets, (
+        "missing OptiX flow source snippets: {}".format(
+            sorted(missing_flow_snippets)
+        )
+    )
+
+    optix_chapter = (REPORT_DIR / "07-optix-gpu-implementation.md").read_text(
+        encoding="utf-8"
+    )
+    snippet_positions = [
+        optix_chapter.index('id="{}"'.format(identifier))
+        for identifier in OPTIX_CHAPTER_SNIPPET_ORDER
+    ]
+    assert snippet_positions == sorted(snippet_positions), (
+        "OptiX chapter source snippets must follow the runtime lifecycle"
+    )
+
+    stage_positions = [optix_chapter.index(stage) for stage in STANDARD_OPTIX_STAGES]
+    assert stage_positions == sorted(stage_positions), (
+        "standard OptiX stages must appear in order in the overview table"
+    )
+    for boundary in ("构建期", "运行期", "RAII", "纯 CUDA"):
+        assert boundary in optix_chapter, (
+            "OptiX chapter must explain the {} boundary".format(boundary)
+        )

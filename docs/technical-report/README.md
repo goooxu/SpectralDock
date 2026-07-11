@@ -33,9 +33,9 @@ flowchart LR
 3. [材质与 BSDF](03-materials-and-bsdf.md)：解释漫反射、粗糙金属和玻璃如何改变光的方向。
 4. [Monte Carlo 路径追踪](04-monte-carlo-path-tracing.md)：把连续积分变成有限条随机路径。
 5. [直接光照、NEE 与 MIS](05-direct-lighting-and-mis.md)：解释小光源为何仍能高效采样，以及两种估计如何避免重复计算。
-6. [几何、可见性与 BVH](06-geometry-visibility-and-bvh.md)：说明如何找到最近交点和阴影遮挡。
-7. [OptiX/GPU 实现](07-optix-gpu-implementation.md)：把上述数学量映射到 SpectralDock 的程序、加速结构和数据流。
-8. [降噪、色调映射与输出](08-denoising-color-and-output.md)：从线性 HDR 辐亮度得到可显示 PNG。
+6. [几何、可见性与 BVH](06-geometry-visibility-and-bvh.md)：追踪 CPU 几何到 CUDA 缓冲区、`OptixBuildInput`、GAS/IAS，再说明最近交点和阴影遮挡。
+7. [OptiX/GPU 实现](07-optix-gpu-implementation.md)：以 `render_optix` 为总入口，连起构建期 OptiX IR、context/pipeline/SBT、launch、traversal/callback 和资源销毁。
+8. [降噪、色调映射与输出](08-denoising-color-and-output.md)：展开可选 Denoiser 的完整生命周期，并划清纯 CUDA 后处理、D2H 和 CPU PNG 编码的边界。
 9. [边界、性能与验证](09-limitations-performance-and-validation.md)：区分物理模型边界、近似误差、性能指标和软件测试。
 
 如果只想先建立整体认识，可读第 1、2、4、5、8 章，再返回其余章节。
@@ -88,10 +88,12 @@ OptiX、CUDA、BVH、SBT（GPU 实现）
 
 章末仍保留函数和文件入口，便于继续阅读完整上下文。主要入口包括：
 
+- 单帧 OptiX 总流程：[`render_optix`](../../src/optix_renderer.cpp)
 - 路径积分器：[`__raygen__pathtrace`](../../src/device_programs.cu)
 - BSDF 与灯光采样：[`evaluate_bsdf`、`sample_bsdf`、`sample_direct_light`](../../src/device_programs.cu)
 - GPU 管线与加速结构：[`create_pipeline`、`build_mesh`、`build_ias`、`make_sbt`](../../src/optix_renderer.cpp)
 - 后处理：[`postprocess_kernel`](../../src/postprocess.cu)
+- 主机输出：[`write_png_rgba8`](../../src/image_io.cpp)
 - 场景输入：[场景格式说明](../SCENE_FORMAT.md)
 
 这是一份“与当前实现一致”的技术报告，不把 SpectralDock 描述成通用或完整的物理仿真器。每章都会明确当前实现的近似与边界。
