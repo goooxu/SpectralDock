@@ -7,6 +7,7 @@ validation=OFF
 [[ "${BUILD_TYPE}" == Debug ]] && validation=ON
 gpu_container cmake -S . -B "build/${BUILD_TYPE}" -GNinja \
   -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
+  -DBUILD_TESTING=OFF \
   -DOptiX_ROOT=/opt/optix \
   -DSPECTRALDOCK_ENABLE_GPU=ON \
   -DSPECTRALDOCK_ENABLE_VALIDATION="${validation}"

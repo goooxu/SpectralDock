@@ -3,4 +3,3 @@ set -euo pipefail
 source "$(dirname "$0")/common.sh"
 mkdir -p "${ROOT}/output"
 gpu_container "build/${BUILD_TYPE}/spectraldock" "$@"
-copy_back output

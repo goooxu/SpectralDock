@@ -7,8 +7,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential \
       ca-certificates \
       cmake \
-      git \
-      jq \
       libdw1t64 \
       libgl-dev \
       libglx-dev \
@@ -23,7 +21,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       python3 \
       python3-pil \
       python3-pytest \
-      time \
     && rm -rf /var/lib/apt/lists/*
 
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics

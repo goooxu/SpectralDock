@@ -7,7 +7,6 @@
 #include <cmath>
 #include <fstream>
 #include <limits>
-#include <sstream>
 #include <stdexcept>
 #include <string_view>
 #include <unordered_map>
@@ -316,7 +315,6 @@ Scene load_scene(const std::filesystem::path& input_path, const SceneLoadOptions
   if (!root.is_object()) fail("root", "expected an object");
 
   Scene scene;
-  scene.source_path = path;
   scene.schema_version = optional_u32(root, "schema_version", 1, 1, 2, "root");
   scene.camera = parse_camera(member(root, "camera", "root"));
   scene.background = parse_background(member(root, "background", "root"));

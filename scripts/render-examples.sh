@@ -97,5 +97,3 @@ for requested in "${scenes[@]}"; do
     --width "${width}" --height "${height}" --spp "${spp}" \
     --max-depth "${depth}" --denoise
 done
-
-copy_back "${output_dir}"

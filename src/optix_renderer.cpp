@@ -20,7 +20,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <limits>
@@ -351,7 +350,6 @@ TextureHandle make_texture(const Texture& source, TextureData& out,
   check_cuda(cudaCreateTextureObject(&h.object, &rd, &td, nullptr),
              "cudaCreateTextureObject");
   out.object = static_cast<std::uint64_t>(h.object);
-  out.width = static_cast<int>(w); out.height = static_cast<int>(height);
   out.flags = source.srgb ? kTextureSrgb : 0u;
   return h;
 }
@@ -1055,7 +1053,6 @@ RenderResult render_optix(const Scene& scene,
   parameters.spp = settings.spp;
   parameters.max_depth = settings.max_depth;
   parameters.seed = settings.seed;
-  parameters.exposure = settings.exposure;
   parameters.camera = camera_for(scene, settings);
   parameters.background_type =
       scene.background.type == BackgroundType::Sky

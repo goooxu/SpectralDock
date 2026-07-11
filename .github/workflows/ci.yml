@@ -33,23 +33,7 @@ jobs:
             python3-pil \
             python3-pytest
 
-      - name: Check shell syntax
-        run: bash -n scripts/*.sh
-
-      - name: Configure CPU build
-        run: |
-          cmake -S . -B build/cpu-ci -G Ninja \
-            -DCMAKE_BUILD_TYPE=Debug \
-            -DBUILD_TESTING=ON \
-            -DSPECTRALDOCK_ENABLE_GPU=OFF
-
-      - name: Build CPU tests
-        run: cmake --build build/cpu-ci --parallel
-
-      - name: Run CTest
-        run: ctest --test-dir build/cpu-ci --output-on-failure
-
-      - name: Run Python tests
+      - name: Run host-only tests
         env:
           PYTHONDONTWRITEBYTECODE: "1"
-        run: python3 -m pytest -q -p no:cacheprovider tests
+        run: bash scripts/test-host.sh build/cpu-ci

@@ -65,7 +65,6 @@ flowchart TD
       --optix-ir --std=c++17 --use_fast_math -lineinfo
       -I"${CMAKE_CURRENT_SOURCE_DIR}/include"
       -I"${OPTIX_INCLUDE_DIR}"
-      -DSPECTRALDOCK_DEVICE_CODE=1
       "${CMAKE_CURRENT_SOURCE_DIR}/src/device_programs.cu"
       -o "${OPTIX_IR}"
     DEPENDS
@@ -209,13 +208,12 @@ SBT 完成后，主机分配并清零 beauty、albedo、normal 和逐像素 ray-
   parameters.spp = settings.spp;
   parameters.max_depth = settings.max_depth;
   parameters.seed = settings.seed;
-  parameters.exposure = settings.exposure;
   parameters.camera = camera_for(scene, settings);
 ```
 
 `traversable` 是遍历入口，三个图像指针是 raygen 的输出，尺寸与 spp 决定工作量，`max_depth` 控制路径循环上限，`seed` 和相机决定初始样本。结构体整体上传到设备后，设备程序通过常量 `params` 访问。
 
-`parameters.exposure` 目前是冗余字段：设备路径没有读取它。真正的曝光值在 OptiX launch 和可选降噪完成后，由主机直接传给纯 CUDA 后处理 kernel。
+曝光不属于路径追踪的输入，因此不进入 `LaunchParams`。OptiX launch 和可选降噪完成后，主机才把 `settings.exposure` 直接传给纯 CUDA postprocess kernel；它只影响 HDR beauty 如何映射到显示输出，不影响射线遍历、着色或降噪输入。
 
 ## 8. 调用 optixLaunch：二维像素网格
 

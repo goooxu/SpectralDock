@@ -186,7 +186,6 @@ struct Light {
 
 struct Scene {
   std::uint32_t schema_version = 1;
-  std::filesystem::path source_path;
   Camera camera{};
   Background background{};
   RenderDefaults render{};

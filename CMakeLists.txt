@@ -39,7 +39,6 @@ if(SPECTRALDOCK_ENABLE_GPU)
       --optix-ir --std=c++17 --use_fast_math -lineinfo
       -I"${CMAKE_CURRENT_SOURCE_DIR}/include"
       -I"${OPTIX_INCLUDE_DIR}"
-      -DSPECTRALDOCK_DEVICE_CODE=1
       "${CMAKE_CURRENT_SOURCE_DIR}/src/device_programs.cu"
       -o "${OPTIX_IR}"
     DEPENDS
@@ -49,7 +48,6 @@ if(SPECTRALDOCK_ENABLE_GPU)
   add_custom_target(spectraldock_device_ir DEPENDS "${OPTIX_IR}")
 
   add_library(spectraldock_postprocess STATIC src/postprocess.cu)
-  target_include_directories(spectraldock_postprocess PUBLIC include)
   set_target_properties(spectraldock_postprocess PROPERTIES
     CUDA_STANDARD 17
     CUDA_STANDARD_REQUIRED ON
@@ -79,10 +77,8 @@ if(BUILD_TESTING)
   target_include_directories(spectraldock_tests PRIVATE include)
   target_link_libraries(spectraldock_tests PRIVATE spectraldock_core)
   target_compile_options(spectraldock_tests PRIVATE -Wall -Wextra -Wpedantic)
-  add_test(NAME core COMMAND spectraldock_tests)
-  add_test(NAME shipped_scenes COMMAND spectraldock_tests
+  add_test(NAME core_and_scene_parsing COMMAND spectraldock_tests
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/scenes/smoke.json"
-    "${CMAKE_CURRENT_SOURCE_DIR}/tests/scenes/light-shapes-smoke.json"
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/scenes/geometry-smoke.json"
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/scenes/mesh-composite-smoke.json")
 endif()

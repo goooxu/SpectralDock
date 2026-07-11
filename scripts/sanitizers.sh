@@ -23,4 +23,3 @@ gpu_container python3 tests/check_mesh_smoke.py \
   "${SCENE}" tests/assets/uv-quad.obj "${OUT}" \
   "${OUT%.png}.stats.json" \
   tests/golden/mesh-composite-smoke-64x64-spp1-depth6-seed1.sha256
-copy_back output

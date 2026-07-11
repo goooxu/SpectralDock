@@ -62,8 +62,3 @@ cpu_container() {
 gpu_container() {
   run_container gpu "$@"
 }
-
-# The project is bind-mounted directly, so outputs are already on the host.
-copy_back() {
-  :
-}

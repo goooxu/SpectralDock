@@ -50,10 +50,7 @@ constexpr std::int32_t kInvalidIndex = -1;
 // zero is the top row; device code flips the scene's bottom-left-origin v.
 struct TextureData {
   std::uint64_t object = 0;
-  std::int32_t width = 0;
-  std::int32_t height = 0;
   std::uint32_t flags = kTextureSrgb;
-  std::uint32_t reserved = 0;
 };
 
 struct MaterialData {
@@ -62,7 +59,6 @@ struct MaterialData {
   float3 emission = {0.0f, 0.0f, 0.0f};
   float ior = 1.5f;
   float metallic = 1.0f;
-  float alpha_cutoff = 0.5f;
   std::int32_t texture_index = kInvalidIndex;
   std::uint32_t type = kMaterialLambertian;
 };
@@ -153,7 +149,6 @@ struct LaunchParams {
   std::uint32_t spp = 1;
   std::uint32_t max_depth = 12;
   std::uint32_t seed = 1;
-  float exposure = 0.0f;
   float scene_epsilon = 1.0e-4f;
   std::uint32_t background_type = kBackgroundConstant;
 
