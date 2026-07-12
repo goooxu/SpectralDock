@@ -4,7 +4,7 @@ from pathlib import Path, PurePosixPath
 
 ROOT = Path(__file__).resolve().parents[1]
 REPORT_DIR = ROOT / "docs" / "technical-report"
-CHAPTERS = tuple("{:02d}".format(index) for index in range(1, 10))
+CHAPTERS = tuple("{:02d}".format(index) for index in range(1, 11))
 MARKER = "<!-- source-snippet "
 SNIPPET = re.compile(
     r'<!-- source-snippet id="(?P<id>[a-z0-9-]+)" '
@@ -13,7 +13,7 @@ SNIPPET = re.compile(
     r'(?P<code>.*?)\n```',
     re.DOTALL,
 )
-ALLOWED_ROOTS = {"include", "scripts", "src", "tests"}
+ALLOWED_ROOTS = {"include", "scripts", "src", "tests", "tools"}
 LANGUAGES = {
     ".cpp": "cpp",
     ".cu": "cpp",
@@ -48,6 +48,26 @@ OPTIX_CHAPTER_SNIPPET_ORDER = (
     "optix-two-dimensional-launch",
     "optix-radiance-traversal",
     "optix-state-teardown",
+)
+REQUIRED_PHYSX_FLOW_SNIPPETS = {
+    "physx-baked-scene-validation",
+    "physx-body-properties",
+    "physx-byte-verification",
+    "physx-capsule-proxy",
+    "physx-euler-conversion",
+    "physx-fixed-step-simulation",
+    "physx-gpu-scene-contract",
+    "physx-pose-baking",
+}
+PHYSX_CHAPTER_SNIPPET_ORDER = (
+    "physx-body-properties",
+    "physx-gpu-scene-contract",
+    "physx-capsule-proxy",
+    "physx-fixed-step-simulation",
+    "physx-euler-conversion",
+    "physx-pose-baking",
+    "physx-baked-scene-validation",
+    "physx-byte-verification",
 )
 STANDARD_OPTIX_STAGES = (
     "准备 CUDA 几何数据",
@@ -166,3 +186,77 @@ def test_technical_report_source_snippets_match_the_repository():
         assert boundary in optix_chapter, (
             "OptiX chapter must explain the {} boundary".format(boundary)
         )
+
+    missing_physx_snippets = REQUIRED_PHYSX_FLOW_SNIPPETS - identifiers
+    assert not missing_physx_snippets, (
+        "missing PhysX flow source snippets: {}".format(
+            sorted(missing_physx_snippets)
+        )
+    )
+
+    physx_chapter = (
+        REPORT_DIR / "10-physx-rigid-body-scene-baking.md"
+    ).read_text(encoding="utf-8")
+    physx_positions = [
+        physx_chapter.index('id="{}"'.format(identifier))
+        for identifier in PHYSX_CHAPTER_SNIPPET_ORDER
+    ]
+    assert physx_positions == sorted(physx_positions), (
+        "PhysX chapter snippets must follow the documented data flow"
+    )
+    for boundary in (
+        "GPU-only",
+        "schema v2",
+        "sleeping_dynamic_actors=0",
+        "motion blur",
+    ):
+        assert boundary in physx_chapter, (
+            "PhysX chapter must explain the {} boundary".format(boundary)
+        )
+
+
+def test_technical_report_avoids_unsupported_math_macros():
+    for report in sorted(REPORT_DIR.glob("*.md")):
+        text = report.read_text(encoding="utf-8")
+        assert "\\operatorname" not in text, (
+            "{} uses unsupported \\operatorname".format(report.name)
+        )
+
+        prose = []
+        fence = None
+        for line in text.splitlines():
+            stripped = line.lstrip()
+            marker = next(
+                (candidate for candidate in ("```", "~~~")
+                 if stripped.startswith(candidate)),
+                None,
+            )
+            if fence is not None:
+                if marker == fence:
+                    fence = None
+                continue
+            if marker is not None:
+                fence = marker
+                continue
+            prose.append(re.sub(r"`[^`\n]*`", "", line))
+        assert fence is None, "{} has an unclosed code fence".format(report.name)
+
+        state = None
+        index = 0
+        prose = "\n".join(prose)
+        while index < len(prose):
+            if prose.startswith("$$", index):
+                assert state != "inline", (
+                    "{} opens display math inside inline math".format(report.name)
+                )
+                state = None if state == "display" else "display"
+                index += 2
+            elif prose[index] == "$":
+                assert state != "display", (
+                    "{} opens inline math inside display math".format(report.name)
+                )
+                state = None if state == "inline" else "inline"
+                index += 1
+            else:
+                index += 1
+        assert state is None, "{} has unclosed {} math".format(report.name, state)

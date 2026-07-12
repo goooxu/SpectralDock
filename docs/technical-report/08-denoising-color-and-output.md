@@ -279,6 +279,6 @@ __global__ void postprocess_kernel(const float4* linear_beauty,
 - 曝光、拟合曲线、sRGB 和量化：[`src/postprocess.cu`](../../src/postprocess.cu)
 - 主机 PNG 编码：[`write_png_rgba8`](../../src/image_io.cpp)
 
-最后一章将把“噪声、偏差、模型限制、性能计时和软件测试”分开，说明怎样判断渲染结果是否可信。
+下一章将把“噪声、偏差、模型限制、性能计时和软件测试”分开，说明怎样判断渲染结果是否可信。
 
 [上一章：OptiX/GPU 实现](07-optix-gpu-implementation.md) · [返回目录](README.md) · [下一章：边界、性能与验证](09-limitations-performance-and-validation.md)

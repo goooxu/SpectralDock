@@ -1,6 +1,6 @@
 # SpectralDock 渲染技术报告
 
-这组报告解释 SpectralDock **为什么能够把一个场景变成一张图**。重点不是命令怎么运行，而是渲染器所求解的数学问题、随机算法为什么成立，以及这些公式怎样对应到 GPU 实现。
+这组报告解释 SpectralDock **为什么能够把一个场景变成一张图**，以及可选的 PhysX 流程怎样先把刚体模拟烘焙成可渲染场景。重点不是命令怎么运行，而是数学模型为什么成立，以及这些公式怎样对应到当前 GPU 实现。
 
 报告不要求计算机图形学先修。正文会从直觉解释所需的向量、微积分和概率概念，再把关键公式与当前源码中的真实代码片段并排说明。
 
@@ -37,8 +37,9 @@ flowchart LR
 7. [OptiX/GPU 实现](07-optix-gpu-implementation.md)：以 `render_optix` 为总入口，连起构建期 OptiX IR、context/pipeline/SBT、launch、traversal/callback 和资源销毁。
 8. [降噪、色调映射与输出](08-denoising-color-and-output.md)：展开可选 Denoiser 的完整生命周期，并划清纯 CUDA 后处理、D2H 和 CPU PNG 编码的边界。
 9. [边界、性能与验证](09-limitations-performance-and-validation.md)：区分物理模型边界、近似误差、性能指标和软件测试。
+10. [PhysX 刚体模拟与场景烘焙](10-physx-rigid-body-scene-baking.md)：从 Newton–Euler、接触约束和碰撞代理出发，解释 GPU 刚体姿态怎样成为 schema v2 场景。
 
-如果只想先建立整体认识，可读第 1、2、4、5、8 章，再返回其余章节。
+如果只想先建立渲染整体认识，可读第 1、2、4、5、8 章，再返回其余章节；第 10 章是独立的物理场景生成支线。
 
 ## 全文方向约定
 
@@ -82,6 +83,8 @@ OptiX、CUDA、BVH、SBT（GPU 实现）
 
 因此，测试和验收不是项目主角；它们是保护渲染器数学含义和工程行为不被意外破坏的证据。
 
+Kinetic Foundry 还存在一条进入上述链条之前的可选路径：固定初始布局先经 PhysX GPU 刚体模拟，位置与姿态被烘焙成 schema v2 JSON，然后才从“几何与材质定义路径”这一层进入普通渲染流程。第 10 章完整展开这条边界。
+
 ## 报告与源码
 
 关键推导旁的“源码对照”直接摘录当前仓库中的连续代码：不加入省略号，不把代码改写成伪代码，也不依赖容易漂移的行号。每个片段都由 pytest 逐字核对其来源；实现一旦变化而报告没有同步，CPU CI 会失败。片段后的说明负责指出公式符号对应的变量、控制流对应的数学条件，以及数值保护或性能优化位于哪里。
@@ -94,6 +97,8 @@ OptiX、CUDA、BVH、SBT（GPU 实现）
 - GPU 管线与加速结构：[`create_pipeline`、`build_mesh`、`build_ias`、`make_sbt`](../../src/optix_renderer.cpp)
 - 后处理：[`postprocess_kernel`](../../src/postprocess.cu)
 - 主机输出：[`write_png_rgba8`](../../src/image_io.cpp)
+- PhysX 场景生成：[`generate_physx_kinetic_foundry.cpp`](../../tools/generate_physx_kinetic_foundry.cpp)
+- PhysX 烘焙契约：[`check_physx_scene.py`](../../tools/check_physx_scene.py)
 - 场景输入：[场景格式说明](../SCENE_FORMAT.md)
 
-这是一份“与当前实现一致”的技术报告，不把 SpectralDock 描述成通用或完整的物理仿真器。每章都会明确当前实现的近似与边界。
+这是一份“与当前实现一致”的技术报告，不把 SpectralDock 描述成通用物理仿真器，也不把离线 PhysX 烘焙描述成运行时物理系统。每章都会明确当前实现的近似与边界。

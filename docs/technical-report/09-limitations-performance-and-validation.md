@@ -170,4 +170,4 @@ $$
 - Bruce Walter 等，*Microfacet Models for Refraction through Rough Surfaces*（2007）。
 - Matt Pharr、Wenzel Jakob、Greg Humphreys，*Physically Based Rendering*。
 
-[上一章：降噪、色调映射与输出](08-denoising-color-and-output.md) · [返回目录](README.md)
+[上一章：降噪、色调映射与输出](08-denoising-color-and-output.md) · [返回目录](README.md) · [下一章：PhysX 刚体模拟与场景烘焙](10-physx-rigid-body-scene-baking.md)
