@@ -31,6 +31,7 @@ TEXT_FILENAMES = {
     ".gitignore",
     "CMakeLists.txt",
     "Dockerfile",
+    "Dockerfile.physx",
     "LICENSE",
     "NOTICE",
 }
@@ -80,6 +81,7 @@ def test_public_repository_metadata_is_present():
         ".github/pull_request_template.md",
         ".github/workflows/ci.yml",
         "CONTRIBUTING.md",
+        "docs/PHYSX_SCENE.md",
         "LICENSE",
         "NOTICE",
         "SECURITY.md",
@@ -89,20 +91,27 @@ def test_public_repository_metadata_is_present():
     assert not missing, "missing public repository files: {}".format(missing)
 
 
-def test_gallery_png_and_stats_names_stay_paired():
+def test_gallery_records_have_required_sidecars():
     gallery = ROOT / "docs" / "gallery"
     png_stems = {path.stem for path in gallery.glob("*.png")}
     stats_stems = {
         path.name[: -len(".stats.json")]
         for path in gallery.glob("*.stats.json")
     }
-    assert png_stems == stats_stems == {
+    physics_stems = {
+        path.name[: -len(".physics.json")]
+        for path in gallery.glob("*.physics.json")
+    }
+    builtin_stems = {
         "benchmark-harbor",
         "celestial-archive",
         "material-cathedral",
         "neon-koi",
         "reflector-laboratory",
     }
+    physx_stems = {"kinetic-foundry"}
+    assert png_stems == stats_stems == builtin_stems | physx_stems
+    assert physics_stems == physx_stems
 
 
 def test_host_math_has_no_reference_rendering_implementation():

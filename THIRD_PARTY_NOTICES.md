@@ -47,8 +47,25 @@ The local input-hardening change is described in
 third_party/tinyobjloader/README.md. The complete upstream license is retained
 in third_party/tinyobjloader/LICENSE and in the header.
 
+## NVIDIA PhysX 5.8.0
+
+- Authors: NVIDIA Corporation and PhysX contributors
+- Source: https://github.com/NVIDIA-Omniverse/PhysX
+- Upstream tag: `110.0-omni-and-physx-5.8.0`
+- Pinned commit: `fc1018a3745664a1db2b95ce03fb5e91eb585f2e`
+- License: BSD 3-Clause License
+- Used by: the optional Kinetic Foundry GPU rigid-body scene generator
+
+PhysX is fetched and built into the dedicated development container image at
+image-build time. Its source, headers, libraries, binaries, and container image
+are not included in this source distribution. The checked-in Kinetic Foundry
+PNG is rendered by SpectralDock from an ephemeral generated scene; its
+`.physics.json` sidecar records the generation environment and parameters.
+SpectralDock is an independent, unofficial project and is not affiliated with,
+sponsored by, or endorsed by NVIDIA Corporation.
+
 ## External build and runtime dependencies
 
-CUDA, OptiX, the NVIDIA driver, libpng, and nlohmann_json are obtained
+CUDA, OptiX, PhysX, the NVIDIA driver, libpng, and nlohmann_json are obtained
 separately from their respective distributors. Their SDK or library sources
 are not included in this source distribution, and their own terms apply.

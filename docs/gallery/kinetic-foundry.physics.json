@@ -1,0 +1,61 @@
+{
+  "backend": {
+    "cpu_fallback": false,
+    "cuda_context_valid": true,
+    "device_name": "NVIDIA GeForce RTX 5090",
+    "device_ordinal": 0,
+    "mode": "gpu",
+    "name": "NVIDIA PhysX",
+    "physx_commit": "fc1018a3745664a1db2b95ce03fb5e91eb585f2e",
+    "physx_version": "5.8.0"
+  },
+  "contract": {
+    "dynamic_center_bounds": {
+      "max": [
+        8,
+        9,
+        5
+      ],
+      "min": [
+        -8,
+        -0.1,
+        -5
+      ]
+    }
+  },
+  "generator": "spectraldock-physx-kinetic-foundry/1.0",
+  "geometry": {
+    "capsule_half_height": 0.28,
+    "capsule_radius": 0.42,
+    "mascot_scale": 0.7,
+    "mascots": 24,
+    "spheres": 192
+  },
+  "results": {
+    "minimum_toppled_mascots": 12,
+    "sleeping_dynamic_actors": 4,
+    "toppled_mascots": 24
+  },
+  "schema_version": 1,
+  "simulation": {
+    "broad_phase": "gpu",
+    "determinism_limitation": "enhanced_determinism_unsupported_on_gpu",
+    "fixed_dt": 0.008333,
+    "fixed_dt_denominator": 120,
+    "fixed_dt_numerator": 1,
+    "flags": {
+      "enhanced_determinism": false,
+      "gpu_dynamics": true,
+      "pcm": true,
+      "stabilization": true
+    },
+    "gravity": [
+      0,
+      -9.81,
+      0
+    ],
+    "seed": 20260711,
+    "solver": "tgs",
+    "steps": 960
+  }
+}

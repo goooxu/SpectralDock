@@ -10,4 +10,5 @@ gpu_container cmake -S . -B "build/${BUILD_TYPE}" -GNinja \
   -DBUILD_TESTING=OFF \
   -DOptiX_ROOT=/opt/optix \
   -DSPECTRALDOCK_ENABLE_GPU=ON \
+  -DSPECTRALDOCK_ENABLE_PHYSX_SCENE=OFF \
   -DSPECTRALDOCK_ENABLE_VALIDATION="${validation}"

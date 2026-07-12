@@ -3,6 +3,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 IMAGE="${SPECTRALDOCK_IMAGE:-spectraldock-dev:cuda13.3}"
+PHYSX_IMAGE="${SPECTRALDOCK_PHYSX_IMAGE:-spectraldock-physx:5.8.0-cuda12.8}"
+PHYSX_GPU_DEVICE="${PHYSX_GPU_DEVICE:-0}"
 OPTIX_ROOT="${OPTIX_ROOT:-}"
 BUILD_TYPE="${BUILD_TYPE:-Release}"
 
@@ -24,6 +26,7 @@ require_optix_root() {
 run_container() {
   local mode="$1"
   shift
+  local image="${IMAGE}"
   local args=(
     run --rm
     --user "$(id -u):$(id -g)"
@@ -47,12 +50,22 @@ run_container() {
         args+=(-v /usr/share/nvidia/nvoptix.bin:/usr/share/nvidia/nvoptix.bin:ro)
       fi
       ;;
+    physx)
+      image="${PHYSX_IMAGE}"
+      args+=(
+        --gpus all
+        -e "NVIDIA_DRIVER_CAPABILITIES=compute,utility"
+        -e "PHYSX_ROOT=/opt/physx"
+        -e "PHYSX_BUILD_TYPE=checked"
+        -e "PHYSX_GPU_DEVICE=${PHYSX_GPU_DEVICE}"
+      )
+      ;;
     *)
       die "unknown container mode: ${mode}"
       ;;
   esac
 
-  docker "${args[@]}" "${IMAGE}" "$@"
+  docker "${args[@]}" "${image}" "$@"
 }
 
 cpu_container() {
@@ -61,4 +74,8 @@ cpu_container() {
 
 gpu_container() {
   run_container gpu "$@"
+}
+
+physx_container() {
+  run_container physx "$@"
 }

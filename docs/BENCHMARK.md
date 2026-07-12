@@ -26,6 +26,28 @@
 
 Harbor 的 16 个胶囊吉祥物共享一份 mascot GAS，另有 1,024 个 sphere GAS；`mesh_triangles` 不按实例数重复计数。
 
+## 按需 Kinetic Foundry（PhysX）
+
+Kinetic Foundry 不属于上表五个内置场景，且生成/渲染环境与上表不是同一次运行，
+因此单独记录。物理阶段使用 CUDA 12.8.1 专用镜像、PhysX 5.8.0 checked
+配置和固定 commit `fc1018a3745664a1db2b95ce03fb5e91eb585f2e`，在 RTX 5090
+上以 GPU dynamics、GPU broadphase、PCM、stabilization、seed `20260711`、
+`1/120 s` 固定步长运行 960 步。PhysX GPU 不支持 enhanced determinism；同机
+双生成逐字节一致不构成跨 GPU 或软件栈保证。
+
+最终静态快照随后由 CUDA 13.3、OptiX 9.1、driver 615.36 在同一 RTX 5090
+上以 1920×1080、512 spp、depth 12 和 AI denoise 渲染：
+
+| BVH build (ms) | Path trace (ms) | Denoise (ms) | Total (ms) | Traced rays | G rays/s | Observed peak (MiB) | Tracked peak (MiB) |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 30.347 | 513.548 | 13.420 | 1,272.597 | 2,739,619,670 | 5.335 | 1,320.3 | 494.6 |
+
+该场景包含 24 个共享同一 mascot GAS 的 mesh 实例、192 个钢珠 sphere 和
+4 个可见静态 rectangle，共 220 个 objects/instances、1 个 unique mesh、
+5,816 个 unique mesh triangles 和 197 个 GAS。仓库提交 PNG、渲染 stats 与
+PhysX sidecar，不提交 `scenes/generated/kinetic-foundry.json`。完整生成契约见
+[PHYSX_SCENE.md](PHYSX_SCENE.md)。
+
 ## 定向 GPU fixture
 
 综合 GPU fixture 使用 64×64、1 spp、depth 6、seed 1 和无降噪输出，覆盖带 UV/平滑法线/alpha 的 mesh、两个共享 GAS 且使用不同变换/材质的实例，以及 custom primitives。其 RTX 5090 SHA-256 为 `2ae722c6634d88de7f2ad56e790ebf54a9d7fe395eb8063e13be236a74ce6fd2`，由 `scripts/sanitizers.sh` 在三类检查后验证。
@@ -39,4 +61,9 @@ Harbor 的 16 个胶囊吉祥物共享一份 mascot GAS，另有 1,024 个 spher
 ```bash
 BUILD_TYPE=Release ./scripts/render-examples.sh --preset final
 BUILD_TYPE=Debug ./scripts/sanitizers.sh
+
+# 独立的按需 PhysX 场景；会更新 kinetic-foundry 三件 gallery 记录
+./scripts/build-physx-image.sh
+OPTIX_ROOT="/absolute/path/to/OptiX-SDK-9.1.0" \
+  ./scripts/render-physx-scene.sh --preset final
 ```

@@ -9,7 +9,8 @@ bash -n scripts/*.sh
 cmake -S . -B "${BUILD_DIR}" -GNinja \
   -DCMAKE_BUILD_TYPE=Debug \
   -DBUILD_TESTING=ON \
-  -DSPECTRALDOCK_ENABLE_GPU=OFF
+  -DSPECTRALDOCK_ENABLE_GPU=OFF \
+  -DSPECTRALDOCK_ENABLE_PHYSX_SCENE=OFF
 cmake --build "${BUILD_DIR}" --parallel
 ctest --test-dir "${BUILD_DIR}" --output-on-failure
 PYTHONDONTWRITEBYTECODE="${PYTHONDONTWRITEBYTECODE:-1}" \

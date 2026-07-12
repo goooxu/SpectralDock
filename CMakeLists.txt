@@ -3,6 +3,8 @@ project(SpectralDock VERSION 0.1.0 LANGUAGES CXX)
 
 option(SPECTRALDOCK_ENABLE_GPU "Build the CUDA/OptiX renderer" ON)
 option(SPECTRALDOCK_ENABLE_VALIDATION "Enable OptiX validation by default" OFF)
+option(SPECTRALDOCK_ENABLE_PHYSX_SCENE
+  "Build the optional NVIDIA PhysX GPU scene generator" OFF)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -21,6 +23,30 @@ target_include_directories(spectraldock_core PUBLIC include)
 target_include_directories(spectraldock_core SYSTEM PRIVATE third_party/tinyobjloader)
 target_link_libraries(spectraldock_core PUBLIC PNG::PNG nlohmann_json::nlohmann_json)
 target_compile_options(spectraldock_core PRIVATE -Wall -Wextra -Wpedantic)
+
+if(SPECTRALDOCK_ENABLE_PHYSX_SCENE)
+  list(PREPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+  set(PHYSX_ROOT "/opt/physx" CACHE PATH
+    "Installed NVIDIA PhysX SDK root")
+  set(PHYSX_BUILD_TYPE "checked" CACHE STRING
+    "PhysX library configuration")
+  set_property(CACHE PHYSX_BUILD_TYPE PROPERTY STRINGS
+    debug checked profile release)
+
+  find_package(PhysX 5.8 REQUIRED MODULE)
+  find_package(CUDAToolkit 12.8 REQUIRED)
+
+  add_executable(spectraldock_physx_scene
+    tools/generate_physx_kinetic_foundry.cpp)
+  target_include_directories(spectraldock_physx_scene PRIVATE include)
+  target_link_libraries(spectraldock_physx_scene PRIVATE
+    PhysX::SDK
+    nlohmann_json::nlohmann_json
+    CUDA::cudart
+    CUDA::cuda_driver)
+  target_compile_options(spectraldock_physx_scene PRIVATE
+    -Wall -Wextra -Wpedantic)
+endif()
 
 if(SPECTRALDOCK_ENABLE_GPU)
   enable_language(CUDA)
