@@ -198,7 +198,7 @@ def validate(scene, metadata):
 
     _require(metadata.get("schema_version") == 1, "metadata schema_version must be 1")
     _require(
-        metadata.get("generator") == "spectraldock-physx-kinetic-foundry/1.0",
+        metadata.get("generator") == "spectraldock-physx-kinetic-foundry/1.1",
         "unexpected generator identifier",
     )
     backend = metadata.get("backend", {})
@@ -230,7 +230,7 @@ def validate(scene, metadata):
     )
     _require(simulation.get("fixed_dt_numerator") == 1, "fixed dt numerator changed")
     _require(simulation.get("fixed_dt_denominator") == 120, "fixed dt denominator changed")
-    _require(simulation.get("steps") == 960, "simulation step count changed")
+    _require(simulation.get("steps") == 300, "simulation step count changed")
     _require(simulation.get("broad_phase") == "gpu", "GPU broad phase is required")
     flags = simulation.get("flags", {})
     for key in ("gpu_dynamics", "pcm", "stabilization"):
@@ -259,6 +259,11 @@ def validate(scene, metadata):
     _require(
         results.get("minimum_toppled_mascots") == MIN_TOPPLED,
         "minimum toppled mascot threshold changed",
+    )
+    _require(
+        type(results.get("sleeping_dynamic_actors")) is int
+        and results["sleeping_dynamic_actors"] == 0,
+        "impact-peak snapshot must have zero sleeping dynamic actors",
     )
     return {"mascots": len(mascots), "spheres": len(spheres), "toppled_mascots": toppled}
 

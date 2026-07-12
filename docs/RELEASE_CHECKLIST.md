@@ -61,9 +61,9 @@
 
 - [ ] 确认专用镜像固定到 PhysX tag `110.0-omni-and-physx-5.8.0`、commit `fc1018a3745664a1db2b95ce03fb5e91eb585f2e`，且不把下载的 SDK 源码或二进制复制进仓库。
 - [ ] 在同一测试机、设备和软件栈使用 `--verify` 连续生成两次；运行 `tools/check_physx_scene.py`，确认两份 scene JSON 与两份 metadata sidecar 分别逐字节一致。
-- [ ] 确认 sidecar 明确记录 PhysX GPU backend、设备、seed、固定步长、步数、scene flags、actor 数和场景摘要，并记录 `enhanced_determinism=false` / GPU 不支持。
-- [ ] 人工检查物体没有明显穿透、飞散、悬空或落出构图；不把同机双生成结果描述为跨 GPU、驱动、PhysX 版本或平台的确定性保证。
-- [ ] 更新 `kinetic-foundry.png`、`.stats.json` 和 `.physics.json`，并再次确认临时场景 JSON 未跟踪。
+- [ ] 确认 sidecar 使用生成器 `spectraldock-physx-kinetic-foundry/1.1`，明确记录 PhysX GPU backend、设备、seed、`1/120 s × 300`（2.5 秒）、scene flags、actor 数、`sleeping_dynamic_actors=0` 和场景摘要，并记录 `enhanced_determinism=false` / GPU 不支持。
+- [ ] 人工检查撞击峰值构图和物体运动层次，确认没有明显穿透、飞散、悬空或落出构图；确认作品为不含 motion blur 的清晰瞬时单帧，不把同机双生成结果描述为跨 GPU、驱动、PhysX 版本或平台的确定性保证。
+- [ ] 替换同名 `kinetic-foundry.png`、`.stats.json` 和 `.physics.json`，确认没有增加 gallery stem 或资产数量，并再次确认临时场景 JSON 未跟踪。
 
 ## 8. RTX 5090 最终验收
 

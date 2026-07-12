@@ -23,7 +23,7 @@
       ]
     }
   },
-  "generator": "spectraldock-physx-kinetic-foundry/1.0",
+  "generator": "spectraldock-physx-kinetic-foundry/1.1",
   "geometry": {
     "capsule_half_height": 0.28,
     "capsule_radius": 0.42,
@@ -33,7 +33,7 @@
   },
   "results": {
     "minimum_toppled_mascots": 12,
-    "sleeping_dynamic_actors": 4,
+    "sleeping_dynamic_actors": 0,
     "toppled_mascots": 24
   },
   "schema_version": 1,
@@ -56,6 +56,6 @@
     ],
     "seed": 20260711,
     "solver": "tgs",
-    "steps": 960
+    "steps": 300
   }
 }

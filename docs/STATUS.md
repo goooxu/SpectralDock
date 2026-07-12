@@ -1,6 +1,6 @@
 # 实施与验收状态
 
-更新时间：2026-07-11。
+更新时间：2026-07-12。
 
 ## 已完成实现
 
@@ -8,7 +8,7 @@
 - mesh 资源级共享压缩 GAS、IAS 对象变换、对象级 SBT/材质/alpha、真实几何正反面和插值着色法线。
 - 设备端 RR/MIS 保持局部 PDF 记账与吞吐量补偿分离；末端深度只为真实存在的竞争策略分配权重。
 - 固定 seed Harbor 生成器、五个内置场景共享吉祥物、preview/final 批量接口，以及包含几何、显存、时序和吞吐数据的 stats 输出。
-- 独立的 PhysX 5.8.0 GPU 刚体生成流程；Kinetic Foundry 只保留正式 PNG、渲染 stats 和物理生成 sidecar，不提交临时场景 JSON。
+- 独立的 PhysX 5.8.0 GPU 刚体生成流程；Kinetic Foundry 固定截取第 300 步（2.5 秒）的撞击峰值，正式 sidecar 记录 0 个 sleeping dynamic actors。仓库只保留同名正式 PNG、渲染 stats 和物理生成 sidecar，不提交临时场景 JSON。
 - OBJ/schema/变换与输入语义测试、吉祥物及 Harbor 确定性测试、五个内置场景一致性测试、GPU MIS 对照和共享 mesh fixture。
 
 ## 验证范围
@@ -21,7 +21,7 @@ v0.1 的完整验证范围仅为：
 - OptiX 9.1；
 - NVIDIA GeForce RTX 5090（compute capability 12.0）。
 
-Kinetic Foundry 另使用基于 CUDA 12.8.1、固定到 PhysX 5.8.0 源码版本的专用镜像生成。PhysX GPU 模式不支持 enhanced determinism；物理快照只通过固定步长、固定 actor 创建/导出顺序和同机双生成比较验收，不能据此宣称跨 GPU、驱动、PhysX 版本或平台逐字节一致。
+Kinetic Foundry 另使用基于 CUDA 12.8.1、固定到 PhysX 5.8.0 源码版本的专用镜像生成。第 300 步快照是清晰的运动瞬时单帧，不含 motion blur，也不是稳定后的最终状态。PhysX GPU 模式不支持 enhanced determinism；物理快照只通过固定步长、固定 actor 创建/导出顺序和同机双生成比较验收，不能据此宣称跨 GPU、驱动、PhysX 版本或平台逐字节一致。
 
 没有在 Windows、多 GPU、其他 NVIDIA GPU 或其他 CUDA/OptiX 组合上完成同等级验收。gallery、性能数据和 mesh 像素 golden 都只记录上述 RTX 5090 环境，不能视为跨 GPU golden 或兼容性承诺。
 
@@ -47,7 +47,7 @@ PhysX 生成器由 `SPECTRALDOCK_ENABLE_PHYSX_SCENE=ON` 的独立构建启用，
 - 64×64、4 spp、depth 1、seed 1 的绑定/未绑定灯 MIS 对照；
 - Compute Sanitizer 的 memcheck、initcheck 和 racecheck；
 - mesh composite fixture 的 UV、平滑法线、alpha、共享 GAS 双实例、几何统计和 RTX 5090 定向像素 golden；
-- 五个内置正式场景的预览检查，以及 Kinetic Foundry 的独立生成、验证和预览检查；发布前再执行一次完整 RTX 5090 验收。
+- 五个内置正式场景的预览检查，以及 Kinetic Foundry 的独立双生成、撞击峰值契约验证和预览检查；发布前再执行一次完整 RTX 5090 验收。
 
 `./scripts/acceptance.sh` 编排环境检查、Release/Debug 构建、host-only C++/Python 测试、MIS GPU 对照和 mesh GPU fixture。它不生成 PhysX 场景，不自动更新 gallery 图片，也不执行跨 GPU golden 或性能阈值判断。
 

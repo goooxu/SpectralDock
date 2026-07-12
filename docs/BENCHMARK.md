@@ -32,15 +32,17 @@ Kinetic Foundry 不属于上表五个内置场景，且生成/渲染环境与上
 因此单独记录。物理阶段使用 CUDA 12.8.1 专用镜像、PhysX 5.8.0 checked
 配置和固定 commit `fc1018a3745664a1db2b95ce03fb5e91eb585f2e`，在 RTX 5090
 上以 GPU dynamics、GPU broadphase、PCM、stabilization、seed `20260711`、
-`1/120 s` 固定步长运行 960 步。PhysX GPU 不支持 enhanced determinism；同机
-双生成逐字节一致不构成跨 GPU 或软件栈保证。
+`1/120 s` 固定步长运行 300 步，在 2.5 秒的撞击峰值截帧。此时 sidecar
+记录 0 个 sleeping dynamic actors。PhysX GPU 不支持 enhanced determinism；
+同机双生成逐字节一致不构成跨 GPU 或软件栈保证。
 
-最终静态快照随后由 CUDA 13.3、OptiX 9.1、driver 615.36 在同一 RTX 5090
-上以 1920×1080、512 spp、depth 12 和 AI denoise 渲染：
+该清晰的瞬时静态快照随后由 CUDA 13.3、OptiX 9.1、driver 615.36 在同一
+RTX 5090 上以 1920×1080、512 spp、depth 12 和 AI denoise 渲染；场景不含
+motion blur：
 
 | BVH build (ms) | Path trace (ms) | Denoise (ms) | Total (ms) | Traced rays | G rays/s | Observed peak (MiB) | Tracked peak (MiB) |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 30.347 | 513.548 | 13.420 | 1,272.597 | 2,739,619,670 | 5.335 | 1,320.3 | 494.6 |
+| 30.204 | 507.553 | 13.136 | 1,290.944 | 2,716,886,066 | 5.353 | 1,320.3 | 494.6 |
 
 该场景包含 24 个共享同一 mascot GAS 的 mesh 实例、192 个钢珠 sphere 和
 4 个可见静态 rectangle，共 220 个 objects/instances、1 个 unique mesh、

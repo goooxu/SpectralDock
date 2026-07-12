@@ -36,12 +36,13 @@ namespace {
 using json = nlohmann::json;
 using namespace physx;
 
-constexpr const char* kGenerator = "spectraldock-physx-kinetic-foundry/1.0";
+constexpr const char* kGenerator = "spectraldock-physx-kinetic-foundry/1.1";
 constexpr const char* kPhysxVersion = "5.8.0";
 constexpr const char* kPhysxCommit =
     "fc1018a3745664a1db2b95ce03fb5e91eb585f2e";
 constexpr std::uint64_t kDefaultSeed = 20260711ULL;
-constexpr PxU32 kSteps = 960;
+// Capture the selected impact peak at 2.5 seconds rather than the late pile.
+constexpr PxU32 kSteps = 300;
 constexpr float kFixedDt = 1.0f / 120.0f;
 constexpr PxU32 kMascotCount = 24;
 constexpr PxU32 kSphereCount = 192;

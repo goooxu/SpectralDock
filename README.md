@@ -12,7 +12,7 @@ SpectralDock 是面向 NVIDIA RTX GPU 的确定性离线路径追踪参考项目
 - 网格资源共享压缩 GAS；每个实例拥有独立变换、正反面材质、纹理和 alpha。
 - Lambert、GGX metal、光滑 dielectric 与 emitter，配合直接光采样、MIS 和俄罗斯轮盘。
 - 固定 seed 的确定性渲染、PNG 输出和同名 `*.stats.json` 运行记录。
-- 五个内置 1920×1080 展示场景、一个 PhysX 5.8.0 GPU 刚体快照、低成本 smoke fixture、host-only 测试和 RTX 5090 手工 GPU 验收流程。
+- 五个内置 1920×1080 展示场景、一个固定在 300 步（2.5 秒）撞击峰值的 PhysX 5.8.0 GPU 刚体瞬时快照、低成本 smoke fixture、host-only 测试和 RTX 5090 手工 GPU 验收流程。
 
 ## 依赖与已验证平台
 
@@ -43,7 +43,7 @@ test -f "$OPTIX_ROOT/include/optix.h"
 
 构建产物位于 `build/Release/`。v0.1 只支持从构建目录或项目容器运行；不提供可重定位安装包，因为可执行文件会加载同一构建树中的 OptiX IR。
 
-PhysX 不参与渲染器构建或运行。只有重新生成 Kinetic Foundry 的刚体快照时才需要专用 PhysX 镜像；生成过程、固定版本和产物边界见 [PhysX 场景说明](docs/PHYSX_SCENE.md)。
+PhysX 不参与渲染器构建或运行。只有重新生成 Kinetic Foundry 的刚体快照时才需要专用 PhysX 镜像；生成过程、固定版本和产物边界见 [PhysX 场景说明](docs/PHYSX_SCENE.md)。正式更新会替换同名 PNG、stats 和 physics sidecar，不新增 gallery stem 或视觉资产条目。
 
 ## 低成本 smoke render
 
@@ -91,7 +91,7 @@ Host-only 测试不需要 NVIDIA GPU、OptiX SDK 或 PhysX：
 - 单 GPU、离线 RGBA PNG；没有交互窗口、分布式或多 GPU 渲染。
 - 不实现 MTL、骨骼、动画、体积或通用非网格对象变换。
 - mesh emitter 可显示发光，但不能作为显式采样灯；显式灯为 rectangle、disk 或 sphere。
-- Kinetic Foundry 是 PhysX 模拟结果的静态渲染快照，不提供运行时物理、交互或动画。
+- Kinetic Foundry 截取固定第 300 步（2.5 秒）的撞击峰值，记录 0 个 sleeping dynamic actors；它是清晰的单帧瞬时静态快照，不含 motion blur，也不提供运行时物理、交互或动画。
 - gallery 和 mesh 像素 golden 是一次 RTX 5090 结果，不是跨 GPU、驱动或编译器的逐字节承诺。
 - 首版只发布源码，不附带二进制、容器镜像或第三方 SDK。
 

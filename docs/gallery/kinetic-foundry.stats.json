@@ -20,14 +20,14 @@
     "denoised": true
   },
   "timings_ms": {
-    "bvh_build": 30.347135543823242,
-    "render": 513.5482788085938,
-    "denoise": 13.419936180114746,
-    "total": 1272.59731
+    "bvh_build": 30.20403289794922,
+    "render": 507.5534973144531,
+    "denoise": 13.135680198669434,
+    "total": 1290.943888
   },
   "memory": {
     "peak_device_bytes": 1384448000,
-    "peak_tracked_device_bytes": 518665464
+    "peak_tracked_device_bytes": 518664952
   },
   "geometry": {
     "objects": 220,
@@ -37,7 +37,7 @@
     "gas_count": 197
   },
   "performance": {
-    "traced_rays": 2739619670,
-    "rays_per_second": 5334687668.228156
+    "traced_rays": 2716886066,
+    "rays_per_second": 5352905812.639416
   }
 }

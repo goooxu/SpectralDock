@@ -1,9 +1,9 @@
 # Kinetic Foundry：PhysX 场景生成与复现
 
 Kinetic Foundry 是一个按需生成的静态 gallery 场景。PhysX 5.8.0 只负责
-GPU 刚体模拟并烘焙物体最终姿态；SpectralDock 随后读取普通 schema v2
-JSON，以 CUDA/OptiX 完成路径追踪。渲染器本身不链接 PhysX，也不提供
-运行时物理、交互或动画。
+GPU 刚体模拟，并在固定第 300 步（2.5 秒）烘焙撞击峰值的瞬时姿态；
+SpectralDock 随后读取普通 schema v2 JSON，以 CUDA/OptiX 完成路径追踪。
+渲染器本身不链接 PhysX，也不提供运行时物理、交互或动画。
 
 ## 发行边界
 
@@ -55,8 +55,9 @@ python3 tools/check_physx_scene.py \
 
 `--verify` 在同一固定容器镜像和设备上生成两次，分别逐字节比较 scene
 JSON 和 metadata sidecar，再运行验证器。sidecar 记录 PhysX GPU backend、
-设备、seed、`dt=1/120`、`steps=960`、重力、scene flags、actor 计数和结果
-摘要。
+设备、seed、`dt=1/120`、`steps=300`、重力、scene flags、actor 计数和结果
+摘要。正式 sidecar 还必须记录 `sleeping_dynamic_actors=0`，证明截帧时没有
+动态 actor 进入 PhysX sleeping 状态。
 
 普通预览写入被忽略的 `output/examples/`：
 
@@ -65,8 +66,9 @@ OPTIX_ROOT="/absolute/path/to/OptiX-SDK-9.1.0" \
   ./scripts/render-physx-scene.sh --preset preview
 ```
 
-只有维护者在完成验收后才运行 final；它显式更新受版本控制的 PNG、
-渲染 stats 和物理 metadata 三件套，但仍不提交临时场景 JSON：
+只有维护者在完成验收后才运行 final；它显式替换受版本控制的同名 PNG、
+渲染 stats 和物理 metadata 三件套，不增加 gallery stem 或资产数量，且仍
+不提交临时场景 JSON：
 
 ```bash
 OPTIX_ROOT="/absolute/path/to/OptiX-SDK-9.1.0" \
@@ -78,17 +80,19 @@ OPTIX_ROOT="/absolute/path/to/OptiX-SDK-9.1.0" \
 PhysX GPU 模式不支持 enhanced determinism；sidecar 必须记录
 `enhanced_determinism=false` 和
 `enhanced_determinism_unsupported_on_gpu`。本项目依靠固定 seed、固定
-时间步与步数、固定 actor 创建/导出顺序，以及同一测试机、同一设备和
+时间步与撞击峰值步数、固定 actor 创建/导出顺序，以及同一测试机、同一设备和
 同一软件栈上的双生成逐字节比较来发现漂移。这不是跨 GPU、驱动、CUDA、
 PhysX 版本、编译器或操作系统的确定性承诺。
 
 正式更新前应完成：
 
 1. 使用 `--verify` 生成，确认 scene 和 metadata 两组逐字节比较均通过。
-2. 确认 24 个采用 capsule 碰撞代理的 mascot、192 个钢珠 sphere、有限
-   变换、落地区域、至少 12 个倾角超过 15° 的 toppled mascot 和
-   GPU-only flags 通过 `check_physx_scene.py`。
-3. 渲染 preview，人工检查明显穿透、飞散、悬空、落出构图和材质错误。
+2. 确认第 300 步（2.5 秒）、0 个 sleeping dynamic actors、24 个采用
+   capsule 碰撞代理的 mascot、192 个钢珠 sphere、有限变换、落地区域、
+   至少 12 个倾角超过 15° 的 toppled mascot 和 GPU-only flags 通过
+   `check_physx_scene.py`。
+3. 渲染 preview，人工检查撞击峰值构图，以及明显穿透、飞散、悬空、落出
+   构图和材质错误；该作品是清晰的瞬时单帧，不使用 motion blur。
 4. 在 RTX 5090 正式环境运行 final，逐项核对 PNG、stats 与 physics
    metadata，并确认 `scenes/generated/` 仍未被跟踪。
 

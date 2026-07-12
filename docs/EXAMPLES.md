@@ -36,7 +36,7 @@
 
 ![Kinetic Foundry](gallery/kinetic-foundry.png)
 
-该按需场景使用 PhysX 5.8.0 GPU 刚体模拟 24 个采用 capsule 碰撞代理的吉祥物与 192 颗钢珠，烘焙最终姿态后再由 SpectralDock/OptiX 渲染静态快照。仓库只保留正式 PNG、渲染 stats 和同 stem 的 `.physics.json` 生成记录，不提交中间 `scenes/generated/kinetic-foundry.json`。PhysX 不参与路径追踪，也不会成为运行五个内置场景时的依赖；复现边界和命令见 [PhysX 场景说明](PHYSX_SCENE.md)。
+该按需场景使用 PhysX 5.8.0 GPU 刚体模拟 24 个采用 capsule 碰撞代理的吉祥物与 192 颗钢珠，并在固定第 300 步（2.5 秒）截取撞击峰值；sidecar 记录 `sleeping_dynamic_actors=0`，即没有动态 actor 进入 sleeping 状态。SpectralDock/OptiX 渲染的是这一时刻清晰的静态单帧，不含 motion blur，不应解读为系统的最终静止状态。仓库只保留正式 PNG、渲染 stats 和同 stem 的 `.physics.json` 生成记录，不提交中间 `scenes/generated/kinetic-foundry.json`。PhysX 不参与路径追踪，也不会成为运行五个内置场景时的依赖；复现边界和命令见 [PhysX 场景说明](PHYSX_SCENE.md)。
 
 ## 运行
 
@@ -58,7 +58,7 @@
 OPTIX_ROOT="/absolute/path/to/OptiX-SDK-9.1.0" \
   ./scripts/render-physx-scene.sh --preset preview
 
-# 仅维护者在验收后更新受版本控制的正式三件套
+# 仅维护者在验收后替换受版本控制的同名三件套；不增加资产数量
 OPTIX_ROOT="/absolute/path/to/OptiX-SDK-9.1.0" \
   ./scripts/render-physx-scene.sh --preset final
 ```

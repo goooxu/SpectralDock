@@ -76,7 +76,7 @@ def valid_documents():
     }
     metadata = {
         "schema_version": 1,
-        "generator": "spectraldock-physx-kinetic-foundry/1.0",
+        "generator": "spectraldock-physx-kinetic-foundry/1.1",
         "backend": {
             "name": "NVIDIA PhysX",
             "mode": "gpu",
@@ -91,7 +91,7 @@ def valid_documents():
             "seed": 20260711,
             "fixed_dt_numerator": 1,
             "fixed_dt_denominator": 120,
-            "steps": 960,
+            "steps": 300,
             "broad_phase": "gpu",
             "flags": {
                 "gpu_dynamics": True,
@@ -117,6 +117,7 @@ def valid_documents():
         "results": {
             "toppled_mascots": CHECK.MIN_TOPPLED,
             "minimum_toppled_mascots": CHECK.MIN_TOPPLED,
+            "sleeping_dynamic_actors": 0,
         },
     }
     return scene, metadata
@@ -185,6 +186,23 @@ def test_cross_document_seed_bounds_and_numeric_types_are_enforced():
     scene, metadata = valid_documents()
     metadata["geometry"]["mascot_scale"] = "0.7"
     with pytest.raises(CHECK.ContractError, match="must be finite"):
+        CHECK.validate(scene, metadata)
+
+
+def test_impact_peak_step_and_motion_contract_are_enforced():
+    scene, metadata = valid_documents()
+    metadata["simulation"]["steps"] = 960
+    with pytest.raises(CHECK.ContractError, match="step count changed"):
+        CHECK.validate(scene, metadata)
+
+    scene, metadata = valid_documents()
+    metadata["results"]["sleeping_dynamic_actors"] = 1
+    with pytest.raises(CHECK.ContractError, match="zero sleeping"):
+        CHECK.validate(scene, metadata)
+
+    scene, metadata = valid_documents()
+    metadata["generator"] = "spectraldock-physx-kinetic-foundry/1.0"
+    with pytest.raises(CHECK.ContractError, match="generator identifier"):
         CHECK.validate(scene, metadata)
 
 
