@@ -32,11 +32,11 @@
 
 “泡泡海上的吉祥物船队”由 16 个四色胶囊吉祥物实例共享一份 5,816-triangle GAS，并由固定 seed `20260707` 生成 1,024 个互不重叠的球形波浪。该场景覆盖大 IAS、确定性生成、BVH 构建和吞吐率。
 
-## Rocket Test Stand
+## Ember Forge
 
-![Rocket Test Stand](gallery/rocket-test-stand.png)
+![Ember Forge](gallery/ember-forge.png)
 
-横向点火舱把发动机、完整尾焰和斜向导流火焰沟纳入同一低机位画面。尾焰由四股 schema v4 程序化异质吸收—自发光体积叠加：短窄的蓝白核心、扩张的黄橙主焰、收尖的红橙长尾，以及轻微偏轴的细火舌；它们使用线性 RGB 轴向渐变、Delta Tracking 和体积 NEE，并非黑体、CFD、烟雾或动画。双推进剂储罐与端盖、输送管和阀组、发动机桁架与斜撑、检修平台/护栏/梯子、火焰沟与导流板、防爆控制区共同构成高密度设施；一个 mascot 观察员提供尺度参照。场景中的暖光只来自四股 flame，唯一的低能量冷色补光只负责读清设备。正式图固定为 2048 spp、depth 12、无 Denoiser。
+深夜封闭锻造工坊采用电影化的低机位三分之四构图：砖砌锻炉位于左侧视觉焦点，胶囊 mascot 作为铁匠站在铁砧与灼热工件之后，烟罩、工具架、风箱、淬火桶、钢材和梁柱填充纵深。单座炉火由三段相互重叠的 schema v4 程序化异质吸收—自发光体积构成：宽而明亮的炉芯、向上收尖的主火舌与轻微偏轴的副火舌；它们使用线性 RGB 轴向渐变、Delta Tracking 和体积 NEE，并非黑体、CFD、烟雾或动画。环境为纯黑，场景没有 emitter、面积灯或隐藏补光，全部可见照明只来自这组三段 flame；浅色耐火砖与中等反照率的粗糙金属通过直接光和间接反弹呈现暖色明暗层次。正式图固定为 2048 spp、depth 12、无 Denoiser。
 
 ## Moonlit Stepwell
 
@@ -63,7 +63,7 @@
 ./scripts/render-examples.sh --preset preview neon-koi reflector-laboratory
 ```
 
-上述命令只处理七个内置场景；Rocket Test Stand 的 preview/final 分别固定为 256/2048 spp、depth 12、无降噪，Moonlit Stepwell 分别固定为 256/2048 spp、depth 16、无降噪。按需生成并渲染 Kinetic Foundry：
+上述命令只处理七个内置场景；Ember Forge 的 preview/final 分别固定为 256/2048 spp、depth 12、无降噪，Moonlit Stepwell 分别固定为 256/2048 spp、depth 16、无降噪。只渲染火焰场景可运行 `./scripts/render-examples.sh --preset preview ember-forge`。按需生成并渲染 Kinetic Foundry：
 
 ```bash
 ./scripts/build-physx-image.sh

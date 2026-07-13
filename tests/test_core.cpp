@@ -684,6 +684,31 @@ void test_scene_parser() {
   near(scene.background.exposure, 1.0f, 1.0e-6f, "background exposure");
 }
 
+void check_ember_forge_contract(const Scene& scene,
+                                const std::filesystem::path& path) {
+  check(scene.background.type == BackgroundType::Constant,
+        "Ember Forge background must be constant: " + path.string());
+  check(length_squared(scene.background.color) < 1.0e-12f,
+        "Ember Forge background must be black: " + path.string());
+  for (const Material& material : scene.materials) {
+    check(material.type != MaterialType::Emitter,
+          "Ember Forge must not contain emitter materials: " + path.string());
+  }
+  check(scene.lights.size() == 3,
+        "Ember Forge must contain exactly three lights: " + path.string());
+  for (const Light& light : scene.lights) {
+    check(light.type == LightType::Flame,
+          "Ember Forge lights must all be flames: " + path.string());
+  }
+}
+
+void check_builtin_scene_contract(const Scene& scene,
+                                  const std::filesystem::path& path) {
+  if (path.filename() == "ember-forge.json") {
+    check_ember_forge_contract(scene, path);
+  }
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -698,8 +723,10 @@ int main(int argc, char** argv) {
     test_flame_lights();
     test_water_surfaces();
     for (int i = 1; i < argc; ++i) {
-      const Scene scene = load_scene(argv[i], SceneLoadOptions{false});
-      check(!scene.objects.empty(), std::string("scene has no objects: ") + argv[i]);
+      const std::filesystem::path path = argv[i];
+      const Scene scene = load_scene(path, SceneLoadOptions{false});
+      check(!scene.objects.empty(), "scene has no objects: " + path.string());
+      check_builtin_scene_contract(scene, path);
     }
     std::cout << "all core tests passed\n";
     return 0;

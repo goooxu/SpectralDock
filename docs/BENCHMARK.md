@@ -1,6 +1,6 @@
 # RTX 5090 单机运行记录
 
-以下数据是 NVIDIA GeForce RTX 5090（CC 12.0）上的可复查运行记录，不是跨 GPU 基准，也不用于给出性能承诺。前五个内置场景使用 OptiX 90100、CUDA Driver API/runtime 13030 和 driver 610.47.04，以 1920×1080、512 spp、depth 12 和 AI denoise 渲染。Rocket Test Stand 与 Moonlit Stepwell 使用 OptiX 90100、CUDA Driver API 13040、runtime 13030 和 driver 615.36；前者固定为 2048 spp、depth 12、无降噪，后者固定为 2048 spp、depth 16、无降噪。由于软件栈、采样数和算法工作量不同，各行适合解释阶段耗时、显存与计数器，不构成受控的横向性能比较。原始数据来自 `docs/gallery/*.stats.json`。
+以下数据是 NVIDIA GeForce RTX 5090（CC 12.0）上的可复查运行记录，不是跨 GPU 基准，也不用于给出性能承诺。前五个内置场景使用 OptiX 90100、CUDA Driver API/runtime 13030 和 driver 610.47.04，以 1920×1080、512 spp、depth 12 和 AI denoise 渲染。Ember Forge 与 Moonlit Stepwell 使用 OptiX 90100、CUDA Driver API 13040、runtime 13030 和 driver 615.36；前者固定为 2048 spp、depth 12、无降噪，后者固定为 2048 spp、depth 16、无降噪。由于软件栈、采样数和算法工作量不同，各行适合解释阶段耗时、显存与计数器，不构成受控的横向性能比较。原始数据来自 `docs/gallery/*.stats.json`。
 
 ## 内置场景记录
 
@@ -11,7 +11,7 @@
 | celestial-archive | 2.679 | 606.931 | 14.530 | 1,345.682 | 3,143,769,772 | 5.180 | 1,324.3 | 495.7 |
 | reflector-laboratory | 2.655 | 782.546 | 14.367 | 1,472.562 | 2,762,368,581 | 3.530 | 1,308.3 | 483.7 |
 | benchmark-harbor | 169.622 | 228.853 | 15.533 | 1,087.870 | 1,614,680,505 | 7.056 | 1,310.3 | 485.4 |
-| rocket-test-stand | 17.305 | 12,747.604 | 0.000 | 15,438.029 | 13,795,328,367 | 1.082 | 1,468.3 | 190.6 |
+| ember-forge | 19.690 | 16,001.142 | 0.000 | 18,677.262 | 22,798,347,733 | 1.425 | 1,468.3 | 190.6 |
 | moonlit-stepwell | 9.443 | 17,065.023 | 0.000 | 19,669.170 | 15,553,006,112 | 0.911 | 1,516.3 | 238.0 |
 
 `Path trace` 对应统计 JSON 的 `timings_ms.render`，只计一次 `optixLaunch`。`Total` 在 `render_optix()` 完成参数与像素数检查后开始，到返回前结束，包含 CUDA/OptiX 初始化、纹理解码与上传、BVH、追踪、可选降噪、后处理、设备到主机回传和设备信息查询；不含此前的场景/OBJ 解析、之后的 PNG/stats 写盘及函数局部 RAII 资源析构，因此不等于前三项简单相加。显存按 1 MiB = 1,048,576 bytes 换算。
@@ -25,11 +25,11 @@
 | celestial-archive | 9 | 9 | 1 | 5,816 | 9 |
 | reflector-laboratory | 10 | 10 | 1 | 5,816 | 10 |
 | benchmark-harbor | 1,040 | 1,040 | 1 | 5,816 | 1,025 |
-| rocket-test-stand | 85 | 85 | 1 | 5,816 | 85 |
+| ember-forge | 87 | 87 | 1 | 5,816 | 87 |
 | moonlit-stepwell | 36 | 36 | 1 | 5,816 | 36 |
 
 Harbor 的 16 个胶囊吉祥物共享一份 mascot GAS，另有 1,024 个 sphere GAS；`mesh_triangles` 不按实例数重复计数。
-Rocket Test Stand 的四股 flame 不注册为几何，因此不增加 object、instance、GAS 或 SBT 数量；85 个几何对象来自横向发动机、双储罐与管阀、桁架、检修设施、火焰沟、防爆控制区和尺度参照。其密度求值、真实碰撞和体积选灯次数由独立 volume stats 记录。该场景的正式运行执行 13,227,057,669 次密度求值、223,841,360 次真实体积碰撞和 5,559,197,943 次 flame NEE 选灯；majorant violation 与 tracking overflow 均为 0。场景另有一盏低能量冷色检修补光用于读清设备，不充当暖色火焰代理。体积求值是 raygen 中的纯 CUDA 工作，不计入 `traced_rays`，所以该场景的 rays/s 不应与纯表面场景直接比较。
+Ember Forge 的三段 flame 不注册为几何，因此不增加 object、instance、GAS 或 SBT 数量；87 个几何对象来自砖砌锻炉、烟罩、铁砧、胶囊铁匠与锤子、工具墙、风箱、淬火桶、钢材和工坊结构。其密度求值、真实碰撞和体积选灯次数由独立 volume stats 记录。该场景的正式运行执行 26,079,183,658 次密度求值、579,499,095 次真实体积碰撞和 15,188,556,352 次 flame NEE 选灯；majorant violation 与 tracking overflow 均为 0。场景使用纯黑 constant background，不含 emitter、面积灯或隐藏补光，全部可见照明只来自三段 flame。体积求值是 raygen 中的纯 CUDA 工作，不计入 `traced_rays`，所以该场景的 rays/s 不应与纯表面场景直接比较。
 
 Moonlit Stepwell 的 water_surface 注册为一个共享波面参数的 custom-primitive GAS；最短波长决定 tile 数和 GAS primitive 数，但不把解析曲面三角化。本次正式运行记录 66,080,894,763 次 height evaluation、6,841,808,741 次 tile test、1,620,050,797 个 reported root、403,826,143 次 shadow transmission 和 2,303,902,049 个 medium segment，solver overflow、medium error 与 shadow-boundary overflow 均为 0。其路径追踪耗时和 rays/s 因包含 OptiX 自定义 intersection 中的 CUDA 数值求根、介质栈与 Beer 计算，不应直接与纯表面场景比较。
 

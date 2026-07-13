@@ -16,7 +16,7 @@ Creative Commons CC0 1.0 Universal:
 - docs/gallery/moonlit-stepwell.png
 - docs/gallery/neon-koi.png
 - docs/gallery/reflector-laboratory.png
-- docs/gallery/rocket-test-stand.png
+- docs/gallery/ember-forge.png
 
 To the extent the contributors hold copyright or related or neighboring
 rights in these files, they waive those rights as permitted by law. The files

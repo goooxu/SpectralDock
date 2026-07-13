@@ -112,6 +112,6 @@ if(BUILD_TESTING)
     "${CMAKE_CURRENT_SOURCE_DIR}/scenes/celestial-archive.json"
     "${CMAKE_CURRENT_SOURCE_DIR}/scenes/reflector-laboratory.json"
     "${CMAKE_CURRENT_SOURCE_DIR}/scenes/benchmark-harbor.json"
-    "${CMAKE_CURRENT_SOURCE_DIR}/scenes/rocket-test-stand.json"
+    "${CMAKE_CURRENT_SOURCE_DIR}/scenes/ember-forge.json"
     "${CMAKE_CURRENT_SOURCE_DIR}/scenes/moonlit-stepwell.json")
 endif()

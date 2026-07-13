@@ -12,7 +12,7 @@ usage() {
     '' \
     'preview: 960x540, 64 spp, depth 8, AI denoising' \
     'final:   1920x1080, 512 spp, depth 12, AI denoising' \
-    'rocket-test-stand: 256/2048 spp, depth 12, no denoising' \
+    'ember-forge:       256/2048 spp, depth 12, no denoising' \
     'moonlit-stepwell:   256/2048 spp, depth 16, no denoising' \
     'Warning: --preset final writes version-controlled files in docs/gallery.'
 }
@@ -75,7 +75,7 @@ if [[ $# -eq 0 ]]; then
     celestial-archive
     reflector-laboratory
     benchmark-harbor
-    rocket-test-stand
+    ember-forge
     moonlit-stepwell
   )
 else
@@ -98,7 +98,7 @@ for requested in "${scenes[@]}"; do
   scene_spp="${spp}"
   scene_depth="${depth}"
   denoise_option="--denoise"
-  if [[ "${stem}" == "rocket-test-stand" ]]; then
+  if [[ "${stem}" == "ember-forge" ]]; then
     scene_depth=12
     denoise_option="--no-denoise"
     if [[ "${preset}" == "preview" ]]; then

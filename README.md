@@ -93,7 +93,7 @@ Host-only 测试不需要 NVIDIA GPU、OptiX SDK 或 PhysX：
 ./scripts/render-examples.sh --preset preview
 ```
 
-`./scripts/render-examples.sh --preset final` 会直接覆盖七个内置场景受版本控制的 gallery PNG 和对应 stats，用于重建同一组运行记录。Rocket Test Stand 固定使用 2048 spp、depth 12 且不降噪；Moonlit Stepwell 固定使用 2048 spp、depth 16 且不降噪。Kinetic Foundry 使用独立的 PhysX 生成/渲染入口，不在默认七场景批处理中。完整说明见[示例画廊](docs/EXAMPLES.md)。
+`./scripts/render-examples.sh --preset final` 会直接覆盖七个内置场景受版本控制的 gallery PNG 和对应 stats，用于重建同一组运行记录。Ember Forge 固定使用 2048 spp、depth 12 且不降噪；Moonlit Stepwell 固定使用 2048 spp、depth 16 且不降噪。Kinetic Foundry 使用独立的 PhysX 生成/渲染入口，不在默认七场景批处理中。完整说明见[示例画廊](docs/EXAMPLES.md)。
 
 ## 已知限制
 

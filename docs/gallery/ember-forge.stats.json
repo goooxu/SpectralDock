@@ -1,6 +1,6 @@
 {
-  "scene": "scenes/rocket-test-stand.json",
-  "output": "docs/gallery/rocket-test-stand.png",
+  "scene": "scenes/ember-forge.json",
+  "output": "docs/gallery/ember-forge.png",
   "hardware": {
     "gpu": "NVIDIA GeForce RTX 5090",
     "compute_capability": "12.0"
@@ -20,30 +20,30 @@
     "denoised": false
   },
   "timings_ms": {
-    "bvh_build": 17.304704666137695,
-    "render": 12747.603515625,
+    "bvh_build": 19.690080642700195,
+    "render": 16001.1416015625,
     "denoise": 0.0,
-    "total": 15438.029167
+    "total": 18677.262183
   },
   "memory": {
     "peak_device_bytes": 1539637248,
-    "peak_tracked_device_bytes": 199859280
+    "peak_tracked_device_bytes": 199862992
   },
   "geometry": {
-    "objects": 85,
-    "instances": 85,
+    "objects": 87,
+    "instances": 87,
     "unique_meshes": 1,
     "mesh_triangles": 5816,
-    "gas_count": 85
+    "gas_count": 87
   },
   "performance": {
-    "traced_rays": 13795328367,
-    "rays_per_second": 1082189946.533149
+    "traced_rays": 22798347733,
+    "rays_per_second": 1424795074.0448265
   },
   "volume": {
-    "volume_density_evaluations": 13227057669,
-    "volume_real_collisions": 223841360,
-    "volume_light_samples": 5559197943,
+    "volume_density_evaluations": 26079183658,
+    "volume_real_collisions": 579499095,
+    "volume_light_samples": 15188556352,
     "volume_majorant_violations": 0,
     "volume_tracking_overflows": 0
   },
