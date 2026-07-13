@@ -18,6 +18,7 @@ enum DeviceMaterialType : std::uint32_t {
   kMaterialMetal = 1,
   kMaterialDielectric = 2,
   kMaterialEmitter = 3,
+  kMaterialWater = 4,
 };
 
 enum PrimitiveType : std::uint32_t {
@@ -27,6 +28,8 @@ enum PrimitiveType : std::uint32_t {
   kPrimitiveCylinder = 3,
   kPrimitiveParabola = 4,
   kPrimitiveMesh = 5,
+  kPrimitiveWaterSurface = 6,
+  kPrimitiveSolidSphere = 7,
 };
 
 enum DeviceBackgroundType : std::uint32_t {
@@ -62,6 +65,16 @@ struct MaterialData {
   float metallic = 1.0f;
   std::int32_t texture_index = kInvalidIndex;
   std::uint32_t type = kMaterialLambertian;
+  float3 absorption = {0.0f, 0.0f, 0.0f};
+  std::uint32_t reserved = 0;
+};
+
+struct DeviceWaterWave {
+  float2 direction = {1.0f, 0.0f};
+  float amplitude = 0.0f;
+  float wave_number = 0.0f;
+  float phase = 0.0f;
+  float reserved = 0.0f;
 };
 
 // DeviceGeometryData is copied inline into every hit-group SBT record.
@@ -89,6 +102,16 @@ struct DeviceGeometryData {
   std::int32_t alpha_texture = kInvalidIndex;
   std::int32_t light_index = kInvalidIndex;
   std::uint32_t primitive_index_base = 0;
+
+  // water_surface is a world-space XZ height field. p0 is its center and
+  // water_size is its X/Z extent. Each custom primitive is one conservative
+  // tile AABB; its primitive index identifies the tile in row-major order.
+  float2 water_size = {0.0f, 0.0f};
+  std::uint32_t water_wave_count = 0;
+  std::uint32_t water_tiles_x = 0;
+  std::uint32_t water_tiles_z = 0;
+  std::uint32_t water_reserved = 0;
+  DeviceWaterWave water_waves[4]{};
 };
 
 enum MeshFlags : std::uint32_t {
@@ -150,6 +173,17 @@ struct VolumeCounters {
   unsigned long long tracking_overflows = 0;
 };
 
+struct WaterCounters {
+  unsigned long long height_evaluations = 0;
+  unsigned long long tile_tests = 0;
+  unsigned long long roots_reported = 0;
+  unsigned long long shadow_transmissions = 0;
+  unsigned long long medium_segments = 0;
+  unsigned long long solver_overflows = 0;
+  unsigned long long medium_errors = 0;
+  unsigned long long shadow_boundary_overflows = 0;
+};
+
 // Camera basis uses w pointing backwards (look-from minus look-at), with u to
 // the right and v up. tan_half_fov is the vertical half-angle tangent.
 struct CameraData {
@@ -197,11 +231,13 @@ struct LaunchParams {
   std::uint32_t texture_count = 0;
   std::uint32_t light_count = 0;
   std::uint32_t flame_count = 0;
+  std::uint32_t water_surface_count = 0;
 
   // Optional global counter. Every radiance and shadow optixTrace increments
   // it once, allowing rays/s reporting without estimating bounce counts.
   unsigned long long* traced_rays = nullptr;
   VolumeCounters* volume_counters = nullptr;
+  WaterCounters* water_counters = nullptr;
 };
 
 extern "C" cudaError_t spectraldockLaunchPostprocess(

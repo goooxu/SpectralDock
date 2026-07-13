@@ -281,7 +281,7 @@ void test_schema_v3_flame_lights() {
                            const std::string& lights) {
     return std::string("{\"schema_version\":") +
            std::to_string(schema_version) + R"json(,
-      "camera":{"look_from":[0,1,4],"look_at":[0,0,0],"up":[0,1,0],"vfov":40},
+      "camera":{"look_from":[0,4,4],"look_at":[0,0,0],"up":[0,1,0],"vfov":40},
       "background":{"type":"constant","color":[0,0,0]},
       "textures":[], "materials":[{"name":"mat","type":"lambertian"}],
       "objects":[{"name":"anchor","type":"sphere","center":[0,0,0],
@@ -384,6 +384,263 @@ void test_schema_v3_flame_lights() {
                "flame count limit");
 }
 
+void test_schema_v4_water_surfaces() {
+  TemporaryDirectory directory;
+  const auto scene_path = directory.path / "water.json";
+  const std::string valid_material = R"json(
+    {"name":"water","type":"water"})json";
+  const std::string valid_surface = R"json(
+    {"name":"pool","type":"water_surface","center":[1,2,3],
+     "size":[8,6],"material":"water","waves":[
+       {"direction":[2,0],"amplitude":0.05,"wavelength":2,"phase_radians":-0.5},
+       {"direction":[0,1],"amplitude":0.02,"wavelength":1,"phase_radians":7}
+     ]})json";
+  const auto document = [](std::uint32_t schema_version,
+                           const std::string& materials,
+                           const std::string& objects) {
+    return std::string("{\"schema_version\":") +
+           std::to_string(schema_version) + R"json(,
+      "camera":{"look_from":[0,4,4],"look_at":[0,0,0],"up":[0,1,0],"vfov":40},
+      "background":{"type":"constant","color":[0,0,0]},
+      "textures":[],"materials":)json" + materials +
+           ",\"objects\":" + objects + "}";
+  };
+  const auto replace = [](std::string source, const std::string& before,
+                          const std::string& after) {
+    const std::size_t offset = source.find(before);
+    if (offset == std::string::npos)
+      throw std::runtime_error("test water fixture replacement did not match");
+    source.replace(offset, before.size(), after);
+    return source;
+  };
+  const auto reject = [&](const std::string& materials,
+                          const std::string& objects,
+                          const std::string& expected,
+                          const std::string& message,
+                          std::uint32_t schema_version = 4) {
+    write_text(scene_path,
+               document(schema_version, materials, objects));
+    expect_error([&] { (void)load_scene(scene_path); }, expected, message);
+  };
+
+  write_text(scene_path,
+             document(4, "[" + valid_material + "]",
+                      "[" + valid_surface + "]"));
+  const Scene scene = load_scene(scene_path);
+  check(scene.schema_version == 4 && scene.materials.size() == 1 &&
+            scene.objects.size() == 1,
+        "schema v4 water declaration");
+  const Material& material = scene.materials.front();
+  check(material.type == MaterialType::Water,
+        "water material type");
+  near(material.ior, 1.333f, 1.0e-6f, "water default IOR");
+  near(material.absorption.x, 0.35f, 1.0e-6f,
+       "water default absorption red");
+  near(material.absorption.y, 0.08f, 1.0e-6f,
+       "water default absorption green");
+  near(material.absorption.z, 0.025f, 1.0e-6f,
+       "water default absorption blue");
+  check(scene.objects.front().type == GeometryType::WaterSurface,
+        "water_surface geometry type");
+  const auto& surface =
+      std::get<WaterSurfaceData>(scene.objects.front().geometry);
+  check(surface.wave_count == 2 && surface.tiles_x == 16 &&
+            surface.tiles_z == 12,
+        "water wave and automatic tile counts");
+  near(surface.waves[0].direction.x, 1.0f, 1.0e-6f,
+       "water wave direction normalization");
+  near(surface.waves[0].phase_radians, 2.0f * kPi - 0.5f, 1.0e-6f,
+       "water negative phase wrapping");
+  near(surface.waves[1].phase_radians, 7.0f - 2.0f * kPi, 1.0e-6f,
+       "water positive phase wrapping");
+
+  reject("[" + valid_material + "]", "[" + valid_surface + "]",
+         "require schema_version 4", "water schema gating", 3);
+  reject("[" + replace(valid_material, "\"water\"}",
+                       "\"water\",\"texture\":\"x\"}") + "]",
+         "[" + valid_surface + "]", "not supported by water",
+         "water texture rejection");
+  reject("[" + replace(valid_material, "\"water\"}",
+                       "\"water\",\"ior\":1.0}") + "]",
+         "[" + valid_surface + "]", "water IOR must be in (1, 3]",
+         "water IOR range");
+  reject("[" + replace(valid_material, "\"water\"}",
+                       "\"water\",\"absorption\":[-1,0,0]}") + "]",
+         "[" + valid_surface + "]", "finite and non-negative",
+         "water absorption range");
+  reject("[" + valid_material + "]",
+         "[" + replace(valid_surface, "\"water_surface\"",
+                       "\"water_surface\",\"alpha_cutoff\":0.5") + "]",
+         "does not support alpha", "water alpha rejection");
+  reject("[" + valid_material + "]",
+         "[" + replace(valid_surface, "[2,0]", "[0,0]") + "]",
+         "must be non-zero", "water zero wave direction");
+  reject("[" + valid_material + "]",
+         "[" + replace(valid_surface, "\"size\":[8,6]",
+                       "\"size\":[8,0]") + "]",
+         "components must be positive", "water surface size range");
+  reject("[" + valid_material + "]",
+         "[" + replace(valid_surface, "\"amplitude\":0.05",
+                       "\"amplitude\":0") + "]",
+         "must be positive", "water wave amplitude range");
+  reject("[" + valid_material + "]",
+         "[" + replace(valid_surface, "\"wavelength\":2",
+                       "\"wavelength\":0") + "]",
+         "must be positive", "water wavelength range");
+  reject("[" + valid_material + "]",
+         "[" + replace(valid_surface, "\"wavelength\":2",
+                       "\"wavelength\":1e-45") + "]",
+         "non-finite float32 wave number",
+         "water derived wave number range");
+  reject("[" + valid_material + "]",
+         "[" + replace(valid_surface, "\"phase_radians\":-0.5",
+                       "\"phase_radians\":\"invalid\"") + "]",
+         "expected a number", "water phase must be numeric");
+  reject("[" + valid_material + "]",
+         "[" + replace(valid_surface, "\"amplitude\":0.05",
+                       "\"amplitude\":0.4") + "]",
+         "total wave slope must be at most 1", "water slope limit");
+  const std::size_t waves_key = valid_surface.find("\"waves\":");
+  const std::size_t waves_begin =
+      waves_key == std::string::npos
+          ? std::string::npos
+          : waves_key + std::string("\"waves\":").size();
+  const std::size_t waves_end = valid_surface.rfind(']');
+  check(waves_begin != std::string::npos && waves_end != std::string::npos &&
+            waves_end > waves_begin,
+        "water fixture wave array bounds");
+  std::string no_waves = valid_surface;
+  no_waves.replace(waves_begin, waves_end - waves_begin + 1, "[]");
+  reject("[" + valid_material + "]", "[" + no_waves + "]",
+         "must contain 1 to 4 waves", "water wave count lower bound");
+  reject("[" + valid_material + "]",
+         "[" + replace(valid_surface, "\"size\":[8,6]",
+                       "\"size\":[100,100]") + "]",
+         "tile count must be at most 4096", "water tile limit");
+  reject("[" + valid_material + "]",
+         "[" + replace(valid_surface, "\"center\":[1,2,3]",
+                       "\"center\":[3.4e38,2,3]") + "]",
+         "derived water bounds must be finite non-degenerate float32",
+         "water derived bounds range");
+  const std::string collapsed_tiles = replace(
+      replace(valid_surface, "\"center\":[1,2,3]",
+              "\"center\":[1e8,2,1e8]"),
+      "\"size\":[8,6]", "\"size\":[32,32]");
+  reject("[" + valid_material + "]", "[" + collapsed_tiles + "]",
+         "tile boundaries collapse in float32",
+         "water tile boundary representability");
+
+  const std::string dry_material =
+      R"json({"name":"dry","type":"lambertian"})json";
+  reject("[" + valid_material + "," + dry_material + "]",
+         "[" + replace(valid_surface, "\"material\":\"water\"",
+                       "\"material\":\"dry\"") + "]",
+         "requires a water material", "water_surface material type");
+  const std::string dry_sphere =
+      R"json({"name":"ball","type":"sphere","center":[0,0,0],"radius":1,"material":"water"})json";
+  reject("[" + valid_material + "]", "[" + dry_sphere + "]",
+         "only be bound to water_surface", "water material geometry binding");
+
+  const std::string glass_material =
+      R"json({"name":"glass","type":"dielectric","ior":1.52})json";
+  const std::string glass_sphere =
+      R"json({"name":"glass_ball","type":"sphere","center":[0,1,0],"radius":0.25,"material":"glass"})json";
+  write_text(scene_path,
+             document(4, "[" + valid_material + "," + glass_material + "]",
+                      "[" + valid_surface + "," + glass_sphere + "]"));
+  check(load_scene(scene_path).objects.size() == 2,
+        "closed dielectric sphere is accepted in a water scene");
+  const std::string split_glass_sphere =
+      R"json({"name":"split_glass","type":"sphere","center":[0,1,0],"radius":0.25,"front_material":"glass","back_material":null})json";
+  reject("[" + valid_material + "," + glass_material + "]",
+         "[" + valid_surface + "," + split_glass_sphere + "]",
+         "one shared dielectric material on both faces",
+         "split dielectric sphere boundary rejection");
+  const std::string alpha_glass_sphere = replace(
+      glass_sphere, "\"material\":\"glass\"",
+      "\"material\":\"glass\",\"alpha_texture\":\"mask\"");
+  std::string alpha_document = document(
+      4, "[" + valid_material + "," + glass_material + "]",
+      "[" + valid_surface + "," + alpha_glass_sphere + "]");
+  alpha_document = replace(
+      alpha_document, "\"textures\":[]",
+      R"json("textures":[{"name":"mask","type":"constant","color":[1,1,1]}])json");
+  write_text(scene_path, alpha_document);
+  expect_error([&] { (void)load_scene(scene_path); },
+               "cannot use alpha textures",
+               "alpha dielectric sphere boundary rejection");
+
+  const std::string tangent_glass_sphere = replace(
+      glass_sphere, "[0,1,0]", "[0.5,1,0]");
+  reject("[" + valid_material + "," + glass_material + "]",
+         "[" + valid_surface + "," + glass_sphere + "," +
+             replace(tangent_glass_sphere, "glass_ball", "glass_ball_2") +
+             "]",
+         "strictly separate or strictly nested",
+         "tangent dielectric sphere rejection");
+
+  std::string nested_spheres;
+  for (int i = 0; i < 4; ++i) {
+    if (i != 0) nested_spheres += ',';
+    const float radius = 0.8f - 0.2f * static_cast<float>(i);
+    nested_spheres +=
+        "{\"name\":\"nested_" + std::to_string(i) +
+        "\",\"type\":\"sphere\",\"center\":[0,1,0],\"radius\":" +
+        std::to_string(radius) + ",\"material\":\"glass\"}";
+  }
+  reject("[" + valid_material + "," + glass_material + "]",
+         "[" + valid_surface + "," + nested_spheres + "]",
+         "exceed the four-layer medium stack",
+         "nested dielectric stack limit");
+
+  const std::string crossing_glass_sphere =
+      R"json({"name":"crossing_glass","type":"sphere","center":[1,2,3],"radius":0.1,"material":"glass"})json";
+  reject("[" + valid_material + "," + glass_material + "]",
+         "[" + valid_surface + "," + crossing_glass_sphere + "]",
+         "may intersect a water_surface",
+         "water and dielectric boundary intersection rejection");
+
+  const std::string camera_glass_sphere =
+      R"json({"name":"camera_glass","type":"sphere","center":[0,4,4],"radius":0.25,"material":"glass"})json";
+  reject("[" + valid_material + "," + glass_material + "]",
+         "[" + valid_surface + "," + camera_glass_sphere + "]",
+         "outside every dielectric sphere",
+         "camera inside dielectric rejection");
+
+  std::string submerged_camera_document = document(
+      4, "[" + valid_material + "]", "[" + valid_surface + "]");
+  submerged_camera_document = replace(
+      submerged_camera_document, "\"look_from\":[0,4,4]",
+      "\"look_from\":[0,1,4]");
+  write_text(scene_path, submerged_camera_document);
+  expect_error([&] { (void)load_scene(scene_path); },
+               "outside and above every water surface",
+               "camera below water rejection");
+
+  const std::string second_surface = replace(
+      valid_surface, "\"pool\"", "\"pool-2\"");
+  reject("[" + valid_material + "]",
+         "[" + valid_surface + "," + second_surface + "]",
+         "footprints must be strictly separate",
+         "overlapping water surface rejection");
+  const std::string open_glass =
+      R"json({"name":"glass_panel","type":"rectangle","p1":[-1,0,0],"p2":[-1,1,0],"p3":[1,1,0],"material":"glass"})json";
+  reject("[" + valid_material + "," + glass_material + "]",
+         "[" + valid_surface + "," + open_glass + "]",
+         "require closed sphere geometry",
+         "open dielectric rejection in a water scene");
+
+  std::string five_surfaces = "[";
+  for (int i = 0; i < 5; ++i) {
+    if (i != 0) five_surfaces += ',';
+    five_surfaces += replace(valid_surface, "\"pool\"",
+                             "\"pool-" + std::to_string(i) + "\"");
+  }
+  five_surfaces += ']';
+  reject("[" + valid_material + "]", five_surfaces,
+         "at most 4 water_surface", "water surface count limit");
+}
+
 void test_scene_parser() {
   const auto path = temporary(".json");
   std::ofstream output(path);
@@ -423,6 +680,7 @@ int main(int argc, char** argv) {
     test_scene_parser();
     test_schema_v2_meshes();
     test_schema_v3_flame_lights();
+    test_schema_v4_water_surfaces();
     for (int i = 1; i < argc; ++i) {
       const Scene scene = load_scene(argv[i], SceneLoadOptions{false});
       check(!scene.objects.empty(), std::string("scene has no objects: ") + argv[i]);

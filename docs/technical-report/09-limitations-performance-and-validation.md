@@ -17,7 +17,7 @@
 
 ### 光传输
 
-- 只计算稳态表面光传输，没有雾、烟、参与介质、次表面散射或传播时间；
+- 以稳态表面光传输为主，没有通用雾、烟或散射参与介质、次表面散射与传播时间；特化的 flame 只做吸收—自发光，water 只做均匀 RGB 吸收；
 - 使用线性 RGB，不模拟波长、色散、衍射或偏振；
 - `max_depth` 会截断最后一个已处理表面事件之后的继续路径；最后一个事件自身的显式直接光仍完整估计；
 - 环境天空和太阳瓣没有显式重要性采样；
@@ -28,9 +28,9 @@
 
 - `metal` 是纯 GGX 镜面微表面瓣，$\mathbf F_0$ 直接取自 `base_color`，不是通用 metallic workflow；
 - GGX 采样普通 NDF 而非 VNDF，掠射角方差可能较高；
-- `dielectric` 是光滑 delta 界面，外部固定为空气，没有嵌套介质、粗糙折射或体吸收；
+- `dielectric` 是光滑 delta 界面；无 `water_surface` 的兼容路径固定空气外部介质、使用 Schlick 且没有嵌套与体吸收，含水路径改用精确 Fresnel、严格介质栈与 RGB Beer 吸收；
 - 场景解析不强制被动材质的 `base_color ≤ 1`，能量合理性部分依赖输入；
-- 阴影射线把介电质视为不透明遮挡物。
+- 无水兼容路径的二值阴影把介电质视为不透明；含水路径允许直线穿过最多八个透明边界，但不按 Snell 弯折、不会产生正确焦散，详见[第 12 章](12-runtime-analytic-water.md)。
 
 ### 几何与颜色
 
@@ -89,7 +89,7 @@ class Event {
 
 ## 4. 射线吞吐量怎样理解
 
-每像素记录实际调用 `optixTrace` 的次数，包括 radiance 和 shadow ray。令 $N_{\mathrm{rays}}$ 对应 `traced_rays`，$t_{\mathrm{render}}$ 对应以毫秒计的 `render_ms`：
+每像素记录实际调用 `optixTrace` 的次数，包括常规 radiance、无水二值 shadow，以及含水透明 shadow 为取得边界信息而重复发出的有限距离 radiance 查询。令 $N_{\mathrm{rays}}$ 对应 `traced_rays`，$t_{\mathrm{render}}$ 对应以毫秒计的 `render_ms`：
 
 $$
 \text{rays/s}=
@@ -99,7 +99,7 @@ $$
 
 它不是纯 BVH microbenchmark：材质计算、随机数、分支、纹理和路径循环都在同一个 launch 内。不同场景的 rays/s 差异不应简单解释为硬件快慢。
 
-`traced_rays` 也不等于 $W\times H\times \mathrm{spp}\times D_{\max}$，其中 $D_{\max}$ 对应 `max_depth`：路径可提前终止，普通表面还可能额外发一条 shadow ray。
+`traced_rays` 也不等于 $W\times H\times \mathrm{spp}\times D_{\max}$，其中 $D_{\max}$ 对应 `max_depth`：路径可提前终止，普通表面还可能额外发出一条二值 shadow ray；含水直接光甚至会为多个透明边界发出多次有限距离 radiance 查询。
 
 逐像素计数缓冲区在 launch 后回传到主机，并求和得到公式中的 $N_{\mathrm{rays}}$：
 
@@ -109,6 +109,8 @@ $$
                      ray_counts.size() * sizeof(unsigned long long), stream);
   volume_count.download(volume_counts.data(),
                         volume_counts.size() * sizeof(VolumeCounters), stream);
+  water_count.download(water_counts.data(),
+                       water_counts.size() * sizeof(WaterCounters), stream);
   check_cuda(cudaStreamSynchronize(stream),
              "cudaStreamSynchronize(output)");
   unsigned long long traced_rays = 0;
@@ -128,6 +130,15 @@ $$
   result.stats.volume_majorant_violations =
       volume_totals.majorant_violations;
   result.stats.volume_tracking_overflows = volume_totals.tracking_overflows;
+  result.stats.water_height_evaluations = water_totals.height_evaluations;
+  result.stats.water_tile_tests = water_totals.tile_tests;
+  result.stats.water_roots_reported = water_totals.roots_reported;
+  result.stats.water_shadow_transmissions = water_totals.shadow_transmissions;
+  result.stats.water_medium_segments = water_totals.medium_segments;
+  result.stats.water_solver_overflows = water_totals.solver_overflows;
+  result.stats.water_medium_errors = water_totals.medium_errors;
+  result.stats.water_shadow_boundary_overflows =
+      water_totals.shadow_boundary_overflows;
   result.stats.rays_per_second =
       render_ms > 0.0 ? traced_rays / (render_ms * 1.0e-3) : 0.0;
 ```
@@ -159,13 +170,13 @@ $$
 ## 7. 从一个像素重新串起全文
 
 1. 在像素与镜头上取样，得到相机射线；
-2. OptiX 遍历 IAS/GAS/BVH，返回最近交点、法线、UV 和材质；
-3. 普通表面用 NEE 连接面积灯，以 shadow ray 判断可见性；
-4. BSDF 选择下一方向，吞吐量乘 `scatter.weight`；连续事件对应 $f_s|\mathbf n\cdot\boldsymbol\omega_i|/p_B$，介电 delta 分支按离散事件处理；
+2. OptiX 遍历 IAS/GAS/BVH，内建或自定义 intersection 返回最近交点；解析水面在 tile AABB 内求高度场根，得到法线、UV 和水材质；
+3. 普通表面用 NEE 连接面积灯：无水路径用二值 shadow ray，含水路径沿直线累计界面 Fresnel 与 Beer 透射，flame 再沿同一段估计吸收；
+4. BSDF 选择下一方向，吞吐量乘 `scatter.weight`；连续事件对应 $f_s|\mathbf n\cdot\boldsymbol\omega_i|/p_B$，介电 delta 分支按离散事件处理，含水路径用介质栈决定两侧 IOR 并在传播段累计 Beer 吸收；
 5. NEE 与命中灯面的估计用 power heuristic MIS 分权；
 6. 路径在 miss、emitter、无效散射、轮盘或最大深度处结束；最大深度的最后一个表面事件仍先完整估计直接光；
 7. 多条路径的线性 RGB 平均成为 HDR beauty；
-8. 可选降噪后，执行曝光、ACES 风格拟合、sRGB 编码和 8 bit 量化。程序化 flame 在这条表面链的射线段上额外执行吸收—自发光估计，详见第 11 章。
+8. 可选降噪后，执行曝光、ACES 风格拟合、sRGB 编码和 8 bit 量化。程序化 flame 的吸收—自发光见第 11 章，解析水面的求交、介质传输与工程近似见第 12 章。
 
 渲染器真正的核心正是这条链：**渲染方程给出目标，Monte Carlo 构造估计，几何与材质定义路径，OptiX/GPU 把大量路径高效执行。**
 

@@ -1,19 +1,20 @@
 # SpectralDock
 
-SpectralDock 是面向 NVIDIA RTX GPU 的确定性离线路径追踪参考项目。它使用 CUDA 与 OptiX 完成硬件光线遍历，在一个可审查的 C++/CUDA 代码库中实现自定义几何、OBJ 实例、GGX/Fresnel、Next Event Estimation、MIS、透明 any-hit、程序化吸收—自发光体积、景深和可选 AI 降噪。
+SpectralDock 是面向 NVIDIA RTX GPU 的确定性离线路径追踪参考项目。它使用 CUDA 与 OptiX 完成硬件光线遍历，在一个可审查的 C++/CUDA 代码库中实现自定义几何、OBJ 实例、GGX/Fresnel、Next Event Estimation、MIS、透明 any-hit、程序化吸收—自发光体积、解析波浪水面、景深和可选 AI 降噪。
 
 ![Neon Koi：透明 any-hit、纹理、彩色面积光与共享网格](docs/gallery/neon-koi.png)
 
-当前首发定位为中文参考项目 v0.1。仓库收录运行所需的六个内置场景、模型、纹理，以及一个按需通过 PhysX 生成的 Kinetic Foundry gallery 记录，但不分发 CUDA、OptiX、PhysX 或其他外部 SDK。Kinetic Foundry 的临时场景 JSON 不提交到仓库。
+当前首发定位为中文参考项目 v0.1。仓库收录运行所需的七个内置场景、模型、纹理，以及一个按需通过 PhysX 生成的 Kinetic Foundry gallery 记录，但不分发 CUDA、OptiX、PhysX 或其他外部 SDK。Kinetic Foundry 的临时场景 JSON 不提交到仓库。
 
 ## 功能摘要
 
-- schema v1/v2/v3 场景加载，包含 sphere、triangle、rectangle、disk、cylinder、parabola、OBJ mesh 与程序化 flame 光源。
+- schema v1/v2/v3/v4 场景加载，包含 sphere、rectangle/sketch、disk、cylinder、parabola、OBJ mesh、程序化 flame 光源与有限解析波浪水面；rectangle/sketch 在内部使用三角形 primitive。
 - 网格资源共享压缩 GAS；每个实例拥有独立变换、正反面材质、纹理和 alpha。
 - Lambert、GGX metal、光滑 dielectric 与 emitter，配合直接光采样、MIS 和俄罗斯轮盘。
 - 无散射异质火焰的程序化密度、吸收/自发光传输、Delta Tracking 与体积 NEE。
+- 最多四个确定性解析波浪水面，使用精确 Fresnel/Snell 光滑介电路径、RGB Beer 吸收、介质栈及跨水面直接光近似。
 - 固定 seed 的确定性渲染、PNG 输出和同名 `*.stats.json` 运行记录。
-- 六个内置 1920×1080 展示场景、一个固定在 300 步（2.5 秒）撞击峰值的 PhysX 5.8.0 GPU 刚体瞬时快照、低成本 smoke fixture、host-only 测试和 RTX 5090 手工 GPU 验收流程。
+- 七个内置 1920×1080 展示场景、一个固定在 300 步（2.5 秒）撞击峰值的 PhysX 5.8.0 GPU 刚体瞬时快照、低成本 smoke fixture、host-only 测试和 RTX 5090 手工 GPU 验收流程。
 
 ## 依赖与已验证平台
 
@@ -85,12 +86,13 @@ Host-only 测试不需要 NVIDIA GPU、OptiX SDK 或 PhysX：
 ./scripts/render-examples.sh --preset preview
 ```
 
-`./scripts/render-examples.sh --preset final` 会直接覆盖六个内置场景受版本控制的 gallery PNG 和对应 stats，仅供维护者在正式验收与发布时使用。Rocket Test Stand 固定使用 2048 spp、depth 12 且不降噪；Kinetic Foundry 使用独立的 PhysX 生成/渲染入口，不在默认六场景批处理中。完整说明见[示例画廊](docs/EXAMPLES.md)。
+`./scripts/render-examples.sh --preset final` 会直接覆盖七个内置场景受版本控制的 gallery PNG 和对应 stats，仅供维护者在正式验收与发布时使用。Rocket Test Stand 固定使用 2048 spp、depth 12 且不降噪；Moonlit Stepwell 固定使用 2048 spp、depth 16 且不降噪。Kinetic Foundry 使用独立的 PhysX 生成/渲染入口，不在默认七场景批处理中。完整说明见[示例画廊](docs/EXAMPLES.md)。
 
 ## 已知限制
 
 - 单 GPU、离线 RGBA PNG；没有交互窗口、分布式或多 GPU 渲染。
 - 不实现 MTL、骨骼、动画、通用参与介质或通用非网格对象变换；flame 仅支持确定性异质吸收与自发光，不模拟散射、烟雾或燃烧化学。
+- water_surface 是静态、有限的解析顶界面，不自带侧壁/底部，要求不透明池体封闭且相机从水外开始；含水场景的普通 dielectric 仅支持严格嵌套的闭合 sphere。它没有流体动力学、泡沫、焦散专用采样或运动模糊；直接光跨界使用直线 Fresnel/Beer 近似，不对 shadow ray 做 Snell 弯折。
 - mesh emitter 可显示发光，但不能作为显式采样灯；显式灯为 rectangle、disk、sphere 或 schema v3 flame。
 - Kinetic Foundry 截取固定第 300 步（2.5 秒）的撞击峰值，记录 0 个 sleeping dynamic actors；它是清晰的单帧瞬时静态快照，不含 motion blur，也不提供运行时物理、交互或动画。
 - gallery 和 mesh 像素 golden 是一次 RTX 5090 结果，不是跨 GPU、驱动或编译器的逐字节承诺。

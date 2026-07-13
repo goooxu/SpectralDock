@@ -14,6 +14,7 @@ SCENE_INSTANCE_COUNTS = {
     "reflector-laboratory.json": 1,
     "benchmark-harbor.json": 16,
     "rocket-test-stand.json": 1,
+    "moonlit-stepwell.json": 1,
 }
 LEGACY_TOKENS = (
     "tea" + "pot",
@@ -40,7 +41,7 @@ def test_all_gallery_scenes_share_only_the_mascot_mesh():
         assert not any(token in json.dumps(scene).lower() for token in LEGACY_TOKENS)
         total += len(instances)
 
-    assert total == 23
+    assert total == 24
 
 
 def test_static_gallery_mascot_placements_match_the_reviewed_compositions():
@@ -140,6 +141,44 @@ def test_rocket_test_stand_uses_procedural_flame_without_warm_proxy_light():
     assert fill["name"] == "inspection_fill"
     assert fill["emission"][2] > fill["emission"][1] > fill["emission"][0]
     assert max(fill["emission"]) <= 3.0
+
+
+def test_moonlit_stepwell_uses_runtime_water_and_release_quality_defaults():
+    scene = load_scene("moonlit-stepwell.json")
+    assert scene["schema_version"] == 4
+    assert scene["render"] == {
+        "width": 1920,
+        "height": 1080,
+        "spp": 2048,
+        "max_depth": 16,
+        "seed": 808,
+        "denoise": False,
+    }
+    assert scene["camera"]["aperture"] == 0.0
+    water_materials = [
+        material for material in scene["materials"]
+        if material["type"] == "water"
+    ]
+    water_surfaces = [
+        obj for obj in scene["objects"]
+        if obj["type"] == "water_surface"
+    ]
+    assert len(water_materials) == len(water_surfaces) == 1
+    assert water_surfaces[0]["material"] == water_materials[0]["name"]
+    assert len(water_surfaces[0]["waves"]) == 4
+    assert [light["type"] for light in scene["lights"]] == [
+        "disk", "disk", "disk", "sphere",
+    ]
+    mascot = next(
+        obj for obj in scene["objects"] if obj["name"] == "stepwell_observer"
+    )
+    assert mascot["transform"]["translate"] == [0.0, 0.70, -1.0]
+    assert {obj["name"] for obj in scene["objects"]} >= {
+        "central_dais", "central_dais_cap", "submerged_bronze_orb",
+        "submerged_ceramic_orb", "left_sconce", "right_sconce",
+        "submerged_marker", "front_lower_riser", "back_pool_riser",
+        "left_pool_riser", "right_pool_riser",
+    }
 
 
 def test_legacy_model_assets_and_download_tool_are_removed():

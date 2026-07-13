@@ -109,6 +109,7 @@ def test_gallery_records_have_required_sidecars():
         "neon-koi",
         "reflector-laboratory",
         "rocket-test-stand",
+        "moonlit-stepwell",
     }
     physx_stems = {"kinetic-foundry"}
     assert png_stems == stats_stems == builtin_stems | physx_stems

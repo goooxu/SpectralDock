@@ -1,6 +1,6 @@
 CC0 1.0 Universal
 
-The following thirteen assets, and only these assets, are dedicated under
+The following fourteen assets, and only these assets, are dedicated under
 Creative Commons CC0 1.0 Universal:
 
 - assets/examples/models/capsule-mascot.obj
@@ -13,6 +13,7 @@ Creative Commons CC0 1.0 Universal:
 - docs/gallery/celestial-archive.png
 - docs/gallery/kinetic-foundry.png
 - docs/gallery/material-cathedral.png
+- docs/gallery/moonlit-stepwell.png
 - docs/gallery/neon-koi.png
 - docs/gallery/reflector-laboratory.png
 - docs/gallery/rocket-test-stand.png

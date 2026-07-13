@@ -1,0 +1,60 @@
+{
+  "scene": "scenes/moonlit-stepwell.json",
+  "output": "docs/gallery/moonlit-stepwell.png",
+  "hardware": {
+    "gpu": "NVIDIA GeForce RTX 5090",
+    "compute_capability": "12.0"
+  },
+  "versions": {
+    "driver": "615.36",
+    "cuda_driver_api": 13040,
+    "cuda_runtime": 13030,
+    "optix": 90100
+  },
+  "render": {
+    "width": 1920,
+    "height": 1080,
+    "spp": 2048,
+    "max_depth": 16,
+    "seed": 808,
+    "denoised": false
+  },
+  "timings_ms": {
+    "bvh_build": 9.44326400756836,
+    "render": 17065.0234375,
+    "denoise": 0.0,
+    "total": 19669.169566
+  },
+  "memory": {
+    "peak_device_bytes": 1589968896,
+    "peak_tracked_device_bytes": 249541028
+  },
+  "geometry": {
+    "objects": 36,
+    "instances": 36,
+    "unique_meshes": 1,
+    "mesh_triangles": 5816,
+    "gas_count": 36
+  },
+  "performance": {
+    "traced_rays": 15553006112,
+    "rays_per_second": 911396703.846455
+  },
+  "volume": {
+    "volume_density_evaluations": 0,
+    "volume_real_collisions": 0,
+    "volume_light_samples": 0,
+    "volume_majorant_violations": 0,
+    "volume_tracking_overflows": 0
+  },
+  "water": {
+    "water_height_evaluations": 66080894763,
+    "water_tile_tests": 6841808741,
+    "water_roots_reported": 1620050797,
+    "water_shadow_transmissions": 403826143,
+    "water_medium_segments": 2303902049,
+    "water_solver_overflows": 0,
+    "water_medium_errors": 0,
+    "water_shadow_boundary_overflows": 0
+  }
+}

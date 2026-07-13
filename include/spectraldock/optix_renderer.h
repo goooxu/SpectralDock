@@ -47,6 +47,14 @@ struct RenderStats {
   std::uint64_t volume_light_samples = 0;
   std::uint64_t volume_majorant_violations = 0;
   std::uint64_t volume_tracking_overflows = 0;
+  std::uint64_t water_height_evaluations = 0;
+  std::uint64_t water_tile_tests = 0;
+  std::uint64_t water_roots_reported = 0;
+  std::uint64_t water_shadow_transmissions = 0;
+  std::uint64_t water_medium_segments = 0;
+  std::uint64_t water_solver_overflows = 0;
+  std::uint64_t water_medium_errors = 0;
+  std::uint64_t water_shadow_boundary_overflows = 0;
   std::uint64_t objects = 0;
   std::uint64_t instances = 0;
   std::uint64_t unique_meshes = 0;

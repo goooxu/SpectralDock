@@ -4,7 +4,7 @@ from pathlib import Path, PurePosixPath
 
 ROOT = Path(__file__).resolve().parents[1]
 REPORT_DIR = ROOT / "docs" / "technical-report"
-CHAPTERS = tuple("{:02d}".format(index) for index in range(1, 12))
+CHAPTERS = tuple("{:02d}".format(index) for index in range(1, 13))
 MARKER = "<!-- source-snippet "
 SNIPPET = re.compile(
     r'<!-- source-snippet id="(?P<id>[a-z0-9-]+)" '
@@ -75,6 +75,16 @@ REQUIRED_VOLUME_SNIPPETS = {
     "volume-nee-estimator",
     "volume-path-estimator-partition",
     "volume-three-octave-fbm",
+}
+REQUIRED_WATER_SNIPPETS = {
+    "water-analytic-height-gradient",
+    "water-beer-segment",
+    "water-double-root-refinement",
+    "water-exact-fresnel",
+    "water-host-safety-gate",
+    "water-medium-stack-update",
+    "water-solid-sphere-intersection",
+    "water-straight-shadow-boundaries",
 }
 STANDARD_OPTIX_STAGES = (
     "准备 CUDA 几何数据",
@@ -238,6 +248,27 @@ def test_technical_report_source_snippets_match_the_repository():
     ):
         assert boundary in volume_chapter
 
+    missing_water_snippets = REQUIRED_WATER_SNIPPETS - identifiers
+    assert not missing_water_snippets, (
+        "missing water source snippets: {}".format(
+            sorted(missing_water_snippets)
+        )
+    )
+    water_chapter = (
+        REPORT_DIR / "12-runtime-analytic-water.md"
+    ).read_text(encoding="utf-8")
+    for boundary in (
+        "Fresnel",
+        "Snell",
+        "Beer",
+        "有限顶界面",
+        "不透明池壁",
+        "背面剔除",
+        "正退出根",
+        "2048 spp",
+    ):
+        assert boundary in water_chapter
+
 
 def test_technical_report_avoids_unsupported_math_macros():
     for report in sorted(REPORT_DIR.glob("*.md")):
@@ -268,6 +299,8 @@ def test_technical_report_avoids_unsupported_math_macros():
         state = None
         index = 0
         prose = "\n".join(prose)
+        prose = re.sub(r"<!--.*?-->", "", prose, flags=re.DOTALL)
+        prose = re.sub(r"\]\([^\)\n]*\)", "]", prose)
         while index < len(prose):
             if prose.startswith("$$", index):
                 assert state != "inline", (
@@ -280,6 +313,14 @@ def test_technical_report_avoids_unsupported_math_macros():
                     "{} opens inline math inside display math".format(report.name)
                 )
                 state = None if state == "inline" else "inline"
+                index += 1
+            elif prose[index] == "_" and state is None:
+                escaped = index > 0 and prose[index - 1] == "\\"
+                assert escaped, (
+                    "{} has an unescaped underscore outside math mode".format(
+                        report.name
+                    )
+                )
                 index += 1
             else:
                 index += 1

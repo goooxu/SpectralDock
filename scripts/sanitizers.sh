@@ -20,6 +20,21 @@ for tool in memcheck initcheck racecheck; do
     --report-api-errors explicit --error-exitcode 99 "${COMMON[@]}"
 done
 
+WATER_SCENE="tests/scenes/water-smoke.json"
+WATER_OUT="output/sanitizer-water-smoke.png"
+require_file "${ROOT}/${WATER_SCENE}"
+WATER_COMMON=(
+  build/Debug/spectraldock
+  --scene "${WATER_SCENE}" --output "${WATER_OUT}"
+  --width 64 --height 64 --spp 1 --max-depth 8 --seed 83
+  --no-denoise
+)
+for tool in memcheck initcheck racecheck; do
+  echo "== compute-sanitizer ${tool} (water) =="
+  gpu_container compute-sanitizer --tool "${tool}" \
+    --report-api-errors explicit --error-exitcode 99 "${WATER_COMMON[@]}"
+done
+
 gpu_container python3 tests/check_mesh_smoke.py \
   "${SCENE}" tests/assets/uv-quad.obj "${OUT}" \
   "${OUT%.png}.stats.json" \

@@ -71,7 +71,9 @@ $$
 ```cpp
       const BsdfSample scatter =
           sample_bsdf(material, base_color, hit.normal, wo,
-                      hit.front_face, rng);
+                      hit.front_face, hit.material_index, rng,
+                      params.water_surface_count != 0u ? &media : nullptr,
+                      water_counters);
       if (scatter.valid == 0) {
         break;
       }

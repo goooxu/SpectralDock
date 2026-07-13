@@ -69,7 +69,7 @@ $$
 
 当前场景接口中的显式灯都是单面：rectangle/disk 只从法线正面发光，sphere 只向外发光。设备结构预留了 `two_sided` 分支，但加载器未暴露它。球灯在整个球面均匀取点，背向着色点的样本会被余弦条件拒绝；这是正确但不够高效的选择。
 
-## 2. 阴影射线只回答可见性
+## 2. 二值阴影与跨水面透射
 
 从 $\mathbf x$ 到 $\mathbf y$ 发一条有限长度阴影射线。若中间没有其他几何体，记可见性 $V(\mathbf x,\mathbf y)=1$；被遮挡则为 0。
 
@@ -92,24 +92,25 @@ $$
 - $r^2$ 出现在 PDF 分母的倒数中，自然产生距离平方衰减；
 - 每次只选一盏灯，但 $1/N_L$ 的概率已被权重补偿。
 
-阴影射线不计算第二个表面的完整材质，只需要判断“是否被挡”。当前实现因此把介电质也视作阴影遮挡物；alpha cutoff 可以让被裁掉的纹素不遮挡。
+无 `water_surface` 的兼容路径不计算第二个表面的完整材质，只需要判断“是否被挡”，因此把介电质也视作阴影遮挡物；alpha cutoff 可以让被裁掉的纹素不遮挡。含水路径则把二值 $V$ 推广为 RGB 直线透射率：反复取得透明边界的完整命中，每段乘 Beer 吸收、每个界面乘 $1-F$，普通不透明交点仍把贡献归零。它不按 Snell 弯折到灯的连接，因此不是焦散求解；详见[第 12 章第 6 节](12-runtime-analytic-water.md#6-跨水面直接光的工程近似)。
 
 直接光函数的末尾把公式各项接在一起：先从表面沿法线偏移起点，再向灯点发有限阴影射线；不可见时贡献为零。可见时 `direct_light_mis_weight` 给出 $w_L$，返回值依次相乘 $f_s$、$L_e$、$\cos\theta$、$w_L$，最后除以 $p_L$。
 
-<!-- source-snippet id="direct-light-visibility-and-estimator" path="src/device_programs.cu" anchor="const float3 shadow_origin" -->
+<!-- source-snippet id="direct-light-visibility-and-estimator" path="src/device_programs.cu" anchor="surface_transmittance" -->
 ```cpp
-  const float3 shadow_origin =
-      add(hit.position, mul(hit.normal, params.scene_epsilon * 2.0f));
-  const float3 shadow_displacement = sub(light_point, shadow_origin);
-  const float shadow_distance = length3(shadow_displacement);
-  if (shadow_distance <= params.scene_epsilon * 2.0f) {
-    return f3(0.0f, 0.0f, 0.0f);
-  }
-  const float3 shadow_direction =
-      divv(shadow_displacement, shadow_distance);
-  if (!trace_visible(shadow_origin, shadow_direction, shadow_distance,
-                     static_cast<int>(light_index), traced_rays)) {
-    return f3(0.0f, 0.0f, 0.0f);
+  float3 surface_transmittance = f3(1.0f, 1.0f, 1.0f);
+  if (params.water_surface_count == 0u) {
+    if (!trace_visible(shadow_origin, shadow_direction, shadow_distance,
+                       static_cast<int>(light_index), traced_rays)) {
+      return f3(0.0f, 0.0f, 0.0f);
+    }
+  } else {
+    surface_transmittance = trace_water_transmittance(
+        shadow_origin, shadow_direction, shadow_distance,
+        static_cast<int>(light_index), media, traced_rays, water_counters);
+    if (!(max_component(surface_transmittance) > 0.0f)) {
+      return f3(0.0f, 0.0f, 0.0f);
+    }
   }
   if (track_volume(shadow_origin, shadow_direction, shadow_distance, rng,
                    volume_counters).collided != 0) {
@@ -118,11 +119,11 @@ $$
   const float mis = direct_light_mis_weight(
       light_pdf, bsdf_pdf, light.geometry_index >= 0,
       next_bsdf_ray_exists);
-  return mul(mul(bsdf, light.emission), no_l * mis / light_pdf);
-}
+  return mul(mul(mul(bsdf, light.emission), surface_transmittance),
+             no_l * mis / light_pdf);
 ```
 
-`trace_visible` 把 `tmax` 设在灯点之前，并同时启用“首个命中即终止”和“禁用 closest-hit”。因此它只返回二值表面可见性，不构造第二个表面的完整着色结果；随后的 `track_volume` 再估计火焰吸收，完整体积推导见第 11 章。
+无水分支的 `trace_visible` 把 `tmax` 设在灯点之前，并同时启用“首个命中即终止”和“禁用 closest-hit”，所以只返回二值表面可见性。含水分支的 `trace_water_transmittance` 改用有限距离 radiance 查询取得 `SurfaceHit`，最多穿过八个透明边界；两条分支之后的 `track_volume` 再估计火焰吸收。水体近似见第 12 章，完整 flame 体积推导见第 11 章。
 
 <!-- source-snippet id="shadow-ray-visibility-query" path="src/device_programs.cu" anchor="OPTIX_RAY_FLAG_TERMINATE_ON_FIRST_HIT" -->
 ```cpp

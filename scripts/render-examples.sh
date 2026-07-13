@@ -8,11 +8,12 @@ usage() {
     'Usage: ./scripts/render-examples.sh --preset preview|final [scene ...]' \
     '' \
     'Scene arguments may be bare names (for example material-cathedral) or JSON' \
-    'paths. With no scene arguments all six portfolio scenes are rendered.' \
+    'paths. With no scene arguments all seven portfolio scenes are rendered.' \
     '' \
     'preview: 960x540, 64 spp, depth 8, AI denoising' \
     'final:   1920x1080, 512 spp, depth 12, AI denoising' \
     'rocket-test-stand: 256/2048 spp, depth 12, no denoising' \
+    'moonlit-stepwell:   256/2048 spp, depth 16, no denoising' \
     'Warning: --preset final writes version-controlled files in docs/gallery.'
 }
 
@@ -75,6 +76,7 @@ if [[ $# -eq 0 ]]; then
     reflector-laboratory
     benchmark-harbor
     rocket-test-stand
+    moonlit-stepwell
   )
 else
   scenes=("$@")
@@ -98,6 +100,15 @@ for requested in "${scenes[@]}"; do
   denoise_option="--denoise"
   if [[ "${stem}" == "rocket-test-stand" ]]; then
     scene_depth=12
+    denoise_option="--no-denoise"
+    if [[ "${preset}" == "preview" ]]; then
+      scene_spp=256
+    else
+      scene_spp=2048
+    fi
+  fi
+  if [[ "${stem}" == "moonlit-stepwell" ]]; then
+    scene_depth=16
     denoise_option="--no-denoise"
     if [[ "${preset}" == "preview" ]]; then
       scene_spp=256

@@ -25,7 +25,7 @@ $$
 +\|\mathbf o-\mathbf c\|^2-R^2=0.
 $$
 
-判别式小于零表示错过球；等于零表示相切；大于零有两个交点。选择有效范围内最小的正根。SpectralDock 使用 OptiX 内建 sphere primitive 完成遍历和求交。
+判别式小于零表示错过球；等于零表示相切；大于零有两个交点。选择有效范围内最小的正根。普通路径使用 OptiX 内建 sphere primitive 完成遍历和求交；含 `water_surface` 场景的 dielectric sphere 为了保留球内射线的背面退出命中，改用自定义实心 sphere，详见[第 12 章](12-runtime-analytic-water.md#水中-dielectric-sphere-为什么使用自定义实心边界)。
 
 球面外法线为
 

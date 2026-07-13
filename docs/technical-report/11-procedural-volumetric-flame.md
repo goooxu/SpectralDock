@@ -87,6 +87,7 @@ $$
         if (rng.next() < acceptance) {
           ++counters.real_collisions;
           result.collided = 1;
+          result.distance = candidate_distance;
           result.source = sigma_total > 0.0f
               ? divv(source_numerator, sigma_total)
               : f3(0.0f, 0.0f, 0.0f);
@@ -107,6 +108,16 @@ $$
       const VolumeCollision volume = track_volume(
           ray_origin, ray_direction, hit.hit != 0 ? hit.distance : kInfinity,
           rng, volume_counters);
+      if (params.water_surface_count != 0u) {
+        const float travel_distance = volume.collided != 0
+            ? volume.distance
+            : (hit.hit != 0 ? hit.distance : kInfinity);
+        throughput = mul(
+            throughput,
+            medium_segment_transmittance(
+                media, travel_distance, water_counters));
+        if (!(max_component(throughput) > 0.0f)) break;
+      }
       if (volume.collided != 0) {
         if (previous_delta != 0) {
           radiance =
@@ -150,7 +161,7 @@ $$
         kPi * maximum_radius * maximum_radius * light.height;
     const float3 emission_coefficient =
         mul(flame_source(light, axial), sigma);
-    return mul(mul(bsdf, emission_coefficient),
+    return mul(mul(mul(bsdf, emission_coefficient), surface_transmittance),
                no_l * support_volume * static_cast<float>(params.light_count) /
                    distance2);
 ```
@@ -187,4 +198,4 @@ Rocket Test Stand 的正式配置使用 2048 spp 且关闭 Denoiser。原因不�
 
 数学上的 null-scattering 形式可进一步参考 Miller、Georgiev 与 Jarosz 的 *A null-scattering path integral formulation of light transport*；工程边界和输入约束见[场景格式](../SCENE_FORMAT.md)。
 
-[上一章：PhysX 刚体模拟与场景烘焙](10-physx-rigid-body-scene-baking.md) · [返回目录](README.md)
+[上一章：PhysX 刚体模拟与场景烘焙](10-physx-rigid-body-scene-baking.md) · [返回目录](README.md) · [下一章：运行时解析水面](12-runtime-analytic-water.md)

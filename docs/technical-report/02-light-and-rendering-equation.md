@@ -133,7 +133,7 @@ $$
 
 - **稳态**：不模拟光传播时间；
 - **RGB**：不按波长计算光谱；
-- **表面模型**：没有参与介质、雾、烟或次表面传输；
+- **表面为主**：没有通用散射介质、雾或次表面传输；程序化 flame 只估计吸收—自发光，解析 water 只加入均匀 RGB 吸收；
 - **几何光学**：不模拟衍射和干涉；
 - **离线积分**：每个像素使用多条随机路径，不以实时帧率为设计目标。
 - **简化背景**：天空只是按方向 $y$ 分量线性插值的渐变，太阳是在角阈值内直接相加的硬边常量瓣；没有环境贴图或光度学太阳模型。
@@ -155,17 +155,6 @@ $$
 
 <!-- source-snippet id="raygen-path-state-background" path="src/device_programs.cu" anchor="background(ray_direction)" -->
 ```cpp
-      const SurfaceHit hit = trace_radiance(ray_origin, ray_direction, traced_rays);
-      const VolumeCollision volume = track_volume(
-          ray_origin, ray_direction, hit.hit != 0 ? hit.distance : kInfinity,
-          rng, volume_counters);
-      if (volume.collided != 0) {
-        if (previous_delta != 0) {
-          radiance =
-              add(radiance, mul(throughput, volume.source));
-        }
-        break;
-      }
       if (hit.hit == 0) {
         radiance =
             add(radiance, mul(throughput, background(ray_direction)));
@@ -203,12 +192,11 @@ $$
 
 <!-- source-snippet id="raygen-direct-and-scatter" path="src/device_programs.cu" anchor="sample_direct_light" -->
 ```cpp
-      const float3 wo = neg(ray_direction);
       const bool next_bsdf_ray_exists = bounce + 1u < params.max_depth;
       const float3 direct =
           sample_direct_light(hit, material, base_color, wo,
                               next_bsdf_ray_exists, rng, traced_rays,
-                              volume_counters);
+                              volume_counters, media, water_counters);
       radiance = add(radiance, mul(throughput, direct));
       if (!next_bsdf_ray_exists) {
         break;
@@ -216,7 +204,9 @@ $$
 
       const BsdfSample scatter =
           sample_bsdf(material, base_color, hit.normal, wo,
-                      hit.front_face, rng);
+                      hit.front_face, hit.material_index, rng,
+                      params.water_surface_count != 0u ? &media : nullptr,
+                      water_counters);
       if (scatter.valid == 0) {
         break;
       }

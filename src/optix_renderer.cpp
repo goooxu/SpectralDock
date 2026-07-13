@@ -359,10 +359,12 @@ std::vector<MaterialData> materials_for(const Scene& scene) {
   for (const Material& m : scene.materials) {
     MaterialData d{}; d.base_color = f3(m.base_color); d.emission = f3(m.emission);
     d.roughness = m.roughness; d.ior = m.ior; d.texture_index = m.texture_id;
+    d.absorption = f3(m.absorption);
     d.metallic = m.type == MaterialType::Metal ? 1.0f : 0.0f;
     d.type = m.type == MaterialType::Lambertian ? kMaterialLambertian :
              m.type == MaterialType::Metal ? kMaterialMetal :
              m.type == MaterialType::Dielectric ? kMaterialDielectric :
+             m.type == MaterialType::Water ? kMaterialWater :
              kMaterialEmitter;
     if (m.type == MaterialType::Emitter &&
         max_component(m.emission) <= 0.0f)
@@ -426,7 +428,28 @@ DeviceGeometryData geometry_for(const Scene& scene, const Object& object,
   }
   if (object.type == GeometryType::Sphere) {
     const auto& g = std::get<SphereData>(object.geometry);
-    d.primitive_type = kPrimitiveSphere; d.p0 = f3(g.center); d.radius = g.radius;
+    const bool water_scene = std::any_of(
+        scene.objects.begin(), scene.objects.end(), [](const Object& candidate) {
+          return candidate.type == GeometryType::WaterSurface;
+        });
+    const auto is_dielectric = [&](std::int32_t material_id) {
+      return material_id >= 0 &&
+             static_cast<std::size_t>(material_id) < scene.materials.size() &&
+             scene.materials[static_cast<std::size_t>(material_id)].type ==
+                 MaterialType::Dielectric;
+    };
+    const bool needs_solid_boundary = water_scene &&
+        (is_dielectric(object.front_material) ||
+         is_dielectric(object.back_material));
+    d.primitive_type = needs_solid_boundary
+        ? kPrimitiveSolidSphere : kPrimitiveSphere;
+    d.p0 = f3(g.center);
+    d.radius = g.radius;
+    if (needs_solid_boundary) {
+      const Vec3 extent{g.radius + 1.0e-5f};
+      d.aabb_min = f3(g.center - extent);
+      d.aabb_max = f3(g.center + extent);
+    }
   } else if (object.type == GeometryType::Rectangle || object.type == GeometryType::Sketch) {
     Vec3 a, b, c;
     if (object.type == GeometryType::Rectangle) {
@@ -458,6 +481,29 @@ DeviceGeometryData geometry_for(const Scene& scene, const Object& object,
     d.aabb_min=f3(g.clip.min); d.aabb_max=f3(g.clip.max);
   } else if (object.type == GeometryType::Mesh) {
     d.primitive_type = kPrimitiveMesh;
+  } else if (object.type == GeometryType::WaterSurface) {
+    const auto& g = std::get<WaterSurfaceData>(object.geometry);
+    d.primitive_type = kPrimitiveWaterSurface;
+    d.p0 = f3(g.center);
+    d.water_size = make_float2(g.size.x, g.size.y);
+    d.water_wave_count = g.wave_count;
+    d.water_tiles_x = g.tiles_x;
+    d.water_tiles_z = g.tiles_z;
+    float total_amplitude = 0.0f;
+    for (std::uint32_t i = 0; i < g.wave_count; ++i) {
+      const WaterWave& wave = g.waves[i];
+      d.water_waves[i].direction =
+          make_float2(wave.direction.x, wave.direction.y);
+      d.water_waves[i].amplitude = wave.amplitude;
+      d.water_waves[i].wave_number =
+          2.0f * 3.14159265358979323846f / wave.wavelength;
+      d.water_waves[i].phase = wave.phase_radians;
+      total_amplitude += wave.amplitude;
+    }
+    const Vec3 half_extent{0.5f * g.size.x, total_amplitude,
+                           0.5f * g.size.y};
+    d.aabb_min = f3(g.center - half_extent);
+    d.aabb_max = f3(g.center + half_extent);
   } else {
     throw std::runtime_error("unsupported object geometry type");
   }
@@ -564,7 +610,8 @@ Gas build_object(OptixDeviceContext context, cudaStream_t stream,
     throw std::runtime_error("mesh objects must use a shared mesh GAS");
   unsigned int flag=OPTIX_GEOMETRY_FLAG_NONE; OptixBuildInput input{};
   DeviceBuffer a(tracker,0), b(tracker,0); CUdeviceptr ap=0,bp=0;
-  if (object.type == GeometryType::Sphere) {
+  if (object.type == GeometryType::Sphere &&
+      g.primitive_type == kPrimitiveSphere) {
     a.allocate(tracker,sizeof(float3)); b.allocate(tracker,sizeof(float));
     a.upload(&g.p0,sizeof(float3),stream); b.upload(&g.radius,sizeof(float),stream);
     ap=a.pointer(); bp=b.pointer(); input.type=OPTIX_BUILD_INPUT_TYPE_SPHERES;
@@ -585,6 +632,42 @@ Gas build_object(OptixDeviceContext context, cudaStream_t stream,
     input.triangleArray.numIndexTriplets=2; input.triangleArray.indexFormat=OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
     input.triangleArray.indexStrideInBytes=sizeof(uint3); input.triangleArray.flags=&flag;
     input.triangleArray.numSbtRecords=1; input.triangleArray.transformFormat=OPTIX_TRANSFORM_FORMAT_NONE;
+  } else if (object.type == GeometryType::WaterSurface) {
+    const std::uint64_t tile_count =
+        static_cast<std::uint64_t>(g.water_tiles_x) * g.water_tiles_z;
+    if (tile_count == 0u || tile_count > 4096u)
+      throw std::runtime_error("water surface has an invalid tile count");
+    std::vector<OptixAabb> boxes(static_cast<std::size_t>(tile_count));
+    const float minimum_x = g.p0.x - 0.5f * g.water_size.x;
+    const float minimum_z = g.p0.z - 0.5f * g.water_size.y;
+    const float tile_width = g.water_size.x / g.water_tiles_x;
+    const float tile_depth = g.water_size.y / g.water_tiles_z;
+    constexpr float overlap = 1.0e-5f;
+    for (std::uint32_t z = 0; z < g.water_tiles_z; ++z) {
+      for (std::uint32_t x = 0; x < g.water_tiles_x; ++x) {
+        const std::size_t index =
+            static_cast<std::size_t>(z) * g.water_tiles_x + x;
+        const float x0 = minimum_x + tile_width * static_cast<float>(x);
+        const float x1 =
+            minimum_x + tile_width * static_cast<float>(x + 1u);
+        const float z0 = minimum_z + tile_depth * static_cast<float>(z);
+        const float z1 =
+            minimum_z + tile_depth * static_cast<float>(z + 1u);
+        boxes[index] = {x0 - overlap, g.aabb_min.y - overlap,
+                        z0 - overlap, x1 + overlap,
+                        g.aabb_max.y + overlap, z1 + overlap};
+      }
+    }
+    a.allocate(tracker, boxes.size() * sizeof(OptixAabb));
+    a.upload(boxes, stream);
+    ap = a.pointer();
+    input.type = OPTIX_BUILD_INPUT_TYPE_CUSTOM_PRIMITIVES;
+    input.customPrimitiveArray.aabbBuffers = &ap;
+    input.customPrimitiveArray.numPrimitives =
+        checked_u32(boxes.size(), "water tile count");
+    input.customPrimitiveArray.strideInBytes = sizeof(OptixAabb);
+    input.customPrimitiveArray.flags = &flag;
+    input.customPrimitiveArray.numSbtRecords = 1;
   } else {
     const OptixAabb box{g.aabb_min.x,g.aabb_min.y,g.aabb_min.z,g.aabb_max.x,g.aabb_max.y,g.aabb_max.z};
     a.allocate(tracker,sizeof(box)); a.upload(&box,sizeof(box),stream); ap=a.pointer();
@@ -598,7 +681,7 @@ Gas build_object(OptixDeviceContext context, cudaStream_t stream,
 struct Programs {
   OptixProgramGroup raygen = nullptr;
   std::array<OptixProgramGroup, kRayTypeCount> miss{};
-  std::array<std::array<OptixProgramGroup, kRayTypeCount>, 6> hit{};
+  std::array<std::array<OptixProgramGroup, kRayTypeCount>, 8> hit{};
 };
 
 std::vector<char> load_ir() {
@@ -683,9 +766,10 @@ Programs create_pipeline(OptixState& state) {
   desc.miss.entryFunctionName = "__miss__shadow";
   programs.miss[kRayShadow] = make_program(state, desc);
 
-  const std::array<const char*, 6> intersections = {
+  const std::array<const char*, 8> intersections = {
       nullptr, nullptr, "__intersection__disk",
-      "__intersection__cylinder", "__intersection__parabola", nullptr};
+      "__intersection__cylinder", "__intersection__parabola", nullptr,
+      "__intersection__water_surface", "__intersection__solid_sphere"};
   for (unsigned int primitive = 0; primitive < programs.hit.size();
        ++primitive) {
     for (unsigned int ray = 0; ray < kRayTypeCount; ++ray) {
@@ -703,7 +787,9 @@ Programs create_pipeline(OptixState& state) {
         desc.hitgroup.moduleIS = state.sphere_module;
       } else if (primitive == kPrimitiveDisk ||
                  primitive == kPrimitiveCylinder ||
-                 primitive == kPrimitiveParabola) {
+                 primitive == kPrimitiveParabola ||
+                 primitive == kPrimitiveWaterSurface ||
+                 primitive == kPrimitiveSolidSphere) {
         desc.hitgroup.moduleIS = state.module;
         desc.hitgroup.entryFunctionNameIS = intersections[primitive];
       }
@@ -798,7 +884,8 @@ SbtStorage make_sbt(const Programs& programs,
   hits.reserve(hitgroups.size() * kRayTypeCount);
   for (const HitgroupData& hitgroup : hitgroups) {
     const DeviceGeometryData& geometry = hitgroup.geometry;
-    if (geometry.primitive_type < 0 || geometry.primitive_type >= 6)
+    if (geometry.primitive_type < 0 ||
+        static_cast<std::size_t>(geometry.primitive_type) >= programs.hit.size())
       throw std::runtime_error("invalid device primitive type");
     for (unsigned int ray = 0; ray < kRayTypeCount; ++ray) {
       SbtRecord<HitgroupData> record{};
@@ -971,6 +1058,11 @@ RenderResult render_optix(const Scene& scene,
       scene.lights.begin(), scene.lights.end(), [](const Light& light) {
         return light.type == LightType::Flame;
       }));
+  const std::size_t water_surface_count =
+      static_cast<std::size_t>(std::count_if(
+          scene.objects.begin(), scene.objects.end(), [](const Object& object) {
+            return object.type == GeometryType::WaterSurface;
+          }));
 
   DeviceBuffer material_buffer(
       tracker, material_data.size() * sizeof(MaterialData));
@@ -1058,11 +1150,17 @@ RenderResult render_optix(const Scene& scene,
                    ? 0u
                    : checked_product(pixel_count, sizeof(VolumeCounters),
                                      "volume counters"));
+  DeviceBuffer water_count(
+      tracker, water_surface_count == 0u
+                   ? 0u
+                   : checked_product(pixel_count, sizeof(WaterCounters),
+                                     "water counters"));
   beauty.clear(stream);
   albedo.clear(stream);
   normal.clear(stream);
   ray_count.clear(stream);
   volume_count.clear(stream);
+  water_count.clear(stream);
 
   LaunchParams parameters{};
   parameters.traversable = ias.handle;
@@ -1105,12 +1203,18 @@ RenderResult render_optix(const Scene& scene,
   parameters.light_count =
       checked_u32(light_data.size(), "light count");
   parameters.flame_count = checked_u32(flame_count, "flame count");
+  parameters.water_surface_count =
+      checked_u32(water_surface_count, "water surface count");
   parameters.traced_rays =
       reinterpret_cast<unsigned long long*>(ray_count.pointer());
   parameters.volume_counters =
       flame_count == 0u
           ? nullptr
           : reinterpret_cast<VolumeCounters*>(volume_count.pointer());
+  parameters.water_counters =
+      water_surface_count == 0u
+          ? nullptr
+          : reinterpret_cast<WaterCounters*>(water_count.pointer());
 
   DeviceBuffer launch_parameters(tracker, sizeof(parameters));
   launch_parameters.upload(&parameters, sizeof(parameters), stream);
@@ -1161,11 +1265,15 @@ RenderResult render_optix(const Scene& scene,
   std::vector<unsigned long long> ray_counts(pixel_count);
   std::vector<VolumeCounters> volume_counts(
       flame_count == 0u ? 0u : pixel_count);
+  std::vector<WaterCounters> water_counts(
+      water_surface_count == 0u ? 0u : pixel_count);
   output.download(rgba.data(), rgba.size(), stream);
   ray_count.download(ray_counts.data(),
                      ray_counts.size() * sizeof(unsigned long long), stream);
   volume_count.download(volume_counts.data(),
                         volume_counts.size() * sizeof(VolumeCounters), stream);
+  water_count.download(water_counts.data(),
+                       water_counts.size() * sizeof(WaterCounters), stream);
   check_cuda(cudaStreamSynchronize(stream),
              "cudaStreamSynchronize(output)");
   unsigned long long traced_rays = 0;
@@ -1179,6 +1287,17 @@ RenderResult render_optix(const Scene& scene,
     volume_totals.majorant_violations += count.majorant_violations;
     volume_totals.tracking_overflows += count.tracking_overflows;
   }
+  WaterCounters water_totals{};
+  for (const WaterCounters& count : water_counts) {
+    water_totals.height_evaluations += count.height_evaluations;
+    water_totals.tile_tests += count.tile_tests;
+    water_totals.roots_reported += count.roots_reported;
+    water_totals.shadow_transmissions += count.shadow_transmissions;
+    water_totals.medium_segments += count.medium_segments;
+    water_totals.solver_overflows += count.solver_overflows;
+    water_totals.medium_errors += count.medium_errors;
+    water_totals.shadow_boundary_overflows += count.shadow_boundary_overflows;
+  }
   if (volume_totals.majorant_violations != 0ull ||
       volume_totals.tracking_overflows != 0ull) {
     throw std::runtime_error(
@@ -1186,6 +1305,16 @@ RenderResult render_optix(const Scene& scene,
         std::to_string(volume_totals.majorant_violations) +
         ", tracking overflows=" +
         std::to_string(volume_totals.tracking_overflows));
+  }
+  if (water_totals.solver_overflows != 0ull ||
+      water_totals.medium_errors != 0ull ||
+      water_totals.shadow_boundary_overflows != 0ull) {
+    throw std::runtime_error(
+        "water transport safety check failed: solver overflows=" +
+        std::to_string(water_totals.solver_overflows) +
+        ", medium errors=" + std::to_string(water_totals.medium_errors) +
+        ", shadow boundary overflows=" +
+        std::to_string(water_totals.shadow_boundary_overflows));
   }
   tracker.sample();
 
@@ -1212,6 +1341,15 @@ RenderResult render_optix(const Scene& scene,
   result.stats.volume_majorant_violations =
       volume_totals.majorant_violations;
   result.stats.volume_tracking_overflows = volume_totals.tracking_overflows;
+  result.stats.water_height_evaluations = water_totals.height_evaluations;
+  result.stats.water_tile_tests = water_totals.tile_tests;
+  result.stats.water_roots_reported = water_totals.roots_reported;
+  result.stats.water_shadow_transmissions = water_totals.shadow_transmissions;
+  result.stats.water_medium_segments = water_totals.medium_segments;
+  result.stats.water_solver_overflows = water_totals.solver_overflows;
+  result.stats.water_medium_errors = water_totals.medium_errors;
+  result.stats.water_shadow_boundary_overflows =
+      water_totals.shadow_boundary_overflows;
   result.stats.rays_per_second =
       render_ms > 0.0 ? traced_rays / (render_ms * 1.0e-3) : 0.0;
   result.stats.objects = scene.objects.size();

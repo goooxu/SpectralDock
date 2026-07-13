@@ -214,6 +214,8 @@ $$
 
 玻璃、水和空气这类非导体常由折射率 $\eta$ 描述。光从介质 $i$ 进入介质 $t$ 时满足 Snell 定律：
 
+实现有两条明确分支：无 `water_surface` 的兼容路径保留原有的空气外部介质与 Schlick 近似，以维持既有随机数序列和 golden；含水路径维护介质栈，并使用非偏振介电 Fresnel 精确式。后者的推导和源码见[第 12 章](12-runtime-analytic-water.md#3-精确光滑介电-fresnel-与-snell)。本节下面的 Schlick 公式与源码摘录专指无水兼容路径。
+
 $$
 \eta_i\sin\theta_i=\eta_t\sin\theta_t.
 $$
@@ -224,7 +226,7 @@ $$
 R_0=\left(\frac{\eta_i-\eta_t}{\eta_i+\eta_t}\right)^2.
 $$
 
-角度变化用 Schlick 近似：
+无水兼容路径用 Schlick 近似角度变化：
 
 $$
 R(\theta)=R_0+(1-R_0)(1-\cos\theta)^5.
@@ -238,7 +240,7 @@ $$
 \left(\frac{\eta_i}{\eta_t}\right)^2\sin^2\theta_i>1,
 $$
 
-折射方向不存在，发生全反射。否则实现以概率 $R$ 选择反射，以概率 $1-R$ 选择折射。分支概率已抵消对应 Fresnel 系数，所以路径权重不再显式乘 $R$ 或 $1-R$。折射分支额外乘
+折射方向不存在，发生全反射。否则无水兼容路径以概率 $R$ 选择反射，以概率 $1-R$ 选择折射。含水路径用精确 Fresnel 得到相同含义的分支概率。两者的分支概率都抵消对应 Fresnel 系数，所以路径权重不再显式乘 $R$ 或 $1-R$。折射分支额外乘
 
 $$
 \left(\frac{\eta_i}{\eta_t}\right)^2,
@@ -246,7 +248,7 @@ $$
 
 这是辐亮度传输穿过折射界面时的测度变换。进入较高折射率介质时它小于 1，离开时大于 1；理想的一进一出会互相抵消。
 
-### 源码对照：介电质的离散反射与折射
+### 源码对照：无水兼容分支的离散反射与折射
 
 <!-- source-snippet id="dielectric-reflect-refract" path="src/device_programs.cu" anchor="eta_i" -->
 ```cpp
@@ -276,16 +278,16 @@ $$
     sample.delta = 1;
 ```
 
-`front_face` 决定外侧和内侧折射率，`eta` 就是 $\eta_i/\eta_t$。条件 `eta * eta * sin2_theta > 1` 是全反射判定，否则 `rng.next() < reflectance` 以 Schlick 反射率选择离散反射事件；折射方向拆成法向平行与垂直分量，以 `fmaxf` 保护平方根。`sample.weight` 只在 `transmitted` 为真时乘 `eta * eta`，正好对应测度变换 $(\eta_i/\eta_t)^2$；最后三行把有效的反射或折射标记为 delta 事件，并用占位 PDF 1 记账。
+这段代码只在 `params.water_surface_count == 0` 时执行。`front_face` 决定空气侧和材质侧折射率，`eta` 就是 $\eta_i/\eta_t$。条件 `eta * eta * sin2_theta > 1` 是全反射判定，否则 `rng.next() < reflectance` 以 Schlick 反射率选择离散反射事件；折射方向拆成法向平行与垂直分量，以 `fmaxf` 保护平方根。`sample.weight` 只在 `transmitted` 为真时乘 `eta * eta`，正好对应测度变换 $(\eta_i/\eta_t)^2$；最后三行把有效的反射或折射标记为 delta 事件，并用占位 PDF 1 记账。
 
 代码中的 `sample.pdf = 1` 只是 delta 分支的占位记账值，绝不表示“在整个球面均匀采样”。理想反射和折射只出现在一个方向上，应从离散事件理解。
 
 ### 当前介电质边界
 
-- 外部介质固定为空气，没有嵌套介质栈；
-- 表面完全光滑，没有粗糙玻璃；
-- 没有色散、Beer–Lambert 体吸收或内部参与介质；
-- `base_color` 会乘到每次介电散射事件（反射或折射），透射还会另乘 $(\eta_i/\eta_t)^2$；它不是随内部传播距离增长的吸收。
+- 所有分支的界面都完全光滑，没有粗糙玻璃或色散；
+- 无 `water_surface` 的兼容路径把外部介质固定为空气，不维护嵌套介质栈，也没有 Beer–Lambert 距离吸收；
+- 含水路径维护最多四层严格 LIFO 介质栈，用 RGB Beer 吸收处理水段，并只允许普通 dielectric 绑定闭合 sphere，详见[第 12 章第 4、5 节](12-runtime-analytic-water.md#4-介质栈与严格嵌套)；
+- `base_color` 会乘到每次介电散射事件（反射或折射），透射还会另乘 $(\eta_i/\eta_t)^2$；它是界面着色，不等同于含水路径按传播距离累计的吸收。
 
 ## 5. 发光材质
 

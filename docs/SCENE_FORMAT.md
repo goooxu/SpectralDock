@@ -1,6 +1,6 @@
 # 场景格式
 
-场景为 JSON。schema v1 保持兼容；schema v2 新增顶层 `meshes` 与 `type: "mesh"` 对象；schema v3 新增程序化 `flame` 体积光。未知引用、缺失资源、非有限数、退化几何和非法材质会在 CUDA/OptiX 初始化前报错。只有使用 flame 的场景需要升级到 v3。
+场景为 JSON。schema v1 保持兼容；schema v2 新增顶层 `meshes` 与 `type: "mesh"` 对象；schema v3 新增程序化 `flame` 体积光；schema v4 新增运行时 `water_surface`。未知引用、缺失资源、非有限数、退化几何和非法材质会在 CUDA/OptiX 初始化前报错。只有使用 flame 或 water_surface 的场景才分别需要升级到 v3 或 v4。
 
 ## 顶层字段
 
@@ -8,9 +8,9 @@
 - `background`：`constant`，或带渐变和太阳瓣的 `sky`；`exposure` 以 EV 表示。
 - `render`：`width`、`height`、`spp`、`max_depth`、`seed`、`denoise`。
 - `textures`：`constant` 或 PNG `image`，色彩空间为 `srgb`/`linear`。
-- `materials`：`lambertian`、`metal`、`dielectric`、`emitter`。
+- `materials`：`lambertian`、`metal`、`dielectric`、`emitter`，以及 v4 的 `water`。
 - `meshes`（v2）：命名 OBJ 资源。
-- `objects`：sphere、rectangle、sketch、disk、cylinder、parabola、mesh。
+- `objects`：sphere、rectangle、sketch、disk、cylinder、parabola、mesh，以及 v4 的 water_surface。
 - `lights`：显式采样的 rectangle、disk、sphere 面积光，以及 v3 的 flame 体积光。
 
 `max_depth` 的范围仍为 1–64，语义是最多处理的表面事件数；最后一个事件完整估计显式直接光，但不再生成下一事件的 BSDF 射线。
@@ -78,6 +78,46 @@
 
 火焰支持位于半径 `max(radius_start,radius_end)`、高度 `height` 的有向圆柱中。三 octave 确定性噪声、径向/轴向平滑包络和中心线扰动共同产生归一化密度。传输只包含吸收与自发光，不包含散射、烟雾、燃烧化学、CFD、动画或 motion blur。运行时使用 Delta Tracking 处理透射和首次真实碰撞，并在普通表面上以体积 NEE 显式采样发光密度；体积不进入 OptiX GAS/IAS/SBT，`max_depth` 仍只计算表面事件。
 
+## 解析波浪水面（v4）
+
+```json
+{
+  "materials": [
+    {
+      "name": "pool_water",
+      "type": "water",
+      "ior": 1.333,
+      "absorption": [0.42, 0.10, 0.035]
+    }
+  ],
+  "objects": [
+    {
+      "name": "moon_pool",
+      "type": "water_surface",
+      "center": [0.0, -0.35, -1.0],
+      "size": [6.8, 5.4],
+      "material": "pool_water",
+      "waves": [
+        {"direction": [1.0, 0.25], "amplitude": 0.07,
+         "wavelength": 2.6, "phase_radians": 0.35}
+      ]
+    }
+  ]
+}
+```
+
+`water` 是只供 water_surface 使用的光滑介电材质。`ior` 默认 1.333，范围为 `(1,3]`；RGB `absorption` 默认 `[0.35,0.08,0.025]`，表示场景长度倒数单位下的 Beer 吸收系数，三个分量都必须非负。water 不接受 texture、base_color、emission 或 roughness，其他几何也不能绑定 water 材质。
+
+water_surface 是以 `center` 为中心、在 XZ 平面覆盖正 `size` 的有限解析顶界面，不自带侧壁或池底。场景必须用不透明池壁和池底封住水下区域，并让整个相机光圈从水外开始；开放边界会让介质状态无法定义。多个 water_surface 的 XZ footprint 必须严格分离。含 water_surface 的场景中，普通 `dielectric` 只允许绑定无 alpha 的闭合 sphere，且必须用同一个 dielectric 材质同时绑定球面两侧。这些球面只能严格分离或严格包含，不能相交、相切或与波面的保守高度带相交；相机光圈也必须在所有玻璃球之外。介质栈最多四层，含水场景保守地为水预留一层，因此最多允许三层同时活跃的嵌套玻璃球，包括远离水面的干燥玻璃。water_surface 不接受 transform、alpha、front_material 或 back_material。`waves` 必须包含 1–4 项；非零二维 `direction` 会归一化，`amplitude` 与 `wavelength` 必须为正，有限 `phase_radians` 会规约到 `[0,2π)`。波数、tile 宽度、每条 float32 tile 边界和波面 AABB 的派生值也必须在 float32 中有限、严格递增且非退化。为保持单值高度场与稳定求交，总坡度必须满足
+
+$$
+\sum_i \frac{2\pi a_i}{\lambda_i}\le 1.
+$$
+
+运行时高度为四项以内的确定性正弦叠加，法线由解析偏导得到。最短波长的一半决定 XZ tile 边长，两个方向 tile 数向上取整且总数不能超过 4096；每个 tile 成为 OptiX 自定义 primitive 的保守 AABB，但所有 tile 共享同一 water_surface 数据和材质。
+
+相机路径在水面使用精确光滑介电 Fresnel 与 Snell 折射，介质栈跟踪当前 IOR/吸收系数，每段水下距离按 `exp(-absorption * distance)` 衰减。跨水面的显式直接光最多处理 8 个边界，保留表面遮挡并应用 Fresnel 透射与 Beer 衰减；为控制成本，这条 shadow 路径保持直线，不执行 Snell 弯折，因此不是焦散求解器。水面是固定单帧，不包含时间、流体动力学、泡沫或 motion blur。
+
 ## 统计
 
 渲染统计的 `geometry` 节包含：
@@ -87,5 +127,7 @@
 - `unique_meshes`：实际引用并构建的唯一网格数；
 - `mesh_triangles`：唯一网格三角总数，不乘实例数；
 - `gas_count`：primitive GAS 加唯一 mesh GAS，不含 IAS。
+
+含 water_surface 的新渲染还在 `water` 节记录 `water_height_evaluations`、`water_tile_tests`、`water_roots_reported`、`water_shadow_transmissions` 和 `water_medium_segments`。`water_solver_overflows`、`water_medium_errors`、`water_shadow_boundary_overflows` 是安全门；任一非零时渲染器直接报错而不接受输出。无水场景不分配该逐像素计数缓冲，也不改变原随机数序列。
 
 完整示例见 `scenes/`，v1 测试场景见 `tests/scenes/`。

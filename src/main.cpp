@@ -170,7 +170,17 @@ nlohmann::ordered_json stats_json(const spectraldock::RenderStats& s,
         {"volume_real_collisions", s.volume_real_collisions},
         {"volume_light_samples", s.volume_light_samples},
         {"volume_majorant_violations", s.volume_majorant_violations},
-        {"volume_tracking_overflows", s.volume_tracking_overflows}}}};
+        {"volume_tracking_overflows", s.volume_tracking_overflows}}},
+      {"water",
+       {{"water_height_evaluations", s.water_height_evaluations},
+        {"water_tile_tests", s.water_tile_tests},
+        {"water_roots_reported", s.water_roots_reported},
+        {"water_shadow_transmissions", s.water_shadow_transmissions},
+        {"water_medium_segments", s.water_medium_segments},
+        {"water_solver_overflows", s.water_solver_overflows},
+        {"water_medium_errors", s.water_medium_errors},
+        {"water_shadow_boundary_overflows",
+         s.water_shadow_boundary_overflows}}}};
 }
 
 }  // namespace

@@ -4,12 +4,12 @@
 
 ## 已完成实现
 
-- schema v3 程序化 flame 体积光、schema v2 OBJ 三角化/负索引/group 合并、法线/UV 处理和清晰错误信息，并保持 schema v1/v2 兼容。
+- schema v4 解析 water_surface、schema v3 程序化 flame 体积光、schema v2 OBJ 三角化/负索引/group 合并、法线/UV 处理和清晰错误信息，并保持旧 schema 兼容。
 - mesh 资源级共享压缩 GAS、IAS 对象变换、对象级 SBT/材质/alpha、真实几何正反面和插值着色法线。
 - 设备端 RR/MIS 保持局部 PDF 记账与吞吐量补偿分离；末端深度只为真实存在的竞争策略分配权重。
-- 固定 seed Harbor 生成器、六个内置场景共享吉祥物、preview/final 批量接口，以及包含几何、体积工作量、显存、时序和吞吐数据的 stats 输出。
+- 固定 seed Harbor 生成器、七个内置场景共享吉祥物、preview/final 批量接口，以及包含几何、体积、水面工作量、显存、时序和吞吐数据的 stats 输出。
 - 独立的 PhysX 5.8.0 GPU 刚体生成流程；Kinetic Foundry 固定截取第 300 步（2.5 秒）的撞击峰值，正式 sidecar 记录 0 个 sleeping dynamic actors。仓库只保留同名正式 PNG、渲染 stats 和物理生成 sidecar，不提交临时场景 JSON。
-- OBJ/schema/变换与输入语义测试、吉祥物及 Harbor 确定性测试、六个内置场景一致性测试、GPU MIS/flame 对照和共享 mesh fixture。
+- OBJ/schema/变换与输入语义测试、吉祥物及 Harbor 确定性测试、七个内置场景一致性测试、GPU MIS/flame/water 对照和共享 mesh fixture。
 
 ## 验证范围
 
@@ -47,10 +47,10 @@ PhysX 生成器由 `SPECTRALDOCK_ENABLE_PHYSX_SCENE=ON` 的独立构建启用，
 - 64×64、4 spp、depth 1、seed 1 的绑定/未绑定灯 MIS 对照；
 - Compute Sanitizer 的 memcheck、initcheck 和 racecheck；
 - mesh composite fixture 的 UV、平滑法线、alpha、共享 GAS 双实例、几何统计和 RTX 5090 定向像素 golden；
-- 六个内置正式场景的预览检查（Rocket Test Stand 为 256 spp、depth 12、无降噪），以及 Kinetic Foundry 的独立双生成、撞击峰值契约验证和预览检查；发布前再执行一次完整 RTX 5090 验收。
+- 七个内置正式场景的预览检查（Rocket Test Stand 为 256 spp、depth 12，Moonlit Stepwell 为 256 spp、depth 16，二者均无降噪），以及 Kinetic Foundry 的独立双生成、撞击峰值契约验证和预览检查；发布前再执行一次完整 RTX 5090 验收。
 
-`./scripts/acceptance.sh` 编排环境检查、Release/Debug 构建、host-only C++/Python 测试、MIS/flame GPU 对照和 mesh/flame sanitizer fixture。它不生成 PhysX 场景，不自动更新 gallery 图片，也不执行跨 GPU golden 或性能阈值判断。
+`./scripts/acceptance.sh` 编排环境检查、Release/Debug 构建、host-only C++/Python 测试、MIS/flame/water GPU 对照和 mesh/flame/water sanitizer fixture。它不生成 PhysX 场景，不自动更新 gallery 图片，也不执行跨 GPU golden 或性能阈值判断。
 
-七张 1920×1080 gallery PNG 及对应 stats 是正式 RTX 5090 运行记录；其中 Rocket Test Stand 固定为 2048 spp、depth 12、无降噪，安全计数均为零。`./scripts/render-examples.sh --preset final` 更新六个内置场景；Kinetic Foundry 由独立脚本更新，并额外保留 `.physics.json`。这些记录只供维护者在正式验收时更新；普通内置预览写入 `output/examples/`。
+八张 1920×1080 gallery PNG 及对应 stats 是正式 RTX 5090 运行记录；Rocket Test Stand 固定为 2048 spp、depth 12，Moonlit Stepwell 固定为 2048 spp、depth 16，二者均无降噪且安全计数为零。`./scripts/render-examples.sh --preset final` 更新七个内置场景；Kinetic Foundry 由独立脚本更新，并额外保留 `.physics.json`。这些记录只供维护者在正式验收时更新；普通内置预览写入 `output/examples/`。
 
 发布门槛与仓库公开步骤见[发布检查清单](RELEASE_CHECKLIST.md)。

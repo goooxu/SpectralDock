@@ -15,7 +15,13 @@ namespace spectraldock {
 constexpr std::int32_t kInvalidId = -1;
 
 enum class TextureType : std::uint32_t { Constant, Image };
-enum class MaterialType : std::uint32_t { Lambertian, Metal, Dielectric, Emitter };
+enum class MaterialType : std::uint32_t {
+  Lambertian,
+  Metal,
+  Dielectric,
+  Emitter,
+  Water,
+};
 enum class GeometryType : std::uint32_t {
   Sphere,
   Rectangle,
@@ -24,6 +30,7 @@ enum class GeometryType : std::uint32_t {
   Cylinder,
   Parabola,
   Mesh,
+  WaterSurface,
 };
 enum class BackgroundType : std::uint32_t { Constant, Sky };
 enum class LightType : std::uint32_t { Sphere, Rectangle, Disk, Flame };
@@ -73,6 +80,7 @@ struct Material {
   Vec3 emission{0.0f};
   float roughness = 0.5f;
   float ior = 1.5f;
+  Vec3 absorption{0.0f};
 };
 
 struct Transform {
@@ -154,13 +162,30 @@ struct MeshInstanceData {
   Transform transform{};
 };
 
+struct WaterWave {
+  Vec2 direction{1.0f, 0.0f};
+  float amplitude = 0.1f;
+  float wavelength = 1.0f;
+  float phase_radians = 0.0f;
+};
+
+struct WaterSurfaceData {
+  Vec3 center{};
+  Vec2 size{1.0f, 1.0f};
+  std::array<WaterWave, 4> waves{};
+  std::uint32_t wave_count = 0;
+  std::uint32_t tiles_x = 1;
+  std::uint32_t tiles_z = 1;
+};
+
 using GeometryData = std::variant<SphereData,
                                   RectangleData,
                                   SketchData,
                                   DiskData,
                                   CylinderData,
                                   ParabolaData,
-                                  MeshInstanceData>;
+                                  MeshInstanceData,
+                                  WaterSurfaceData>;
 
 struct Object {
   std::string name;

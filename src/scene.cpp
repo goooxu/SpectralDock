@@ -57,6 +57,12 @@ Vec3 optional_vec3(const json& object, const char* key, Vec3 fallback, const std
   return it == object.end() ? fallback : vec3(*it, where + "." + key);
 }
 
+Vec2 vec2(const json& value, const std::string& where) {
+  if (!value.is_array() || value.size() != 2) fail(where, "expected [x, y]");
+  return {number(value[0], where + "[0]"),
+          number(value[1], where + "[1]")};
+}
+
 std::string text(const json& value, const std::string& where) {
   if (!value.is_string()) fail(where, "expected a string");
   const std::string result = value.get<std::string>();
@@ -315,7 +321,7 @@ Scene load_scene(const std::filesystem::path& input_path, const SceneLoadOptions
   if (!root.is_object()) fail("root", "expected an object");
 
   Scene scene;
-  scene.schema_version = optional_u32(root, "schema_version", 1, 1, 3, "root");
+  scene.schema_version = optional_u32(root, "schema_version", 1, 1, 4, "root");
   scene.camera = parse_camera(member(root, "camera", "root"));
   scene.background = parse_background(member(root, "background", "root"));
   if (root.contains("render")) scene.render = parse_render(root.at("render"));
@@ -392,12 +398,31 @@ Scene load_scene(const std::filesystem::path& input_path, const SceneLoadOptions
     else if (type == "metal") material.type = MaterialType::Metal;
     else if (type == "dielectric") material.type = MaterialType::Dielectric;
     else if (type == "emitter") material.type = MaterialType::Emitter;
-    else fail(where + ".type", "unsupported type '" + type + "'");
-    material.texture_id = optional_reference(value, "texture", texture_ids, where);
-    material.base_color = optional_vec3(value, "base_color", material.base_color, where);
-    material.emission = optional_vec3(value, "emission", material.emission, where);
-    material.roughness = optional_number(value, "roughness", material.roughness, where);
-    material.ior = optional_number(value, "ior", material.ior, where);
+    else if (type == "water") {
+      if (scene.schema_version < 4)
+        fail(where + ".type", "water materials require schema_version 4");
+      material.type = MaterialType::Water;
+    } else {
+      fail(where + ".type", "unsupported type '" + type + "'");
+    }
+    if (material.type == MaterialType::Water) {
+      for (const char* key : {"texture", "base_color", "emission", "roughness"}) {
+        if (value.contains(key))
+          fail(where + "." + key, "is not supported by water materials");
+      }
+      material.ior = optional_number(value, "ior", 1.333f, where);
+      material.absorption =
+          optional_vec3(value, "absorption", {0.35f, 0.08f, 0.025f}, where);
+      nonnegative(material.absorption, where + ".absorption");
+      if (!(material.ior > 1.0f && material.ior <= 3.0f))
+        fail(where + ".ior", "water IOR must be in (1, 3]");
+    } else {
+      material.texture_id = optional_reference(value, "texture", texture_ids, where);
+      material.base_color = optional_vec3(value, "base_color", material.base_color, where);
+      material.emission = optional_vec3(value, "emission", material.emission, where);
+      material.roughness = optional_number(value, "roughness", material.roughness, where);
+      material.ior = optional_number(value, "ior", material.ior, where);
+    }
     nonnegative(material.base_color, where + ".base_color");
     nonnegative(material.emission, where + ".emission");
     if (material.roughness < 0.0f || material.roughness > 1.0f)
@@ -414,6 +439,7 @@ Scene load_scene(const std::filesystem::path& input_path, const SceneLoadOptions
   IdMap object_ids;
   const json& objects = member(root, "objects", "root");
   if (!objects.is_array()) fail("objects", "expected an array");
+  std::size_t water_surface_count = 0;
   for (std::size_t i = 0; i < objects.size(); ++i) {
     const json& value = objects[i];
     const std::string where = "objects[" + std::to_string(i) + "]";
@@ -509,10 +535,342 @@ Scene load_scene(const std::filesystem::path& input_path, const SceneLoadOptions
       if (std::fabs(dot(normalize(opening), data.normal)) > 1.0e-5f)
         fail(where, "normal must be perpendicular to focus-origin");
       object.geometry = data;
+    } else if (type == "water_surface") {
+      if (scene.schema_version < 4)
+        fail(where + ".type", "water_surface objects require schema_version 4");
+      if (++water_surface_count > 4)
+        fail("objects", "must contain at most 4 water_surface objects");
+      if (!value.contains("material") || value.contains("front_material") ||
+          value.contains("back_material"))
+        fail(where, "water_surface requires one shared 'material'");
+      if (object.alpha_texture != kInvalidId || value.contains("alpha_cutoff"))
+        fail(where, "water_surface does not support alpha");
+      if (object.front_material != object.back_material ||
+          scene.materials[static_cast<std::size_t>(object.front_material)].type !=
+              MaterialType::Water)
+        fail(where + ".material", "water_surface requires a water material");
+
+      object.type = GeometryType::WaterSurface;
+      WaterSurfaceData data;
+      data.center = vec3(member(value, "center", where), where + ".center");
+      data.size = vec2(member(value, "size", where), where + ".size");
+      if (!(data.size.x > 0.0f) || !(data.size.y > 0.0f))
+        fail(where + ".size", "components must be positive");
+
+      const json& waves = member(value, "waves", where);
+      if (!waves.is_array() || waves.empty() || waves.size() > data.waves.size())
+        fail(where + ".waves", "must contain 1 to 4 waves");
+      data.wave_count = static_cast<std::uint32_t>(waves.size());
+      double total_slope = 0.0;
+      double total_amplitude = 0.0;
+      float shortest_wavelength = std::numeric_limits<float>::max();
+      for (std::size_t wave_index = 0; wave_index < waves.size(); ++wave_index) {
+        const json& wave_value = waves[wave_index];
+        const std::string wave_where =
+            where + ".waves[" + std::to_string(wave_index) + "]";
+        if (!wave_value.is_object()) fail(wave_where, "expected an object");
+        WaterWave wave;
+        wave.direction =
+            vec2(member(wave_value, "direction", wave_where),
+                 wave_where + ".direction");
+        const double direction_length_squared =
+            static_cast<double>(wave.direction.x) * wave.direction.x +
+            static_cast<double>(wave.direction.y) * wave.direction.y;
+        if (!(direction_length_squared >= 1.0e-12))
+          fail(wave_where + ".direction", "must be non-zero");
+        const double inverse_direction_length =
+            1.0 / std::sqrt(direction_length_squared);
+        wave.direction.x = static_cast<float>(
+            static_cast<double>(wave.direction.x) * inverse_direction_length);
+        wave.direction.y = static_cast<float>(
+            static_cast<double>(wave.direction.y) * inverse_direction_length);
+        wave.amplitude =
+            number(member(wave_value, "amplitude", wave_where),
+                   wave_where + ".amplitude");
+        wave.wavelength =
+            number(member(wave_value, "wavelength", wave_where),
+                   wave_where + ".wavelength");
+        wave.phase_radians =
+            number(member(wave_value, "phase_radians", wave_where),
+                   wave_where + ".phase_radians");
+        if (!(wave.amplitude > 0.0f))
+          fail(wave_where + ".amplitude", "must be positive");
+        if (!(wave.wavelength > 0.0f))
+          fail(wave_where + ".wavelength", "must be positive");
+        const double wave_number =
+            2.0 * static_cast<double>(kPi) /
+            static_cast<double>(wave.wavelength);
+        if (!std::isfinite(wave_number) ||
+            wave_number > std::numeric_limits<float>::max()) {
+          fail(wave_where + ".wavelength",
+               "produces a non-finite float32 wave number");
+        }
+        wave.phase_radians = std::fmod(wave.phase_radians, 2.0f * kPi);
+        if (wave.phase_radians < 0.0f) wave.phase_radians += 2.0f * kPi;
+        total_slope += 2.0 * static_cast<double>(kPi) *
+                       static_cast<double>(wave.amplitude) /
+                       static_cast<double>(wave.wavelength);
+        total_amplitude += static_cast<double>(wave.amplitude);
+        shortest_wavelength = std::min(shortest_wavelength, wave.wavelength);
+        data.waves[wave_index] = wave;
+      }
+      if (!(total_slope <= 1.0))
+        fail(where + ".waves", "total wave slope must be at most 1");
+
+      const double tile_extent = 0.5 * static_cast<double>(shortest_wavelength);
+      const double tiles_x =
+          std::ceil(static_cast<double>(data.size.x) / tile_extent);
+      const double tiles_z =
+          std::ceil(static_cast<double>(data.size.y) / tile_extent);
+      if (!(tiles_x >= 1.0 && tiles_x <= 4096.0 &&
+            tiles_z >= 1.0 && tiles_z <= 4096.0 &&
+            tiles_x * tiles_z <= 4096.0))
+        fail(where, "automatic water tile count must be at most 4096");
+      data.tiles_x = static_cast<std::uint32_t>(tiles_x);
+      data.tiles_z = static_cast<std::uint32_t>(tiles_z);
+      if (!(data.size.x / static_cast<float>(data.tiles_x) > 0.0f) ||
+          !(data.size.y / static_cast<float>(data.tiles_z) > 0.0f)) {
+        fail(where, "automatic water tile extent underflows float32");
+      }
+      const auto finite_float32 = [](double value) {
+        return std::isfinite(value) &&
+               value >= -static_cast<double>(
+                            std::numeric_limits<float>::max()) &&
+               value <= static_cast<double>(
+                            std::numeric_limits<float>::max());
+      };
+      const double minimum_x = static_cast<double>(data.center.x) -
+                               0.5 * static_cast<double>(data.size.x);
+      const double maximum_x = static_cast<double>(data.center.x) +
+                               0.5 * static_cast<double>(data.size.x);
+      const double minimum_y =
+          static_cast<double>(data.center.y) - total_amplitude;
+      const double maximum_y =
+          static_cast<double>(data.center.y) + total_amplitude;
+      const double minimum_z = static_cast<double>(data.center.z) -
+                               0.5 * static_cast<double>(data.size.y);
+      const double maximum_z = static_cast<double>(data.center.z) +
+                               0.5 * static_cast<double>(data.size.y);
+      if (!finite_float32(minimum_x) || !finite_float32(maximum_x) ||
+          !finite_float32(minimum_y) || !finite_float32(maximum_y) ||
+          !finite_float32(minimum_z) || !finite_float32(maximum_z) ||
+          !(static_cast<float>(minimum_x) < static_cast<float>(maximum_x)) ||
+          !(static_cast<float>(minimum_y) < static_cast<float>(maximum_y)) ||
+          !(static_cast<float>(minimum_z) < static_cast<float>(maximum_z))) {
+        fail(where, "derived water bounds must be finite non-degenerate float32");
+      }
+      const auto tile_boundaries_increase = [](
+          float center, float size, std::uint32_t tiles) {
+        const float minimum = center - 0.5f * size;
+        const float width = size / static_cast<float>(tiles);
+        float previous = minimum;
+        for (std::uint32_t tile = 1u; tile <= tiles; ++tile) {
+          const float boundary =
+              minimum + width * static_cast<float>(tile);
+          if (!(boundary > previous)) return false;
+          previous = boundary;
+        }
+        return true;
+      };
+      if (!tile_boundaries_increase(
+              data.center.x, data.size.x, data.tiles_x) ||
+          !tile_boundaries_increase(
+              data.center.z, data.size.y, data.tiles_z)) {
+        fail(where,
+             "automatic water tile boundaries collapse in float32");
+      }
+      object.geometry = data;
     } else {
       fail(where + ".type", "unsupported type '" + type + "'");
     }
+    if (type != "water_surface") {
+      const auto binds_water = [&](std::int32_t material_id) {
+        return material_id != kInvalidId &&
+               scene.materials[static_cast<std::size_t>(material_id)].type ==
+                   MaterialType::Water;
+      };
+      if (binds_water(object.front_material) || binds_water(object.back_material))
+        fail(where, "water materials can only be bound to water_surface objects");
+    }
     scene.objects.push_back(std::move(object));
+  }
+
+  if (water_surface_count != 0) {
+    struct DielectricSphereBoundary {
+      std::size_t object_index;
+      SphereData sphere;
+    };
+    struct WaterSurfaceBounds {
+      std::size_t object_index;
+      double minimum_x;
+      double maximum_x;
+      double minimum_y;
+      double maximum_y;
+      double minimum_z;
+      double maximum_z;
+    };
+    std::vector<DielectricSphereBoundary> dielectric_spheres;
+    std::vector<WaterSurfaceBounds> water_bounds;
+    const auto binds_dielectric = [&](std::int32_t material_id) {
+      return material_id != kInvalidId &&
+             scene.materials[static_cast<std::size_t>(material_id)].type ==
+                 MaterialType::Dielectric;
+    };
+    for (std::size_t i = 0; i < scene.objects.size(); ++i) {
+      const Object& object = scene.objects[i];
+      if (object.type == GeometryType::WaterSurface) {
+        const WaterSurfaceData& water =
+            std::get<WaterSurfaceData>(object.geometry);
+        double amplitude = 0.0;
+        for (std::uint32_t wave = 0; wave < water.wave_count; ++wave) {
+          amplitude += static_cast<double>(water.waves[wave].amplitude);
+        }
+        water_bounds.push_back(
+            {i,
+             static_cast<double>(water.center.x) -
+                 0.5 * static_cast<double>(water.size.x),
+             static_cast<double>(water.center.x) +
+                 0.5 * static_cast<double>(water.size.x),
+             static_cast<double>(water.center.y) - amplitude,
+             static_cast<double>(water.center.y) + amplitude,
+             static_cast<double>(water.center.z) -
+                 0.5 * static_cast<double>(water.size.y),
+             static_cast<double>(water.center.z) +
+                 0.5 * static_cast<double>(water.size.y)});
+        continue;
+      }
+      if (object.type == GeometryType::Sphere) {
+        const bool has_dielectric = binds_dielectric(object.front_material) ||
+                                    binds_dielectric(object.back_material);
+        if (has_dielectric &&
+            (object.front_material != object.back_material ||
+             !binds_dielectric(object.front_material))) {
+          fail("objects[" + std::to_string(i) + "]",
+               "dielectric sphere boundaries in water scenes require one "
+               "shared dielectric material on both faces");
+        }
+        if (has_dielectric && object.alpha_texture != kInvalidId) {
+          fail("objects[" + std::to_string(i) + "]",
+               "dielectric sphere boundaries in water scenes cannot use "
+               "alpha textures");
+        }
+        if (has_dielectric) {
+          dielectric_spheres.push_back(
+              {i, std::get<SphereData>(object.geometry)});
+        }
+        continue;
+      }
+      if (binds_dielectric(object.front_material) ||
+          binds_dielectric(object.back_material)) {
+        fail("objects[" + std::to_string(i) + "]",
+             "dielectric materials in water scenes require closed sphere "
+             "geometry; open dielectric boundaries are not supported");
+      }
+    }
+
+    const auto distance_between = [](Vec3 a, Vec3 b) {
+      const double x = static_cast<double>(a.x) - b.x;
+      const double y = static_cast<double>(a.y) - b.y;
+      const double z = static_cast<double>(a.z) - b.z;
+      return std::sqrt(x * x + y * y + z * z);
+    };
+    const double lens_radius = 0.5 * static_cast<double>(scene.camera.aperture);
+    for (const DielectricSphereBoundary& boundary : dielectric_spheres) {
+      if (distance_between(scene.camera.look_from, boundary.sphere.center) <=
+          static_cast<double>(boundary.sphere.radius) + lens_radius) {
+        fail("camera.look_from",
+             "camera aperture must start outside every dielectric sphere");
+      }
+    }
+    for (std::size_t i = 0; i < dielectric_spheres.size(); ++i) {
+      const DielectricSphereBoundary& first = dielectric_spheres[i];
+      unsigned int active_sphere_layers = 1u;
+      for (std::size_t j = 0; j < dielectric_spheres.size(); ++j) {
+        if (i == j) continue;
+        const DielectricSphereBoundary& second = dielectric_spheres[j];
+        const double distance =
+            distance_between(first.sphere.center, second.sphere.center);
+        const double first_radius = first.sphere.radius;
+        const double second_radius = second.sphere.radius;
+        if (i < j) {
+          const bool strictly_separate =
+              distance > first_radius + second_radius;
+          const bool first_strictly_contains_second =
+              distance + second_radius < first_radius;
+          const bool second_strictly_contains_first =
+              distance + first_radius < second_radius;
+          if (!strictly_separate && !first_strictly_contains_second &&
+              !second_strictly_contains_first) {
+            fail("objects[" + std::to_string(second.object_index) + "]",
+                 "dielectric sphere boundaries in water scenes must be "
+                 "strictly separate or strictly nested");
+          }
+        }
+        if (distance + first_radius < second_radius) {
+          ++active_sphere_layers;
+        }
+      }
+      // One slot is reserved for the water medium itself.
+      if (active_sphere_layers + 1u > 4u) {
+        fail("objects[" + std::to_string(first.object_index) + "]",
+             "nested dielectric spheres exceed the four-layer medium stack "
+             "including water");
+      }
+    }
+
+    for (std::size_t i = 0; i < water_bounds.size(); ++i) {
+      const WaterSurfaceBounds& first = water_bounds[i];
+      if (static_cast<double>(scene.camera.look_from.x) + lens_radius >=
+              first.minimum_x &&
+          static_cast<double>(scene.camera.look_from.x) - lens_radius <=
+              first.maximum_x &&
+          static_cast<double>(scene.camera.look_from.z) + lens_radius >=
+              first.minimum_z &&
+          static_cast<double>(scene.camera.look_from.z) - lens_radius <=
+              first.maximum_z &&
+          static_cast<double>(scene.camera.look_from.y) - lens_radius <=
+              first.maximum_y) {
+        fail("camera.look_from",
+             "camera aperture must start outside and above every water surface");
+      }
+      for (std::size_t j = i + 1; j < water_bounds.size(); ++j) {
+        const WaterSurfaceBounds& second = water_bounds[j];
+        const bool footprints_are_strictly_separate =
+            first.maximum_x < second.minimum_x ||
+            second.maximum_x < first.minimum_x ||
+            first.maximum_z < second.minimum_z ||
+            second.maximum_z < first.minimum_z;
+        if (!footprints_are_strictly_separate) {
+          fail("objects[" + std::to_string(second.object_index) + "]",
+               "water_surface footprints must be strictly separate");
+        }
+      }
+      for (const DielectricSphereBoundary& boundary : dielectric_spheres) {
+        const double x = std::min(
+            std::max(static_cast<double>(boundary.sphere.center.x),
+                     first.minimum_x),
+            first.maximum_x);
+        const double z = std::min(
+            std::max(static_cast<double>(boundary.sphere.center.z),
+                     first.minimum_z),
+            first.maximum_z);
+        const double dx = static_cast<double>(boundary.sphere.center.x) - x;
+        const double dz = static_cast<double>(boundary.sphere.center.z) - z;
+        const double radius = boundary.sphere.radius;
+        const bool overlaps_footprint = dx * dx + dz * dz <= radius * radius;
+        const double sphere_minimum_y =
+            static_cast<double>(boundary.sphere.center.y) - radius;
+        const double sphere_maximum_y =
+            static_cast<double>(boundary.sphere.center.y) + radius;
+        const bool vertically_separate =
+            sphere_maximum_y < first.minimum_y ||
+            sphere_minimum_y > first.maximum_y;
+        if (overlaps_footprint && !vertically_separate) {
+          fail("objects[" + std::to_string(boundary.object_index) + "]",
+               "dielectric sphere boundary may intersect a water_surface");
+        }
+      }
+    }
   }
 
   if (root.contains("lights")) {

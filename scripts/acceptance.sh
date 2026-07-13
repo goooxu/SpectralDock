@@ -14,6 +14,8 @@ gpu_container python3 tests/check_integrator_mis.py \
   build/Release/spectraldock tests/scenes/smoke.json
 gpu_container python3 tests/check_flame_transport.py \
   build/Release/spectraldock tests/scenes/flame-smoke.json
+gpu_container python3 tests/check_water_transport.py \
+  build/Release/spectraldock tests/scenes/water-smoke.json
 "$(dirname "$0")/configure.sh" Debug
 gpu_container cmake --build build/Debug --clean-first --parallel
 

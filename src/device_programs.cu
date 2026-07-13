@@ -11,6 +11,7 @@ using spectraldock::LightData;
 using spectraldock::MaterialData;
 using spectraldock::TextureData;
 using spectraldock::VolumeCounters;
+using spectraldock::WaterCounters;
 
 extern "C" {
 __constant__ LaunchParams params;
@@ -71,6 +72,13 @@ static __forceinline__ __device__ float max_component(float3 a) {
 }
 static __forceinline__ __device__ float3 clamp_nonnegative(float3 a) {
   return f3(fmaxf(a.x, 0.0f), fmaxf(a.y, 0.0f), fmaxf(a.z, 0.0f));
+}
+
+static __forceinline__ __device__ float3 exp_attenuation(
+    float3 absorption, float distance) {
+  return f3(absorption.x > 0.0f ? expf(-absorption.x * distance) : 1.0f,
+            absorption.y > 0.0f ? expf(-absorption.y * distance) : 1.0f,
+            absorption.z > 0.0f ? expf(-absorption.z * distance) : 1.0f);
 }
 
 // Russian roulette scales path throughput, not the local solid-angle BSDF
@@ -208,6 +216,7 @@ struct VolumeEvent {
 
 struct VolumeCollision {
   int collided;
+  float distance;
   float3 source;
 };
 
@@ -411,6 +420,7 @@ static __forceinline__ __device__ VolumeCollision track_volume(
         if (++candidate_count > kMaxTrackingCandidates) {
           ++counters.tracking_overflows;
           result.collided = 1;
+          result.distance = candidate_distance;
           return result;
         }
         const float u = rng.next_open01();
@@ -438,6 +448,7 @@ static __forceinline__ __device__ VolumeCollision track_volume(
         if (rng.next() < acceptance) {
           ++counters.real_collisions;
           result.collided = 1;
+          result.distance = candidate_distance;
           result.source = sigma_total > 0.0f
               ? divv(source_numerator, sigma_total)
               : f3(0.0f, 0.0f, 0.0f);
@@ -477,7 +488,96 @@ struct BsdfSample {
   float pdf;
   int delta;
   int valid;
+  int transmitted;
 };
+
+struct MediumLayer {
+  int material_index;
+  float ior;
+  float3 absorption;
+};
+
+struct MediumState {
+  MediumLayer layers[4];
+  int depth;
+};
+
+static __forceinline__ __device__ WaterCounters* pixel_water_counters() {
+  if (params.water_counters == nullptr) return nullptr;
+  const uint3 index = optixGetLaunchIndex();
+  if (index.x >= params.width || index.y >= params.height) return nullptr;
+  return &params.water_counters[index.y * params.width + index.x];
+}
+
+static __forceinline__ __device__ float medium_ior(
+    const MediumState& state) {
+  return state.depth > 0 ? state.layers[state.depth - 1].ior : 1.0f;
+}
+
+static __forceinline__ __device__ float3 medium_absorption(
+    const MediumState& state) {
+  return state.depth > 0 ? state.layers[state.depth - 1].absorption
+                         : f3(0.0f, 0.0f, 0.0f);
+}
+
+static __forceinline__ __device__ float3 medium_segment_transmittance(
+    const MediumState& state, float distance, WaterCounters& counters) {
+  if (state.depth <= 0 || !(distance > 0.0f)) {
+    return f3(1.0f, 1.0f, 1.0f);
+  }
+  ++counters.medium_segments;
+  return exp_attenuation(medium_absorption(state), distance);
+}
+
+static __forceinline__ __device__ float exit_ior(
+    const MediumState& state, int material_index, WaterCounters& counters) {
+  if (state.depth <= 0 ||
+      state.layers[state.depth - 1].material_index != material_index) {
+    ++counters.medium_errors;
+    return 1.0f;
+  }
+  return state.depth > 1 ? state.layers[state.depth - 2].ior : 1.0f;
+}
+
+static __forceinline__ __device__ bool update_medium_after_transmission(
+    MediumState& state, int material_index, const MaterialData& material,
+    int front_face, WaterCounters& counters) {
+  if (front_face != 0) {
+    if (state.depth >= 4) {
+      ++counters.medium_errors;
+      return false;
+    }
+    state.layers[state.depth++] =
+        {material_index, fmaxf(material.ior, 1.0e-3f), material.absorption};
+    return true;
+  }
+  if (state.depth <= 0 ||
+      state.layers[state.depth - 1].material_index != material_index) {
+    ++counters.medium_errors;
+    return false;
+  }
+  --state.depth;
+  return true;
+}
+
+// A finite water top interface has no geometric side boundary. A path which
+// enters below the footprint edge can therefore first encounter its back face
+// while the stack is empty. Only that unambiguous base-water case is inferred;
+// a non-empty stack (especially a nested dielectric) is never repaired or
+// searched and remains a strict LIFO error.
+static __forceinline__ __device__ void infer_base_water_incident_medium(
+    const SurfaceHit& hit, MediumState& state) {
+  if (state.depth != 0 || hit.front_face != 0 || hit.material_index < 0 ||
+      params.materials == nullptr ||
+      static_cast<unsigned int>(hit.material_index) >= params.material_count) {
+    return;
+  }
+  const MaterialData material = params.materials[hit.material_index];
+  if (material.type != spectraldock::kMaterialWater) return;
+  state.layers[state.depth++] =
+      {hit.material_index, fmaxf(material.ior, 1.0e-3f),
+       material.absorption};
+}
 
 static __forceinline__ __device__ void pack_pointer(
     const void* pointer, unsigned int& p0, unsigned int& p1) {
@@ -555,6 +655,310 @@ static __forceinline__ __device__ float3 mesh_barycentric_weights() {
   return f3(1.0f - b.x - b.y, b.x, b.y);
 }
 
+static __forceinline__ __device__ float water_height(
+    const GeometryData& geometry, float x, float z,
+    float* derivative_x = nullptr, float* derivative_z = nullptr) {
+  if (WaterCounters* counters = pixel_water_counters()) {
+    ++counters->height_evaluations;
+  }
+  float height = geometry.p0.y;
+  float dx = 0.0f;
+  float dz = 0.0f;
+  const float local_x = x - geometry.p0.x;
+  const float local_z = z - geometry.p0.z;
+  const unsigned int count =
+      geometry.water_wave_count < 4u ? geometry.water_wave_count : 4u;
+  for (unsigned int i = 0u; i < count; ++i) {
+    const spectraldock::DeviceWaterWave& wave = geometry.water_waves[i];
+    const float angle = wave.wave_number *
+                            (wave.direction.x * local_x +
+                             wave.direction.y * local_z) +
+                        wave.phase;
+    height += wave.amplitude * sinf(angle);
+    const float slope = wave.amplitude * wave.wave_number * cosf(angle);
+    dx += slope * wave.direction.x;
+    dz += slope * wave.direction.y;
+  }
+  if (derivative_x != nullptr) *derivative_x = dx;
+  if (derivative_z != nullptr) *derivative_z = dz;
+  return height;
+}
+
+static __forceinline__ __device__ float water_function_value(
+    const GeometryData& geometry, float3 origin, float3 direction, float t) {
+  const float3 point = add(origin, mul(direction, t));
+  return point.y - water_height(geometry, point.x, point.z);
+}
+
+static __forceinline__ __device__ double water_function_value_precise(
+    const GeometryData& geometry, float3 origin, float3 direction, double t) {
+  const double x = static_cast<double>(origin.x) +
+                   static_cast<double>(direction.x) * t;
+  const double y = static_cast<double>(origin.y) +
+                   static_cast<double>(direction.y) * t;
+  const double z = static_cast<double>(origin.z) +
+                   static_cast<double>(direction.z) * t;
+  double height = static_cast<double>(geometry.p0.y);
+  const double local_x = x - static_cast<double>(geometry.p0.x);
+  const double local_z = z - static_cast<double>(geometry.p0.z);
+  const unsigned int count =
+      geometry.water_wave_count < 4u ? geometry.water_wave_count : 4u;
+  for (unsigned int i = 0u; i < count; ++i) {
+    const spectraldock::DeviceWaterWave& wave = geometry.water_waves[i];
+    const double phase = static_cast<double>(wave.wave_number) *
+                             (static_cast<double>(wave.direction.x) * local_x +
+                              static_cast<double>(wave.direction.y) * local_z) +
+                         static_cast<double>(wave.phase);
+    height += static_cast<double>(wave.amplitude) * sin(phase);
+  }
+  return y - height;
+}
+
+static __forceinline__ __device__ bool refine_suspicious_water_bracket(
+    const GeometryData& geometry, float3 origin, float3 direction,
+    float lower, float upper, float& root, float& residual,
+    int& orientation) {
+  double precise_lower = static_cast<double>(lower);
+  double precise_upper = static_cast<double>(upper);
+  double lower_value = water_function_value_precise(
+      geometry, origin, direction, precise_lower);
+  const double upper_value = water_function_value_precise(
+      geometry, origin, direction, precise_upper);
+  if ((lower_value < 0.0) == (upper_value < 0.0)) return false;
+  orientation = lower_value < 0.0 ? 1 : -1;
+  for (int iteration = 0; iteration < 40; ++iteration) {
+    const double middle = 0.5 * (precise_lower + precise_upper);
+    const double middle_value = water_function_value_precise(
+        geometry, origin, direction, middle);
+    if ((middle_value < 0.0) == (lower_value < 0.0)) {
+      precise_lower = middle;
+      lower_value = middle_value;
+    } else {
+      precise_upper = middle;
+    }
+  }
+  root = static_cast<float>(0.5 * (precise_lower + precise_upper));
+  residual = fabsf(water_function_value(
+      geometry, origin, direction, root));
+  return true;
+}
+
+static __forceinline__ __device__ bool validate_water_endpoint_crossing(
+    const GeometryData& geometry, float3 origin, float3 direction,
+    float root, int& orientation) {
+  const double ulp_scale =
+      8.0 * static_cast<double>(1.1920928955078125e-7f) *
+      fmax(1.0, fabs(static_cast<double>(root)));
+  const double probe_distance =
+      fmax(static_cast<double>(params.scene_epsilon), ulp_scale);
+  const double left = water_function_value_precise(
+      geometry, origin, direction,
+      static_cast<double>(root) - probe_distance);
+  const double right = water_function_value_precise(
+      geometry, origin, direction,
+      static_cast<double>(root) + probe_distance);
+  if (left == 0.0 || right == 0.0 || (left < 0.0) == (right < 0.0)) {
+    return false;
+  }
+  orientation = left < 0.0 ? 1 : -1;
+  return true;
+}
+
+struct ScalarInterval {
+  float lower;
+  float upper;
+};
+
+static __forceinline__ __device__ ScalarInterval widen_interval(
+    ScalarInterval interval) {
+  const float scale = fmaxf(fabsf(interval.lower), fabsf(interval.upper));
+  const float padding = 4.0e-6f * (1.0f + scale);
+  interval.lower -= padding;
+  interval.upper += padding;
+  return interval;
+}
+
+static __forceinline__ __device__ bool contains_periodic_phase(
+    float lower, float upper, float phase) {
+  const float period = 2.0f * kPi;
+  const float first = phase +
+      ceilf((lower - phase) / period) * period;
+  return first <= upper;
+}
+
+static __forceinline__ __device__ ScalarInterval sine_interval(
+    float phase0, float phase1) {
+  const float lower = fminf(phase0, phase1);
+  const float upper = fmaxf(phase0, phase1);
+  if (upper - lower >= 2.0f * kPi) return {-1.0f, 1.0f};
+  float minimum = fminf(sinf(lower), sinf(upper));
+  float maximum = fmaxf(sinf(lower), sinf(upper));
+  if (contains_periodic_phase(lower, upper, 0.5f * kPi)) maximum = 1.0f;
+  if (contains_periodic_phase(lower, upper, -0.5f * kPi)) minimum = -1.0f;
+  return widen_interval({minimum, maximum});
+}
+
+static __forceinline__ __device__ ScalarInterval cosine_interval(
+    float phase0, float phase1) {
+  const float lower = fminf(phase0, phase1);
+  const float upper = fmaxf(phase0, phase1);
+  if (upper - lower >= 2.0f * kPi) return {-1.0f, 1.0f};
+  float minimum = fminf(cosf(lower), cosf(upper));
+  float maximum = fmaxf(cosf(lower), cosf(upper));
+  if (contains_periodic_phase(lower, upper, 0.0f)) maximum = 1.0f;
+  if (contains_periodic_phase(lower, upper, kPi)) minimum = -1.0f;
+  return widen_interval({minimum, maximum});
+}
+
+static __forceinline__ __device__ void water_phase_line(
+    const GeometryData& geometry, const spectraldock::DeviceWaterWave& wave,
+    float3 origin, float3 direction, float& offset, float& rate) {
+  const float local_x = origin.x - geometry.p0.x;
+  const float local_z = origin.z - geometry.p0.z;
+  offset = wave.wave_number *
+               (wave.direction.x * local_x +
+                wave.direction.y * local_z) +
+           wave.phase;
+  rate = wave.wave_number *
+         (wave.direction.x * direction.x +
+          wave.direction.y * direction.z);
+}
+
+static __forceinline__ __device__ ScalarInterval water_function_interval(
+    const GeometryData& geometry, float3 origin, float3 direction,
+    float t0, float t1) {
+  const float y0 = origin.y + direction.y * t0 - geometry.p0.y;
+  const float y1 = origin.y + direction.y * t1 - geometry.p0.y;
+  ScalarInterval result{fminf(y0, y1), fmaxf(y0, y1)};
+  const unsigned int count =
+      geometry.water_wave_count < 4u ? geometry.water_wave_count : 4u;
+  for (unsigned int i = 0u; i < count; ++i) {
+    const spectraldock::DeviceWaterWave& wave = geometry.water_waves[i];
+    float offset = 0.0f;
+    float rate = 0.0f;
+    water_phase_line(geometry, wave, origin, direction, offset, rate);
+    const ScalarInterval sine =
+        sine_interval(offset + rate * t0, offset + rate * t1);
+    result.lower -= wave.amplitude * sine.upper;
+    result.upper -= wave.amplitude * sine.lower;
+  }
+  return widen_interval(result);
+}
+
+static __forceinline__ __device__ ScalarInterval water_derivative_interval(
+    const GeometryData& geometry, float3 origin, float3 direction,
+    float t0, float t1) {
+  ScalarInterval result{direction.y, direction.y};
+  const unsigned int count =
+      geometry.water_wave_count < 4u ? geometry.water_wave_count : 4u;
+  for (unsigned int i = 0u; i < count; ++i) {
+    const spectraldock::DeviceWaterWave& wave = geometry.water_waves[i];
+    float offset = 0.0f;
+    float rate = 0.0f;
+    water_phase_line(geometry, wave, origin, direction, offset, rate);
+    const ScalarInterval cosine =
+        cosine_interval(offset + rate * t0, offset + rate * t1);
+    const float coefficient = wave.amplitude * rate;
+    const float term0 = coefficient * cosine.lower;
+    const float term1 = coefficient * cosine.upper;
+    const float term_minimum = fminf(term0, term1);
+    const float term_maximum = fmaxf(term0, term1);
+    result.lower -= term_maximum;
+    result.upper -= term_minimum;
+  }
+  return widen_interval(result);
+}
+
+static __forceinline__ __device__ float water_derivative_value(
+    const GeometryData& geometry, float3 origin, float3 direction, float t) {
+  const float3 point = add(origin, mul(direction, t));
+  float derivative_x = 0.0f;
+  float derivative_z = 0.0f;
+  water_height(geometry, point.x, point.z, &derivative_x, &derivative_z);
+  return direction.y - derivative_x * direction.x -
+         derivative_z * direction.z;
+}
+
+static __forceinline__ __device__ float solve_water_monotonic_root(
+    const GeometryData& geometry, float3 origin, float3 direction,
+    float lower, float upper, float lower_value, float upper_value) {
+  if (lower_value == 0.0f) return lower;
+  if (upper_value == 0.0f) return upper;
+  float bracket_lower = lower;
+  float bracket_upper = upper;
+  float bracket_lower_value = lower_value;
+  for (int iteration = 0; iteration < 12; ++iteration) {
+    const float middle = 0.5f * (bracket_lower + bracket_upper);
+    const float value =
+        water_function_value(geometry, origin, direction, middle);
+    if ((value < 0.0f) == (bracket_lower_value < 0.0f)) {
+      bracket_lower = middle;
+      bracket_lower_value = value;
+    } else {
+      bracket_upper = middle;
+    }
+  }
+  float root = 0.5f * (bracket_lower + bracket_upper);
+  for (int iteration = 0; iteration < 4; ++iteration) {
+    const float value =
+        water_function_value(geometry, origin, direction, root);
+    const float derivative =
+        water_derivative_value(geometry, origin, direction, root);
+    if (fabsf(derivative) < 1.0e-10f) break;
+    const float candidate = root - value / derivative;
+    if (!(candidate > bracket_lower && candidate < bracket_upper)) break;
+    root = candidate;
+  }
+  return root;
+}
+
+struct WaterRootWorkItem {
+  float lower;
+  float upper;
+  float lower_value;
+  float upper_value;
+  unsigned int depth;
+};
+
+static __forceinline__ __device__ bool water_tile_owns_point(
+    float3 point, float tile_min_x, float tile_max_x,
+    float tile_min_z, float tile_max_z, unsigned int tile_x,
+    unsigned int tile_z, unsigned int tiles_x, unsigned int tiles_z) {
+  const bool owns_x = point.x >= tile_min_x &&
+      (tile_x + 1u == tiles_x ? point.x <= tile_max_x
+                              : point.x < tile_max_x);
+  const bool owns_z = point.z >= tile_min_z &&
+      (tile_z + 1u == tiles_z ? point.z <= tile_max_z
+                              : point.z < tile_max_z);
+  return owns_x && owns_z;
+}
+
+struct WaterRootCandidate {
+  float distance;
+  float residual;
+  int orientation;
+};
+
+static __forceinline__ __device__ bool append_water_root_candidate(
+    float root, float residual, int orientation,
+    WaterRootCandidate* candidates, unsigned int& count,
+    unsigned int capacity) {
+  const float duplicate_tolerance =
+      4.0f * 1.1920928955078125e-7f * fmaxf(1.0f, fabsf(root));
+  for (unsigned int i = 0u; i < count; ++i) {
+    if (candidates[i].orientation == orientation &&
+        fabsf(candidates[i].distance - root) <= duplicate_tolerance) {
+      if (residual < candidates[i].residual) {
+        candidates[i] = {root, residual, orientation};
+      }
+      return true;
+    }
+  }
+  if (count >= capacity) return false;
+  candidates[count++] = {root, residual, orientation};
+  return true;
+}
+
 static __forceinline__ __device__ float2 mesh_uv(
     const HitgroupData& hitgroup) {
   if ((hitgroup.mesh.flags & spectraldock::kMeshHasTexcoords) == 0u ||
@@ -584,7 +988,8 @@ static __forceinline__ __device__ float2 geometry_uv(
   if (geometry.primitive_type == spectraldock::kPrimitiveTriangle) {
     return triangle_uv(geometry);
   }
-  if (geometry.primitive_type == spectraldock::kPrimitiveSphere) {
+  if (geometry.primitive_type == spectraldock::kPrimitiveSphere ||
+      geometry.primitive_type == spectraldock::kPrimitiveSolidSphere) {
     const float3 n = normalize3(sub(object_point, geometry.p0));
     return f2(0.5f - atan2f(n.z, n.x) / (2.0f * kPi),
               0.5f + asinf(fminf(fmaxf(n.y, -1.0f), 1.0f)) / kPi);
@@ -619,6 +1024,12 @@ static __forceinline__ __device__ float2 geometry_uv(
     const float uu = geometry.height > 0.0f ? s / geometry.height : s;
     return f2(uu, vv);
   }
+  if (geometry.primitive_type == spectraldock::kPrimitiveWaterSurface) {
+    return f2((object_point.x - geometry.p0.x) / geometry.water_size.x +
+                  0.5f,
+              (object_point.z - geometry.p0.z) / geometry.water_size.y +
+                  0.5f);
+  }
   const float3 axis = normalize3(geometry.p1);
   const float3 focus_vector = sub(geometry.p2, geometry.p0);
   const float3 m = normalize3(focus_vector);
@@ -647,7 +1058,8 @@ static __forceinline__ __device__ float3 object_outward_normal(
     return normalize3(cross3(sub(geometry.p2, geometry.p1),
                              sub(geometry.p1, geometry.p0)));
   }
-  if (geometry.primitive_type == spectraldock::kPrimitiveSphere) {
+  if (geometry.primitive_type == spectraldock::kPrimitiveSphere ||
+      geometry.primitive_type == spectraldock::kPrimitiveSolidSphere) {
     return normalize3(sub(object_point, geometry.p0));
   }
   if (geometry.primitive_type == spectraldock::kPrimitiveDisk) {
@@ -657,6 +1069,13 @@ static __forceinline__ __device__ float3 object_outward_normal(
     const float3 axis = normalize3(geometry.p1);
     const float3 q = sub(object_point, geometry.p0);
     return normalize3(sub(q, mul(axis, dot3(q, axis))));
+  }
+  if (geometry.primitive_type == spectraldock::kPrimitiveWaterSurface) {
+    float derivative_x = 0.0f;
+    float derivative_z = 0.0f;
+    water_height(geometry, object_point.x, object_point.z,
+                 &derivative_x, &derivative_z);
+    return normalize3(f3(-derivative_x, 1.0f, -derivative_z));
   }
   const float3 axis = normalize3(geometry.p1);
   const float3 focus_vector = sub(geometry.p2, geometry.p0);
@@ -691,7 +1110,8 @@ static __forceinline__ __device__ float3 object_shading_normal(
 }
 
 static __forceinline__ __device__ SurfaceHit trace_radiance(
-    float3 origin, float3 direction, unsigned long long& traced_rays) {
+    float3 origin, float3 direction, unsigned long long& traced_rays,
+    float maximum_distance = kInfinity) {
   SurfaceHit hit = {};
   hit.hit = 0;
   hit.distance = kInfinity;
@@ -700,7 +1120,7 @@ static __forceinline__ __device__ SurfaceHit trace_radiance(
   pack_pointer(&hit, p0, p1);
   ++traced_rays;
   optixTrace(params.traversable, origin, direction, params.scene_epsilon,
-             kInfinity, 0.0f, OptixVisibilityMask(255),
+             maximum_distance, 0.0f, OptixVisibilityMask(255),
              OPTIX_RAY_FLAG_NONE, spectraldock::kRayRadiance,
              spectraldock::kRayTypeCount, spectraldock::kRayRadiance, p0, p1);
   return hit;
@@ -743,6 +1163,26 @@ static __forceinline__ __device__ float3 fresnel_schlick(
   return add(f0, mul(sub(f3(1.0f, 1.0f, 1.0f), f0), x5));
 }
 
+static __forceinline__ __device__ float dielectric_fresnel(
+    float cos_i, float eta_i, float eta_t, float* cos_t_out = nullptr) {
+  cos_i = fminf(fmaxf(cos_i, 0.0f), 1.0f);
+  const float eta = eta_i / eta_t;
+  const float sin2_t = eta * eta * fmaxf(0.0f, 1.0f - cos_i * cos_i);
+  if (sin2_t >= 1.0f) {
+    if (cos_t_out != nullptr) *cos_t_out = 0.0f;
+    return 1.0f;
+  }
+  const float cos_t = sqrtf(fmaxf(0.0f, 1.0f - sin2_t));
+  if (cos_t_out != nullptr) *cos_t_out = cos_t;
+  const float rs_denominator = eta_i * cos_i + eta_t * cos_t;
+  const float rp_denominator = eta_t * cos_i + eta_i * cos_t;
+  const float rs = (eta_i * cos_i - eta_t * cos_t) /
+                   fmaxf(rs_denominator, 1.0e-20f);
+  const float rp = (eta_t * cos_i - eta_i * cos_t) /
+                   fmaxf(rp_denominator, 1.0e-20f);
+  return 0.5f * (rs * rs + rp * rp);
+}
+
 static __forceinline__ __device__ void evaluate_bsdf(
     const MaterialData& material, float3 base_color, float3 n, float3 wo,
     float3 wi, float3& value, float& pdf) {
@@ -782,7 +1222,8 @@ static __forceinline__ __device__ void evaluate_bsdf(
 
 static __forceinline__ __device__ BsdfSample sample_bsdf(
     const MaterialData& material, float3 base_color, float3 n, float3 wo,
-    int front_face, Pcg32& rng) {
+    int front_face, int material_index, Pcg32& rng, MediumState* media,
+    WaterCounters& water_counters) {
   BsdfSample sample = {};
   sample.weight = f3(0.0f, 0.0f, 0.0f);
   if (material.type == spectraldock::kMaterialLambertian) {
@@ -822,7 +1263,42 @@ static __forceinline__ __device__ BsdfSample sample_bsdf(
     sample.delta = 0;
     return sample;
   }
-  if (material.type == spectraldock::kMaterialDielectric) {
+  if (material.type == spectraldock::kMaterialDielectric ||
+      material.type == spectraldock::kMaterialWater) {
+    // Keep the pre-water dielectric arithmetic and RNG sequence byte-for-byte
+    // for scenes which do not opt into medium tracking.
+    if (params.water_surface_count != 0u && media != nullptr) {
+      const float eta_i = medium_ior(*media);
+      const float eta_t = front_face
+          ? fmaxf(material.ior, 1.0e-3f)
+          : exit_ior(*media, material_index, water_counters);
+      const float eta = eta_i / eta_t;
+      const float cos_theta = fminf(fmaxf(dot3(wo, n), 0.0f), 1.0f);
+      float cos_transmitted = 0.0f;
+      const float reflectance = dielectric_fresnel(
+          cos_theta, eta_i, eta_t, &cos_transmitted);
+      if (reflectance >= 1.0f || rng.next() < reflectance) {
+        sample.wi = normalize3(reflect3(neg(wo), n));
+        sample.weight = base_color;
+      } else {
+        const float3 perpendicular =
+            mul(add(neg(wo), mul(n, cos_theta)), eta);
+        const float3 parallel = mul(n, -cos_transmitted);
+        sample.wi = normalize3(add(perpendicular, parallel));
+        sample.weight = mul(base_color, eta * eta);
+        sample.transmitted = 1;
+        if (!update_medium_after_transmission(
+                *media, material_index, material, front_face,
+                water_counters)) {
+          sample.valid = 0;
+          return sample;
+        }
+      }
+      sample.pdf = 1.0f;
+      sample.valid = 1;
+      sample.delta = 1;
+      return sample;
+    }
     const float eta_i = front_face ? 1.0f : fmaxf(material.ior, 1.0e-3f);
     const float eta_t = front_face ? fmaxf(material.ior, 1.0e-3f) : 1.0f;
     const float eta = eta_i / eta_t;
@@ -847,8 +1323,71 @@ static __forceinline__ __device__ BsdfSample sample_bsdf(
     sample.pdf = 1.0f;
     sample.valid = 1;
     sample.delta = 1;
+    sample.transmitted = transmitted ? 1 : 0;
   }
   return sample;
+}
+
+static __forceinline__ __device__ float3 trace_water_transmittance(
+    float3 origin, float3 direction, float distance, int target_light,
+    MediumState media, unsigned long long& traced_rays,
+    WaterCounters& counters) {
+  float3 transmittance = f3(1.0f, 1.0f, 1.0f);
+  float remaining = distance;
+  constexpr unsigned int kMaximumTransparentBoundaries = 8u;
+  for (unsigned int boundary = 0u;
+       boundary <= kMaximumTransparentBoundaries; ++boundary) {
+    if (!(remaining > params.scene_epsilon)) return transmittance;
+    const SurfaceHit hit = trace_radiance(
+        origin, direction, traced_rays,
+        fmaxf(remaining - params.scene_epsilon, params.scene_epsilon));
+    if (hit.hit == 0) {
+      return mul(transmittance,
+                 medium_segment_transmittance(media, remaining, counters));
+    }
+    infer_base_water_incident_medium(hit, media);
+    transmittance = mul(
+        transmittance,
+        medium_segment_transmittance(media, hit.distance, counters));
+    if (hit.light_index >= 0 && hit.light_index == target_light) {
+      return transmittance;
+    }
+    if (hit.material_index < 0 || params.materials == nullptr ||
+        static_cast<unsigned int>(hit.material_index) >=
+            params.material_count) {
+      return f3(0.0f, 0.0f, 0.0f);
+    }
+    const MaterialData material = params.materials[hit.material_index];
+    if (material.type != spectraldock::kMaterialDielectric &&
+        material.type != spectraldock::kMaterialWater) {
+      return f3(0.0f, 0.0f, 0.0f);
+    }
+    // The extra query after eight accepted transmissions distinguishes a
+    // clear/opaque remainder from a ninth transparent boundary. This keeps
+    // the documented limit inclusive without silently accepting boundary 9.
+    if (boundary == kMaximumTransparentBoundaries) {
+      ++counters.shadow_boundary_overflows;
+      return f3(0.0f, 0.0f, 0.0f);
+    }
+    const float eta_i = medium_ior(media);
+    const float eta_t = hit.front_face != 0
+        ? fmaxf(material.ior, 1.0e-3f)
+        : exit_ior(media, hit.material_index, counters);
+    const float cos_i =
+        fminf(fmaxf(dot3(neg(direction), hit.normal), 0.0f), 1.0f);
+    const float fresnel = dielectric_fresnel(cos_i, eta_i, eta_t);
+    if (!(fresnel < 1.0f)) return f3(0.0f, 0.0f, 0.0f);
+    transmittance = mul(transmittance, 1.0f - fresnel);
+    if (!update_medium_after_transmission(
+            media, hit.material_index, material, hit.front_face, counters)) {
+      return f3(0.0f, 0.0f, 0.0f);
+    }
+    ++counters.shadow_transmissions;
+    const float advance = hit.distance + params.scene_epsilon * 2.0f;
+    origin = add(origin, mul(direction, advance));
+    remaining -= advance;
+  }
+  return transmittance;
 }
 
 static __forceinline__ __device__ float light_direction_pdf(
@@ -924,7 +1463,8 @@ static __forceinline__ __device__ float3 sample_flame_volume(
 static __forceinline__ __device__ float3 sample_direct_light(
     const SurfaceHit& hit, const MaterialData& material, float3 base_color,
     float3 wo, bool next_bsdf_ray_exists, Pcg32& rng,
-    unsigned long long& traced_rays, VolumeCounters& volume_counters) {
+    unsigned long long& traced_rays, VolumeCounters& volume_counters,
+    const MediumState& media, WaterCounters& water_counters) {
   if (params.lights == nullptr || params.light_count == 0 ||
       (material.type != spectraldock::kMaterialLambertian &&
        material.type != spectraldock::kMaterialMetal)) {
@@ -967,9 +1507,19 @@ static __forceinline__ __device__ float3 sample_direct_light(
     }
     const float3 shadow_direction =
         divv(shadow_displacement, shadow_distance);
-    if (!trace_visible(shadow_origin, shadow_direction, shadow_distance,
-                       static_cast<int>(light_index), traced_rays)) {
-      return f3(0.0f, 0.0f, 0.0f);
+    float3 surface_transmittance = f3(1.0f, 1.0f, 1.0f);
+    if (params.water_surface_count == 0u) {
+      if (!trace_visible(shadow_origin, shadow_direction, shadow_distance,
+                         static_cast<int>(light_index), traced_rays)) {
+        return f3(0.0f, 0.0f, 0.0f);
+      }
+    } else {
+      surface_transmittance = trace_water_transmittance(
+          shadow_origin, shadow_direction, shadow_distance,
+          static_cast<int>(light_index), media, traced_rays, water_counters);
+      if (!(max_component(surface_transmittance) > 0.0f)) {
+        return f3(0.0f, 0.0f, 0.0f);
+      }
     }
     if (track_volume(shadow_origin, shadow_direction, shadow_distance, rng,
                      volume_counters).collided != 0) {
@@ -981,7 +1531,7 @@ static __forceinline__ __device__ float3 sample_direct_light(
         kPi * maximum_radius * maximum_radius * light.height;
     const float3 emission_coefficient =
         mul(flame_source(light, axial), sigma);
-    return mul(mul(bsdf, emission_coefficient),
+    return mul(mul(mul(bsdf, emission_coefficient), surface_transmittance),
                no_l * support_volume * static_cast<float>(params.light_count) /
                    distance2);
   }
@@ -1028,9 +1578,19 @@ static __forceinline__ __device__ float3 sample_direct_light(
   }
   const float3 shadow_direction =
       divv(shadow_displacement, shadow_distance);
-  if (!trace_visible(shadow_origin, shadow_direction, shadow_distance,
-                     static_cast<int>(light_index), traced_rays)) {
-    return f3(0.0f, 0.0f, 0.0f);
+  float3 surface_transmittance = f3(1.0f, 1.0f, 1.0f);
+  if (params.water_surface_count == 0u) {
+    if (!trace_visible(shadow_origin, shadow_direction, shadow_distance,
+                       static_cast<int>(light_index), traced_rays)) {
+      return f3(0.0f, 0.0f, 0.0f);
+    }
+  } else {
+    surface_transmittance = trace_water_transmittance(
+        shadow_origin, shadow_direction, shadow_distance,
+        static_cast<int>(light_index), media, traced_rays, water_counters);
+    if (!(max_component(surface_transmittance) > 0.0f)) {
+      return f3(0.0f, 0.0f, 0.0f);
+    }
   }
   if (track_volume(shadow_origin, shadow_direction, shadow_distance, rng,
                    volume_counters).collided != 0) {
@@ -1039,7 +1599,8 @@ static __forceinline__ __device__ float3 sample_direct_light(
   const float mis = direct_light_mis_weight(
       light_pdf, bsdf_pdf, light.geometry_index >= 0,
       next_bsdf_ray_exists);
-  return mul(mul(bsdf, light.emission), no_l * mis / light_pdf);
+  return mul(mul(mul(bsdf, light.emission), surface_transmittance),
+             no_l * mis / light_pdf);
 }
 
 static __forceinline__ __device__ float3 background(float3 direction) {
@@ -1179,6 +1740,10 @@ extern "C" __global__ void __raygen__pathtrace() {
   float3 normal_sum = f3(0.0f, 0.0f, 0.0f);
   unsigned long long traced_rays = 0ull;
   VolumeCounters volume_counters{};
+  WaterCounters local_water_counters{};
+  WaterCounters& water_counters = params.water_counters != nullptr
+      ? params.water_counters[pixel]
+      : local_water_counters;
 
   for (unsigned int sample_index = 0; sample_index < spp; ++sample_index) {
     Pcg32 rng(params.seed, pixel, sample_index);
@@ -1191,12 +1756,26 @@ extern "C" __global__ void __raygen__pathtrace() {
     float previous_pdf = 0.0f;
     int previous_delta = 1;
     int guide_written = 0;
+    MediumState media{};
 
     for (unsigned int bounce = 0; bounce < params.max_depth; ++bounce) {
       const SurfaceHit hit = trace_radiance(ray_origin, ray_direction, traced_rays);
+      if (params.water_surface_count != 0u && hit.hit != 0) {
+        infer_base_water_incident_medium(hit, media);
+      }
       const VolumeCollision volume = track_volume(
           ray_origin, ray_direction, hit.hit != 0 ? hit.distance : kInfinity,
           rng, volume_counters);
+      if (params.water_surface_count != 0u) {
+        const float travel_distance = volume.collided != 0
+            ? volume.distance
+            : (hit.hit != 0 ? hit.distance : kInfinity);
+        throughput = mul(
+            throughput,
+            medium_segment_transmittance(
+                media, travel_distance, water_counters));
+        if (!(max_component(throughput) > 0.0f)) break;
+      }
       if (volume.collided != 0) {
         if (previous_delta != 0) {
           radiance =
@@ -1248,7 +1827,7 @@ extern "C" __global__ void __raygen__pathtrace() {
       const float3 direct =
           sample_direct_light(hit, material, base_color, wo,
                               next_bsdf_ray_exists, rng, traced_rays,
-                              volume_counters);
+                              volume_counters, media, water_counters);
       radiance = add(radiance, mul(throughput, direct));
       if (!next_bsdf_ray_exists) {
         break;
@@ -1256,7 +1835,9 @@ extern "C" __global__ void __raygen__pathtrace() {
 
       const BsdfSample scatter =
           sample_bsdf(material, base_color, hit.normal, wo,
-                      hit.front_face, rng);
+                      hit.front_face, hit.material_index, rng,
+                      params.water_surface_count != 0u ? &media : nullptr,
+                      water_counters);
       if (scatter.valid == 0) {
         break;
       }
@@ -1468,4 +2049,360 @@ extern "C" __global__ void __intersection__parabola() {
   const float b = 2.0f * x0 * dx - 4.0f * focal_distance * dy;
   const float c = x0 * x0 - 4.0f * focal_distance * y0;
   report_quadratic(a, b, c, geometry);
+}
+
+extern "C" __global__ void __intersection__solid_sphere() {
+  const HitgroupData* record =
+      reinterpret_cast<const HitgroupData*>(optixGetSbtDataPointer());
+  const GeometryData& geometry = record->geometry;
+  const float3 offset = sub(optixGetObjectRayOrigin(), geometry.p0);
+  const float3 direction = optixGetObjectRayDirection();
+  report_quadratic(dot3(direction, direction),
+                   2.0f * dot3(offset, direction),
+                   dot3(offset, offset) - geometry.radius * geometry.radius,
+                   geometry);
+}
+
+extern "C" __global__ void __intersection__water_surface() {
+  const HitgroupData* record =
+      reinterpret_cast<const HitgroupData*>(optixGetSbtDataPointer());
+  const GeometryData& geometry = record->geometry;
+  WaterCounters* counters = pixel_water_counters();
+  if (counters != nullptr) ++counters->tile_tests;
+
+  const unsigned int tiles_x = geometry.water_tiles_x;
+  const unsigned int tiles_z = geometry.water_tiles_z;
+  if (tiles_x == 0u || tiles_z == 0u ||
+      !(geometry.water_size.x > 0.0f) ||
+      !(geometry.water_size.y > 0.0f)) {
+    if (counters != nullptr) ++counters->solver_overflows;
+    return;
+  }
+  const unsigned int primitive =
+      optixGetPrimitiveIndex() - geometry.primitive_index_base;
+  if (primitive >= tiles_x * tiles_z) {
+    if (counters != nullptr) ++counters->solver_overflows;
+    return;
+  }
+  const unsigned int tile_x = primitive % tiles_x;
+  const unsigned int tile_z = primitive / tiles_x;
+  const float width_x = geometry.water_size.x / static_cast<float>(tiles_x);
+  const float width_z = geometry.water_size.y / static_cast<float>(tiles_z);
+  const float surface_min_x = geometry.p0.x - 0.5f * geometry.water_size.x;
+  const float surface_min_z = geometry.p0.z - 0.5f * geometry.water_size.y;
+  const float tile_min_x = surface_min_x + width_x * tile_x;
+  const float tile_max_x =
+      surface_min_x + width_x * static_cast<float>(tile_x + 1u);
+  const float tile_min_z = surface_min_z + width_z * tile_z;
+  const float tile_max_z =
+      surface_min_z + width_z * static_cast<float>(tile_z + 1u);
+
+  const float3 origin = optixGetObjectRayOrigin();
+  const float3 direction = optixGetObjectRayDirection();
+  float near_distance = optixGetRayTmin();
+  float far_distance = optixGetRayTmax();
+  const float mins[3] = {tile_min_x, geometry.aabb_min.y, tile_min_z};
+  const float maxs[3] = {tile_max_x, geometry.aabb_max.y, tile_max_z};
+  const float origins[3] = {origin.x, origin.y, origin.z};
+  const float directions[3] = {direction.x, direction.y, direction.z};
+  for (int axis = 0; axis < 3; ++axis) {
+    if (fabsf(directions[axis]) < 1.0e-12f) {
+      if (origins[axis] < mins[axis] || origins[axis] > maxs[axis]) return;
+      continue;
+    }
+    float a = (mins[axis] - origins[axis]) / directions[axis];
+    float b = (maxs[axis] - origins[axis]) / directions[axis];
+    if (b < a) {
+      const float temporary = a;
+      a = b;
+      b = temporary;
+    }
+    near_distance = fmaxf(near_distance, a);
+    far_distance = fminf(far_distance, b);
+    if (!(far_distance >= near_distance)) return;
+  }
+
+  float maximum_phase_rate = 0.0f;
+  const unsigned int wave_count =
+      geometry.water_wave_count < 4u ? geometry.water_wave_count : 4u;
+  for (unsigned int i = 0u; i < wave_count; ++i) {
+    const spectraldock::DeviceWaterWave& wave = geometry.water_waves[i];
+    maximum_phase_rate = fmaxf(
+        maximum_phase_rate,
+        fabsf(wave.wave_number *
+              (wave.direction.x * direction.x +
+               wave.direction.y * direction.z)));
+  }
+  unsigned int intervals = maximum_phase_rate > 0.0f
+      ? static_cast<unsigned int>(
+            ceilf(maximum_phase_rate * (far_distance - near_distance) /
+                  (kPi / 8.0f)))
+      : 1u;
+  intervals = intervals > 0u ? intervals : 1u;
+  if (intervals > 64u) {
+    if (counters != nullptr) ++counters->solver_overflows;
+    return;
+  }
+
+  const float interval_width =
+      (far_distance - near_distance) / static_cast<float>(intervals);
+  constexpr unsigned int kRootCapacity = 32u;
+  WaterRootCandidate root_candidates[kRootCapacity];
+  unsigned int root_count = 0u;
+  float coarse_lower = near_distance;
+  float coarse_lower_value =
+      water_function_value(geometry, origin, direction, coarse_lower);
+  constexpr unsigned int kWorkCapacity = 64u;
+  constexpr unsigned int kMaximumDepth = 24u;
+  for (unsigned int coarse = 0u; coarse < intervals; ++coarse) {
+    const float coarse_upper = coarse + 1u == intervals
+        ? far_distance
+        : near_distance + interval_width * static_cast<float>(coarse + 1u);
+    const float coarse_upper_value =
+        water_function_value(geometry, origin, direction, coarse_upper);
+    WaterRootWorkItem work[kWorkCapacity];
+    unsigned int work_count = 1u;
+    work[0] = {coarse_lower, coarse_upper, coarse_lower_value,
+               coarse_upper_value, 0u};
+    while (work_count != 0u) {
+      const WaterRootWorkItem item = work[--work_count];
+      const ScalarInterval function_bounds = water_function_interval(
+          geometry, origin, direction, item.lower, item.upper);
+      if (function_bounds.lower > 0.0f || function_bounds.upper < 0.0f) {
+        continue;
+      }
+      const ScalarInterval derivative_bounds = water_derivative_interval(
+          geometry, origin, direction, item.lower, item.upper);
+      const bool monotonic = derivative_bounds.lower > 0.0f ||
+                             derivative_bounds.upper < 0.0f;
+      if (monotonic) {
+        if (item.lower_value == 0.0f || item.upper_value == 0.0f) {
+          const float root = item.lower_value == 0.0f
+              ? item.lower : item.upper;
+          int orientation = 0;
+          if (!validate_water_endpoint_crossing(
+                  geometry, origin, direction, root, orientation)) {
+            continue;
+          }
+          const float3 point = add(origin, mul(direction, root));
+          if (water_tile_owns_point(
+                  point, tile_min_x, tile_max_x, tile_min_z, tile_max_z,
+                  tile_x, tile_z, tiles_x, tiles_z) && valid_t(root) &&
+              !append_water_root_candidate(
+                  root, 0.0f, orientation, root_candidates, root_count,
+                  kRootCapacity)) {
+            if (counters != nullptr) ++counters->solver_overflows;
+            return;
+          }
+          continue;
+        }
+        if ((item.lower_value < 0.0f) == (item.upper_value < 0.0f)) {
+          continue;
+        }
+        float root = solve_water_monotonic_root(
+            geometry, origin, direction, item.lower, item.upper,
+            item.lower_value, item.upper_value);
+        float residual = fabsf(
+            water_function_value(geometry, origin, direction, root));
+        int orientation = item.lower_value < 0.0f ? 1 : -1;
+        if (fabsf(water_derivative_value(
+                geometry, origin, direction, root)) < 0.02f &&
+            !refine_suspicious_water_bracket(
+                geometry, origin, direction, item.lower, item.upper,
+                root, residual, orientation)) {
+          continue;
+        }
+        const float3 point = add(origin, mul(direction, root));
+        const bool owned = water_tile_owns_point(
+            point, tile_min_x, tile_max_x, tile_min_z, tile_max_z,
+            tile_x, tile_z, tiles_x, tiles_z);
+        if (residual > 1.0e-4f) {
+          if (counters != nullptr) ++counters->solver_overflows;
+          return;
+        }
+        if (owned && valid_t(root) &&
+            !append_water_root_candidate(
+                root, residual, orientation, root_candidates, root_count,
+                kRootCapacity)) {
+          if (counters != nullptr) ++counters->solver_overflows;
+          return;
+        }
+        continue;
+      }
+
+      const float width = item.upper - item.lower;
+      if (item.depth < kMaximumDepth && width > 1.0e-7f) {
+        if (work_count + 2u > kWorkCapacity) {
+          if (counters != nullptr) ++counters->solver_overflows;
+          return;
+        }
+        const float middle = 0.5f * (item.lower + item.upper);
+        const float middle_value =
+            water_function_value(geometry, origin, direction, middle);
+        // LIFO: push the farther interval first so the nearer one is always
+        // processed first and the first accepted root is the nearest root.
+        work[work_count++] = {middle, item.upper, middle_value,
+                              item.upper_value, item.depth + 1u};
+        work[work_count++] = {item.lower, middle, item.lower_value,
+                              middle_value, item.depth + 1u};
+        continue;
+      }
+
+      // The derivative interval still contains zero at terminal precision.
+      // Isolate a stationary point and explicitly test it for an even/tangent
+      // root. If interval arithmetic still cannot prove absence afterwards,
+      // fail closed instead of silently losing an intersection.
+      const float terminal_middle = 0.5f * (item.lower + item.upper);
+      const float terminal_middle_value = water_function_value(
+          geometry, origin, direction, terminal_middle);
+      const float derivative_limit = fmaxf(
+          fabsf(derivative_bounds.lower), fabsf(derivative_bounds.upper));
+      const float evaluation_padding =
+          8.0e-6f * (1.0f + fabsf(terminal_middle_value));
+      const float maximum_variation =
+          derivative_limit * 0.5f * width + evaluation_padding;
+      if (terminal_middle_value - maximum_variation > 0.0f ||
+          terminal_middle_value + maximum_variation < 0.0f) {
+        continue;
+      }
+      float stationary = 0.5f * (item.lower + item.upper);
+      float derivative_lower = water_derivative_value(
+          geometry, origin, direction, item.lower);
+      float derivative_upper = water_derivative_value(
+          geometry, origin, direction, item.upper);
+      if (derivative_lower == 0.0f) {
+        stationary = item.lower;
+      } else if (derivative_upper == 0.0f) {
+        stationary = item.upper;
+      } else if ((derivative_lower < 0.0f) != (derivative_upper < 0.0f)) {
+        float stationary_lower = item.lower;
+        float stationary_upper = item.upper;
+        for (int iteration = 0; iteration < 20; ++iteration) {
+          stationary = 0.5f * (stationary_lower + stationary_upper);
+          const float derivative = water_derivative_value(
+              geometry, origin, direction, stationary);
+          if ((derivative < 0.0f) == (derivative_lower < 0.0f)) {
+            stationary_lower = stationary;
+            derivative_lower = derivative;
+          } else {
+            stationary_upper = stationary;
+          }
+        }
+        stationary = 0.5f * (stationary_lower + stationary_upper);
+      } else {
+        const float middle = 0.5f * (item.lower + item.upper);
+        const float derivative_middle = fabsf(water_derivative_value(
+            geometry, origin, direction, middle));
+        if (fabsf(derivative_lower) < derivative_middle &&
+            fabsf(derivative_lower) <= fabsf(derivative_upper)) {
+          stationary = item.lower;
+        } else if (fabsf(derivative_upper) < derivative_middle) {
+          stationary = item.upper;
+        }
+      }
+      const float stationary_value =
+          water_function_value(geometry, origin, direction, stationary);
+      if (stationary_value == 0.0f &&
+          ((item.lower_value < 0.0f) == (item.upper_value < 0.0f))) {
+        continue;
+      }
+      const bool left_crosses =
+          stationary > item.lower &&
+          ((item.lower_value < 0.0f) != (stationary_value < 0.0f));
+      const bool right_crosses =
+          stationary < item.upper &&
+          ((stationary_value < 0.0f) != (item.upper_value < 0.0f));
+      bool found_crossing = false;
+      if (left_crosses) {
+        float root = solve_water_monotonic_root(
+            geometry, origin, direction, item.lower, stationary,
+            item.lower_value, stationary_value);
+        float residual = fabsf(
+            water_function_value(geometry, origin, direction, root));
+        int orientation = item.lower_value < 0.0f ? 1 : -1;
+        if (refine_suspicious_water_bracket(
+                geometry, origin, direction, item.lower, stationary,
+                root, residual, orientation)) {
+          if (residual > 1.0e-4f) {
+            if (counters != nullptr) ++counters->solver_overflows;
+            return;
+          }
+          const float3 point = add(origin, mul(direction, root));
+          if (water_tile_owns_point(
+                  point, tile_min_x, tile_max_x, tile_min_z, tile_max_z,
+                  tile_x, tile_z, tiles_x, tiles_z) && valid_t(root) &&
+              !append_water_root_candidate(
+                  root, residual, orientation, root_candidates, root_count,
+                  kRootCapacity)) {
+            if (counters != nullptr) ++counters->solver_overflows;
+            return;
+          }
+          found_crossing = true;
+        }
+      }
+      if (right_crosses) {
+        float root = solve_water_monotonic_root(
+            geometry, origin, direction, stationary, item.upper,
+            stationary_value, item.upper_value);
+        float residual = fabsf(
+            water_function_value(geometry, origin, direction, root));
+        int orientation = stationary_value < 0.0f ? 1 : -1;
+        if (refine_suspicious_water_bracket(
+                geometry, origin, direction, stationary, item.upper,
+                root, residual, orientation)) {
+          if (residual > 1.0e-4f) {
+            if (counters != nullptr) ++counters->solver_overflows;
+            return;
+          }
+          const float3 point = add(origin, mul(direction, root));
+          if (water_tile_owns_point(
+                  point, tile_min_x, tile_max_x, tile_min_z, tile_max_z,
+                  tile_x, tile_z, tiles_x, tiles_z) && valid_t(root) &&
+              !append_water_root_candidate(
+                  root, residual, orientation, root_candidates, root_count,
+                  kRootCapacity)) {
+            if (counters != nullptr) ++counters->solver_overflows;
+            return;
+          }
+          found_crossing = true;
+        }
+      }
+      if (found_crossing || fabsf(stationary_value) <= 1.0e-4f) {
+        // A stationary zero with no sign-changing side is a pure even/tangent
+        // contact. It is geometrically valid but does not cross the medium
+        // boundary, so it must not be reported to transport.
+        continue;
+      }
+      if (counters != nullptr) ++counters->solver_overflows;
+      return;
+    }
+    coarse_lower = coarse_upper;
+    coarse_lower_value = coarse_upper_value;
+  }
+
+  for (unsigned int i = 1u; i < root_count; ++i) {
+    const WaterRootCandidate value = root_candidates[i];
+    unsigned int j = i;
+    while (j > 0u &&
+           root_candidates[j - 1u].distance > value.distance) {
+      root_candidates[j] = root_candidates[j - 1u];
+      --j;
+    }
+    root_candidates[j] = value;
+  }
+  for (unsigned int i = 0u; i < root_count;) {
+    if (i + 1u < root_count &&
+        root_candidates[i].orientation != root_candidates[i + 1u].orientation &&
+        root_candidates[i + 1u].distance - root_candidates[i].distance <=
+            2.0f * params.scene_epsilon) {
+      // A sub-epsilon enter/exit pair is an unresolved grazing contact. A
+      // single reported side would corrupt the LIFO medium stack, while the
+      // pair has zero resolvable optical thickness and no net transition.
+      i += 2u;
+      continue;
+    }
+    if (counters != nullptr) ++counters->roots_reported;
+    if (optixReportIntersection(root_candidates[i].distance, 0u)) return;
+    ++i;
+  }
 }
