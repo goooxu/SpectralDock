@@ -131,16 +131,73 @@ def test_rocket_test_stand_uses_procedural_flame_without_warm_proxy_light():
         "denoise": False,
     }
     assert scene["camera"]["aperture"] == 0.0
-    assert [light["type"] for light in scene["lights"]] == ["flame", "disk"]
-    flame = scene["lights"][0]
-    assert flame["name"] == "rocket_plume"
-    assert flame["axis"] == [0.0, -1.0, 0.0]
-    assert flame["position"][1] - flame["height"] > 0.0
-    assert "object" not in flame
-    fill = scene["lights"][1]
-    assert fill["name"] == "inspection_fill"
+
+    flames = [light for light in scene["lights"] if light["type"] == "flame"]
+    assert len(scene["lights"]) == 5
+    assert len(flames) == 4
+    assert {flame["name"] for flame in flames} == {
+        "blue_white_combustion_core",
+        "yellow_orange_expanding_plume",
+        "red_orange_tapered_tail",
+        "off_axis_flicker_tongue",
+    }
+    for flame in flames:
+        assert "object" not in flame
+        assert flame["axis"][0] > 0.0
+        assert flame["axis"][0] > abs(flame["axis"][1])
+        assert flame["axis"][0] > abs(flame["axis"][2])
+
+    flames_by_name = {flame["name"]: flame for flame in flames}
+    for name in (
+        "blue_white_combustion_core",
+        "yellow_orange_expanding_plume",
+        "red_orange_tapered_tail",
+    ):
+        assert flames_by_name[name]["axis"][1] < 0.0
+    assert flames_by_name["off_axis_flicker_tongue"]["axis"][1] > 0.0
+    core = flames_by_name["blue_white_combustion_core"]
+    assert core["emission_start"][2] > core["emission_start"][1]
+    assert core["emission_start"][2] > core["emission_start"][0]
+    for name in (
+        "yellow_orange_expanding_plume",
+        "red_orange_tapered_tail",
+        "off_axis_flicker_tongue",
+    ):
+        flame = flames_by_name[name]
+        assert flame["emission_start"][0] > flame["emission_start"][1]
+        assert flame["emission_start"][1] > flame["emission_start"][2]
+        assert flame["emission_end"][0] > flame["emission_end"][1]
+        assert flame["emission_end"][1] > flame["emission_end"][2]
+
+    fills = [light for light in scene["lights"] if light["type"] == "disk"]
+    assert len(fills) == 1
+    fill = fills[0]
+    assert fill["name"] == "cold_inspection_fill"
     assert fill["emission"][2] > fill["emission"][1] > fill["emission"][0]
     assert max(fill["emission"]) <= 3.0
+
+    objects = {obj["name"]: obj for obj in scene["objects"]}
+    assert set(objects) >= {
+        "oxidizer_storage_tank",
+        "fuel_storage_tank",
+        "oxidizer_downpipe",
+        "oxidizer_main_valve",
+        "fuel_downpipe",
+        "fuel_main_valve",
+        "engine_service_platform",
+        "platform_front_guardrail",
+        "access_ladder_left_rail",
+        "gantry_front_left_column",
+        "gantry_rear_brace_up",
+        "flame_trench_ramp",
+        "flame_deflector",
+        "control_bunker_floor",
+        "control_observation_window",
+        "observer_blast_shield",
+        "test_observer",
+    }
+    mascot_instances = [obj for obj in objects.values() if obj["type"] == "mesh"]
+    assert [obj["name"] for obj in mascot_instances] == ["test_observer"]
 
 
 def test_moonlit_stepwell_uses_runtime_water_and_release_quality_defaults():

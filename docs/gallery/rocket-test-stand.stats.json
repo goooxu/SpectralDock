@@ -20,31 +20,41 @@
     "denoised": false
   },
   "timings_ms": {
-    "bvh_build": 3.9845759868621826,
-    "render": 12961.91796875,
+    "bvh_build": 17.304704666137695,
+    "render": 12747.603515625,
     "denoise": 0.0,
-    "total": 14297.761883
+    "total": 15438.029167
   },
   "memory": {
-    "peak_device_bytes": 1113915392,
-    "peak_tracked_device_bytes": 199729824
+    "peak_device_bytes": 1539637248,
+    "peak_tracked_device_bytes": 199859280
   },
   "geometry": {
-    "objects": 21,
-    "instances": 21,
+    "objects": 85,
+    "instances": 85,
     "unique_meshes": 1,
     "mesh_triangles": 5816,
-    "gas_count": 21
+    "gas_count": 85
   },
   "performance": {
-    "traced_rays": 16088692359,
-    "rays_per_second": 1241227756.4005857
+    "traced_rays": 13795328367,
+    "rays_per_second": 1082189946.533149
   },
   "volume": {
-    "volume_density_evaluations": 6034687147,
-    "volume_real_collisions": 251502165,
-    "volume_light_samples": 3805828238,
+    "volume_density_evaluations": 13227057669,
+    "volume_real_collisions": 223841360,
+    "volume_light_samples": 5559197943,
     "volume_majorant_violations": 0,
     "volume_tracking_overflows": 0
+  },
+  "water": {
+    "water_height_evaluations": 0,
+    "water_tile_tests": 0,
+    "water_roots_reported": 0,
+    "water_shadow_transmissions": 0,
+    "water_medium_segments": 0,
+    "water_solver_overflows": 0,
+    "water_medium_errors": 0,
+    "water_shadow_boundary_overflows": 0
   }
 }

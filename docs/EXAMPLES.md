@@ -36,7 +36,7 @@
 
 ![Rocket Test Stand](gallery/rocket-test-stand.png)
 
-近距离火箭发动机试车台只用 cylinder、disk、rectangle 与同一 mascot OBJ 搭建。向下喷流是 schema v3 的程序化异质吸收—自发光体积，采用线性 RGB 轴向渐变、Delta Tracking 和体积 NEE；它不是黑体、CFD、烟雾或动画。吉祥物观察员躲在隔热板后提供尺度参照；低能量冷色检修补光只负责读清喷管，不充当暖色火焰代理。正式图固定为 2048 spp、depth 12、无 Denoiser。
+横向点火舱把发动机、完整尾焰和斜向导流火焰沟纳入同一低机位画面。尾焰由四股 schema v3 程序化异质吸收—自发光体积叠加：短窄的蓝白核心、扩张的黄橙主焰、收尖的红橙长尾，以及轻微偏轴的细火舌；它们使用线性 RGB 轴向渐变、Delta Tracking 和体积 NEE，并非黑体、CFD、烟雾或动画。双推进剂储罐与端盖、输送管和阀组、发动机桁架与斜撑、检修平台/护栏/梯子、火焰沟与导流板、防爆控制区共同构成高密度设施；一个 mascot 观察员提供尺度参照。场景中的暖光只来自四股 flame，唯一的低能量冷色补光只负责读清设备。正式图固定为 2048 spp、depth 12、无 Denoiser。
 
 ## Moonlit Stepwell
 

@@ -11,7 +11,7 @@
 | celestial-archive | 2.679 | 606.931 | 14.530 | 1,345.682 | 3,143,769,772 | 5.180 | 1,324.3 | 495.7 |
 | reflector-laboratory | 2.655 | 782.546 | 14.367 | 1,472.562 | 2,762,368,581 | 3.530 | 1,308.3 | 483.7 |
 | benchmark-harbor | 169.622 | 228.853 | 15.533 | 1,087.870 | 1,614,680,505 | 7.056 | 1,310.3 | 485.4 |
-| rocket-test-stand | 3.985 | 12,961.918 | 0.000 | 14,297.762 | 16,088,692,359 | 1.241 | 1,062.3 | 190.5 |
+| rocket-test-stand | 17.305 | 12,747.604 | 0.000 | 15,438.029 | 13,795,328,367 | 1.082 | 1,468.3 | 190.6 |
 | moonlit-stepwell | 9.443 | 17,065.023 | 0.000 | 19,669.170 | 15,553,006,112 | 0.911 | 1,516.3 | 238.0 |
 
 `Path trace` 对应统计 JSON 的 `timings_ms.render`，只计一次 `optixLaunch`。`Total` 在 `render_optix()` 完成参数与像素数检查后开始，到返回前结束，包含 CUDA/OptiX 初始化、纹理解码与上传、BVH、追踪、可选降噪、后处理、设备到主机回传和设备信息查询；不含此前的场景/OBJ 解析、之后的 PNG/stats 写盘及函数局部 RAII 资源析构，因此不等于前三项简单相加。显存按 1 MiB = 1,048,576 bytes 换算。
@@ -25,11 +25,11 @@
 | celestial-archive | 9 | 9 | 1 | 5,816 | 9 |
 | reflector-laboratory | 10 | 10 | 1 | 5,816 | 10 |
 | benchmark-harbor | 1,040 | 1,040 | 1 | 5,816 | 1,025 |
-| rocket-test-stand | 21 | 21 | 1 | 5,816 | 21 |
+| rocket-test-stand | 85 | 85 | 1 | 5,816 | 85 |
 | moonlit-stepwell | 36 | 36 | 1 | 5,816 | 36 |
 
 Harbor 的 16 个胶囊吉祥物共享一份 mascot GAS，另有 1,024 个 sphere GAS；`mesh_triangles` 不按实例数重复计数。
-Rocket Test Stand 的 flame 不注册为几何，因此不增加 object、instance、GAS 或 SBT 数量；其密度求值、真实碰撞和体积选灯次数由独立 volume stats 记录。该场景的正式运行执行 6,034,687,147 次密度求值、251,502,165 次真实体积碰撞和 3,805,828,238 次 flame NEE 选灯；majorant violation 与 tracking overflow 均为 0。场景另有一盏低能量冷色检修补光用于读清喷管和尺度参照，不充当暖色火焰代理。体积求值是 raygen 中的纯 CUDA 工作，不计入 `traced_rays`，所以该场景的 rays/s 不应与纯表面场景直接比较。
+Rocket Test Stand 的四股 flame 不注册为几何，因此不增加 object、instance、GAS 或 SBT 数量；85 个几何对象来自横向发动机、双储罐与管阀、桁架、检修设施、火焰沟、防爆控制区和尺度参照。其密度求值、真实碰撞和体积选灯次数由独立 volume stats 记录。该场景的正式运行执行 13,227,057,669 次密度求值、223,841,360 次真实体积碰撞和 5,559,197,943 次 flame NEE 选灯；majorant violation 与 tracking overflow 均为 0。场景另有一盏低能量冷色检修补光用于读清设备，不充当暖色火焰代理。体积求值是 raygen 中的纯 CUDA 工作，不计入 `traced_rays`，所以该场景的 rays/s 不应与纯表面场景直接比较。
 
 Moonlit Stepwell 的 water_surface 注册为一个共享波面参数的 custom-primitive GAS；最短波长决定 tile 数和 GAS primitive 数，但不把解析曲面三角化。本次正式运行记录 66,080,894,763 次 height evaluation、6,841,808,741 次 tile test、1,620,050,797 个 reported root、403,826,143 次 shadow transmission 和 2,303,902,049 个 medium segment，solver overflow、medium error 与 shadow-boundary overflow 均为 0。其路径追踪耗时和 rays/s 因包含 OptiX 自定义 intersection 中的 CUDA 数值求根、介质栈与 Beer 计算，不应直接与纯表面场景比较。
 
