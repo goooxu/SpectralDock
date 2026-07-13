@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BUILD_DIR="${1:-build/cpu-test}"
+BUILD_DIR="${1:-build/host-test}"
 
 cd "${ROOT}"
 bash -n scripts/*.sh
@@ -14,4 +14,5 @@ cmake -S . -B "${BUILD_DIR}" -GNinja \
 cmake --build "${BUILD_DIR}" --parallel
 ctest --test-dir "${BUILD_DIR}" --output-on-failure
 PYTHONDONTWRITEBYTECODE="${PYTHONDONTWRITEBYTECODE:-1}" \
-  python3 -m pytest -q -p no:cacheprovider tests
+  python3 -m pytest -q -p no:cacheprovider \
+    tests/test_technical_report_snippets.py

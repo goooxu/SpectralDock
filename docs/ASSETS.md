@@ -38,12 +38,12 @@ BSD-3-Clause 许可证。
 唯一性或排他性；仅在贡献者拥有相关权利的范围内作 CC0 dedication。
 两张星球图先把经度边界滚动到中央，由 imagegen 修复中央接缝，再滚回
 并令首末像素列严格相同；锦鲤先生成在平坦绿幕上，再生成透明 PNG。
-精简发行版不携带原始生成图和处理中间图；prompt、尺寸、处理步骤及
+仓库不收录原始生成图和处理中间图；prompt、尺寸、处理步骤及
 SHA-256 均保留在图像素材清单中。
 
 只有 circuit-panel.png 保留内嵌 caBX/JUMBF C2PA 结构，其中标识
-OpenAI Media Service；项目测试只检查该结构仍存在，不验证其密码学
-有效性。另外三张后处理纹理不含 C2PA。manifest.md 是普通的未签名
+OpenAI Media Service；仓库保留该结构，但不验证其密码学有效性。另外
+三张后处理纹理不含 C2PA。manifest.md 是普通的未签名
 sidecar，不应解释为签名来源声明。
 
 ## 模型素材
@@ -56,10 +56,9 @@ sidecar，不应解释为签名来源声明。
 
 生成器只使用 Python 标准库，固定六位小数、部件顺序、顶点顺序和
 三角顺序。生成器本身为 Apache-2.0；它生成并提交的 OBJ 与
-model-manifest.json 才属于明确列出的 CC0 范围。默认命令同时重建正式
-OBJ 与清单；测试会重复生成并逐字节比较 checked-in 资产，再独立核对
-三角数、闭合边、包围盒、字节数与 SHA-256。模型颜色和 BSDF 完全来自
-场景材质。
+model-manifest.json 才属于明确列出的 CC0 范围。默认命令同时重建 OBJ
+与清单；清单记录三角数、闭合边、包围盒、字节数与 SHA-256，供重建时
+核对。模型颜色和 BSDF 完全来自场景材质。
 
 ## Gallery
 
@@ -67,4 +66,8 @@ docs/gallery 下八张 PNG 按 CC0-1.0 提供；同名 *.stats.json 是正式
 RTX 5090 运行记录，按 Apache-2.0 提供。gallery 图像是渲染器输出，
 不含 C2PA 来源凭据。Kinetic Foundry 还带有同 stem 的 `.physics.json`，
 用于记录 PhysX 版本、设备、模拟参数和临时场景摘要；该 sidecar 按
-Apache-2.0 提供，不属于 CC0。中间场景 JSON 不作为发行资产提交。
+Apache-2.0 提供，不属于 CC0。中间场景 JSON 不提交到仓库。
+
+PhysX GPU 不支持 enhanced determinism；固定输入的重复模拟可能得到不同的
+有效姿态。gallery 保存的是一次通过场景契约和人工构图检查的运行记录，不是
+可由 seed 逐字节重建的物理 golden。

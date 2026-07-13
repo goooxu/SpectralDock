@@ -106,5 +106,12 @@ if(BUILD_TESTING)
   add_test(NAME core_and_scene_parsing COMMAND spectraldock_tests
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/scenes/smoke.json"
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/scenes/geometry-smoke.json"
-    "${CMAKE_CURRENT_SOURCE_DIR}/tests/scenes/mesh-composite-smoke.json")
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/scenes/mesh-composite-smoke.json"
+    "${CMAKE_CURRENT_SOURCE_DIR}/scenes/material-cathedral.json"
+    "${CMAKE_CURRENT_SOURCE_DIR}/scenes/neon-koi.json"
+    "${CMAKE_CURRENT_SOURCE_DIR}/scenes/celestial-archive.json"
+    "${CMAKE_CURRENT_SOURCE_DIR}/scenes/reflector-laboratory.json"
+    "${CMAKE_CURRENT_SOURCE_DIR}/scenes/benchmark-harbor.json"
+    "${CMAKE_CURRENT_SOURCE_DIR}/scenes/rocket-test-stand.json"
+    "${CMAKE_CURRENT_SOURCE_DIR}/scenes/moonlit-stepwell.json")
 endif()

@@ -7,15 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential \
       ca-certificates \
       cmake \
-      libdw1t64 \
-      libgl-dev \
-      libglx-dev \
       libpng-dev \
-      libx11-dev \
-      libxcursor-dev \
-      libxi-dev \
-      libxinerama-dev \
-      libxrandr-dev \
       ninja-build \
       nlohmann-json3-dev \
       python3 \

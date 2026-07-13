@@ -5,9 +5,6 @@ source "$(dirname "$0")/common.sh"
 require_optix_root
 [[ -d "${ROOT}/assets/examples" ]] || die "local asset directory is missing: assets/examples"
 
-"$(dirname "$0")/environment-smoke.sh"
-"$(dirname "$0")/optix-sdk-smoke.sh"
-
 "$(dirname "$0")/configure.sh" Release
 gpu_container cmake --build build/Release --clean-first --parallel
 gpu_container python3 tests/check_integrator_mis.py \

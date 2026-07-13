@@ -197,7 +197,7 @@ void test_transform_order() {
   near(result.z, 28.0f, 2.0e-5f, "transform T*Rz*Ry*Rx*S z");
 }
 
-void test_schema_v2_meshes() {
+void test_meshes() {
   TemporaryDirectory directory;
   write_text(directory.path / "mesh.obj", R"obj(
 v 0 0 0
@@ -210,7 +210,7 @@ f 1/1 2/2 3/3
 )obj");
   const auto scene_path = directory.path / "scene.json";
   write_text(scene_path, R"json({
-    "schema_version": 2,
+    "schema_version": 4,
     "camera": {"look_from":[0,1,4],"look_at":[0,0,0],"up":[0,1,0],"vfov":40},
     "background": {"type":"constant","color":[0,0,0]},
     "textures": [],
@@ -222,28 +222,27 @@ f 1/1 2/2 3/3
       "transform":{"translate":[1,2,3],"rotate_degrees":[10,20,30],"scale":[2,3,4]}}]
   })json");
   const Scene scene = load_scene(scene_path);
-  check(scene.schema_version == 2 && scene.meshes.size() == 1,
-        "schema v2 mesh declaration");
+  check(scene.meshes.size() == 1, "mesh declaration");
   check(scene.meshes[0].mesh.indices.size() == 1 &&
             scene.meshes[0].mesh.has_complete_uvs(),
-        "schema v2 loaded mesh data");
+        "loaded mesh data");
   check(scene.objects.size() == 1 &&
             scene.objects[0].type == GeometryType::Mesh,
-        "schema v2 mesh object");
+        "mesh object");
   const auto& instance = std::get<MeshInstanceData>(scene.objects[0].geometry);
-  check(instance.mesh_id == 0, "schema v2 mesh reference");
+  check(instance.mesh_id == 0, "mesh reference");
   near(instance.transform.translate.y, 2.0f, 1.0e-6f,
-       "schema v2 translation");
+       "mesh translation");
   near(instance.transform.rotate_degrees.z, 30.0f, 1.0e-6f,
-       "schema v2 rotation");
+       "mesh rotation");
   near(instance.transform.scale.x, 2.0f, 1.0e-6f,
-       "schema v2 scale");
+       "mesh scale");
 
   write_text(directory.path / "no-uv.obj",
              "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n");
   const auto textured = directory.path / "textured-no-uv.json";
   write_text(textured, R"json({
-    "schema_version": 2,
+    "schema_version": 4,
     "camera": {"look_from":[0,1,4],"look_at":[0,0,0],"up":[0,1,0],"vfov":40},
     "background": {"type":"constant","color":[0,0,0]},
     "textures": [{"name":"paint","type":"constant","color":[1,1,1]}],
@@ -256,7 +255,7 @@ f 1/1 2/2 3/3
 
   const auto bad_scale = directory.path / "bad-scale.json";
   write_text(bad_scale, R"json({
-    "schema_version": 2,
+    "schema_version": 4,
     "camera": {"look_from":[0,1,4],"look_at":[0,0,0],"up":[0,1,0],"vfov":40},
     "background": {"type":"constant","color":[0,0,0]},
     "textures": [], "materials": [{"name":"m","type":"lambertian"}],
@@ -268,7 +267,7 @@ f 1/1 2/2 3/3
                "components must be greater than zero", "invalid mesh scale");
 }
 
-void test_schema_v3_flame_lights() {
+void test_flame_lights() {
   TemporaryDirectory directory;
   const auto scene_path = directory.path / "flame.json";
   const std::string valid_flame = R"json({
@@ -277,16 +276,14 @@ void test_schema_v3_flame_lights() {
     "emission_start":[4,5,6], "emission_end":[1,0,0], "extinction":2
   })json";
 
-  const auto document = [](std::uint32_t schema_version,
-                           const std::string& lights) {
-    return std::string("{\"schema_version\":") +
-           std::to_string(schema_version) + R"json(,
+  const auto document = [](const std::string& lights) {
+    return std::string(R"json({"schema_version":4,
       "camera":{"look_from":[0,4,4],"look_at":[0,0,0],"up":[0,1,0],"vfov":40},
       "background":{"type":"constant","color":[0,0,0]},
       "textures":[], "materials":[{"name":"mat","type":"lambertian"}],
       "objects":[{"name":"anchor","type":"sphere","center":[0,0,0],
                   "radius":0.25,"material":"mat"}],
-      "lights":)json" + lights + "}";
+      "lights":)json") + lights + "}";
   };
   const auto replace = [](std::string source, const std::string& before,
                           const std::string& after) {
@@ -297,16 +294,14 @@ void test_schema_v3_flame_lights() {
     return source;
   };
   const auto reject = [&](const std::string& flame, const std::string& expected,
-                          const std::string& message,
-                          std::uint32_t schema_version = 3) {
-    write_text(scene_path, document(schema_version, "[" + flame + "]"));
+                          const std::string& message) {
+    write_text(scene_path, document("[" + flame + "]"));
     expect_error([&] { (void)load_scene(scene_path); }, expected, message);
   };
 
-  write_text(scene_path, document(3, "[" + valid_flame + "]"));
+  write_text(scene_path, document("[" + valid_flame + "]"));
   const Scene scene = load_scene(scene_path);
-  check(scene.schema_version == 3 && scene.lights.size() == 1,
-        "schema v3 flame declaration");
+  check(scene.lights.size() == 1, "flame declaration");
   const Light& light = scene.lights.front();
   check(light.type == LightType::Flame && light.object_id == kInvalidId,
         "flame light type and no object binding");
@@ -320,7 +315,6 @@ void test_schema_v3_flame_lights() {
   near(light.noise_scale, 2.0f, 1.0e-6f, "flame default noise scale");
   check(light.seed == 0, "flame default seed");
 
-  reject(valid_flame, "require schema_version 3", "flame schema gating", 2);
   reject(replace(valid_flame, "\"height\":1",
                  "\"height\":1,\"object\":\"anchor\""),
          "cannot be bound to objects", "flame object binding");
@@ -364,10 +358,10 @@ void test_schema_v3_flame_lights() {
   const std::string optically_thick =
       replace(valid_flame, "\"extinction\":2", "\"extinction\":20");
   write_text(scene_path,
-             document(3, "[" + optically_thick + "," +
-                             replace(optically_thick, "\"plume\"",
-                                     "\"plume-2\"") +
-                             "]"));
+             document("[" + optically_thick + "," +
+                      replace(optically_thick, "\"plume\"",
+                              "\"plume-2\"") +
+                      "]"));
   expect_error([&] { (void)load_scene(scene_path); },
                "optical thickness must be at most 64",
                "combined flame conservative optical thickness");
@@ -379,12 +373,12 @@ void test_schema_v3_flame_lights() {
                         "\"plume-" + std::to_string(i) + "\"");
   }
   too_many += ']';
-  write_text(scene_path, document(3, too_many));
+  write_text(scene_path, document(too_many));
   expect_error([&] { (void)load_scene(scene_path); }, "at most 8 flame lights",
                "flame count limit");
 }
 
-void test_schema_v4_water_surfaces() {
+void test_water_surfaces() {
   TemporaryDirectory directory;
   const auto scene_path = directory.path / "water.json";
   const std::string valid_material = R"json(
@@ -395,14 +389,12 @@ void test_schema_v4_water_surfaces() {
        {"direction":[2,0],"amplitude":0.05,"wavelength":2,"phase_radians":-0.5},
        {"direction":[0,1],"amplitude":0.02,"wavelength":1,"phase_radians":7}
      ]})json";
-  const auto document = [](std::uint32_t schema_version,
-                           const std::string& materials,
+  const auto document = [](const std::string& materials,
                            const std::string& objects) {
-    return std::string("{\"schema_version\":") +
-           std::to_string(schema_version) + R"json(,
+    return std::string(R"json({"schema_version":4,
       "camera":{"look_from":[0,4,4],"look_at":[0,0,0],"up":[0,1,0],"vfov":40},
       "background":{"type":"constant","color":[0,0,0]},
-      "textures":[],"materials":)json" + materials +
+      "textures":[],"materials":)json") + materials +
            ",\"objects\":" + objects + "}";
   };
   const auto replace = [](std::string source, const std::string& before,
@@ -416,20 +408,17 @@ void test_schema_v4_water_surfaces() {
   const auto reject = [&](const std::string& materials,
                           const std::string& objects,
                           const std::string& expected,
-                          const std::string& message,
-                          std::uint32_t schema_version = 4) {
-    write_text(scene_path,
-               document(schema_version, materials, objects));
+                          const std::string& message) {
+    write_text(scene_path, document(materials, objects));
     expect_error([&] { (void)load_scene(scene_path); }, expected, message);
   };
 
   write_text(scene_path,
-             document(4, "[" + valid_material + "]",
+             document("[" + valid_material + "]",
                       "[" + valid_surface + "]"));
   const Scene scene = load_scene(scene_path);
-  check(scene.schema_version == 4 && scene.materials.size() == 1 &&
-            scene.objects.size() == 1,
-        "schema v4 water declaration");
+  check(scene.materials.size() == 1 && scene.objects.size() == 1,
+        "water declaration");
   const Material& material = scene.materials.front();
   check(material.type == MaterialType::Water,
         "water material type");
@@ -454,8 +443,6 @@ void test_schema_v4_water_surfaces() {
   near(surface.waves[1].phase_radians, 7.0f - 2.0f * kPi, 1.0e-6f,
        "water positive phase wrapping");
 
-  reject("[" + valid_material + "]", "[" + valid_surface + "]",
-         "require schema_version 4", "water schema gating", 3);
   reject("[" + replace(valid_material, "\"water\"}",
                        "\"water\",\"texture\":\"x\"}") + "]",
          "[" + valid_surface + "]", "not supported by water",
@@ -546,7 +533,7 @@ void test_schema_v4_water_surfaces() {
   const std::string glass_sphere =
       R"json({"name":"glass_ball","type":"sphere","center":[0,1,0],"radius":0.25,"material":"glass"})json";
   write_text(scene_path,
-             document(4, "[" + valid_material + "," + glass_material + "]",
+             document("[" + valid_material + "," + glass_material + "]",
                       "[" + valid_surface + "," + glass_sphere + "]"));
   check(load_scene(scene_path).objects.size() == 2,
         "closed dielectric sphere is accepted in a water scene");
@@ -560,7 +547,7 @@ void test_schema_v4_water_surfaces() {
       glass_sphere, "\"material\":\"glass\"",
       "\"material\":\"glass\",\"alpha_texture\":\"mask\"");
   std::string alpha_document = document(
-      4, "[" + valid_material + "," + glass_material + "]",
+      "[" + valid_material + "," + glass_material + "]",
       "[" + valid_surface + "," + alpha_glass_sphere + "]");
   alpha_document = replace(
       alpha_document, "\"textures\":[]",
@@ -608,7 +595,7 @@ void test_schema_v4_water_surfaces() {
          "camera inside dielectric rejection");
 
   std::string submerged_camera_document = document(
-      4, "[" + valid_material + "]", "[" + valid_surface + "]");
+      "[" + valid_material + "]", "[" + valid_surface + "]");
   submerged_camera_document = replace(
       submerged_camera_document, "\"look_from\":[0,4,4]",
       "\"look_from\":[0,1,4]");
@@ -641,11 +628,39 @@ void test_schema_v4_water_surfaces() {
          "at most 4 water_surface", "water surface count limit");
 }
 
+void test_schema_version() {
+  TemporaryDirectory directory;
+  const auto path = directory.path / "schema.json";
+  const std::string body = R"json(
+    "camera":{"look_from":[0,1,4],"look_at":[0,0,0],"up":[0,1,0],"vfov":40},
+    "background":{"type":"constant","color":[0,0,0]},
+    "textures":[],
+    "materials":[{"name":"mat","type":"lambertian"}],
+    "objects":[{"name":"ball","type":"sphere","center":[0,0,0],
+                 "radius":1,"material":"mat"}]
+  })json";
+
+  write_text(path, "{" + body);
+  expect_error([&] { (void)load_scene(path); }, "schema_version",
+               "missing schema version rejection");
+
+  for (const std::uint32_t version : {1u, 2u, 3u, 5u}) {
+    write_text(path, "{\"schema_version\":" + std::to_string(version) +
+                         "," + body);
+    expect_error([&] { (void)load_scene(path); }, "schema_version",
+                 "non-v4 schema rejection");
+  }
+
+  write_text(path, "{\"schema_version\":\"4\"," + body);
+  expect_error([&] { (void)load_scene(path); }, "expected the integer 4",
+               "non-integer schema version rejection");
+}
+
 void test_scene_parser() {
   const auto path = temporary(".json");
   std::ofstream output(path);
   output << R"json({
-    "schema_version": 1,
+    "schema_version": 4,
     "camera": {"look_from":[0,1,4],"look_at":[0,0,0],"up":[0,1,0],"vfov":40},
     "background": {"type":"constant","color":[0.1,0.2,0.3],"exposure":1},
     "render": {"width":64,"height":32,"spp":2,"max_depth":4,"seed":7},
@@ -677,10 +692,11 @@ int main(int argc, char** argv) {
     test_png();
     test_obj_loader();
     test_transform_order();
+    test_schema_version();
     test_scene_parser();
-    test_schema_v2_meshes();
-    test_schema_v3_flame_lights();
-    test_schema_v4_water_surfaces();
+    test_meshes();
+    test_flame_lights();
+    test_water_surfaces();
     for (int i = 1; i < argc; ++i) {
       const Scene scene = load_scene(argv[i], SceneLoadOptions{false});
       check(!scene.objects.empty(), std::string("scene has no objects: ") + argv[i]);

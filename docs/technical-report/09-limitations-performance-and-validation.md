@@ -150,7 +150,7 @@ $$
 - `peak_tracked_device_bytes`：项目 RAII 分配器直接记账的峰值；
 - `peak_device_bytes`：在 CUDA context 与 stream 已建立后的 baseline 上，通过若干次 `cudaMemGetInfo` 采样观察到的增量峰值。它可包含随后出现的 OptiX 内部分配，可能受同 GPU 其他进程影响，也可能漏掉两个采样点之间的短峰值。
 
-二者回答不同问题，不能把差值直接称为泄漏。正式 RTX 5090 数据见[基准与分析](../BENCHMARK.md)，gallery 中每张正式 PNG 旁也有对应的 stats JSON。
+二者回答不同问题，不能把差值直接称为泄漏。正式 RTX 5090 数据见[RTX 5090 运行记录](../BENCHMARK.md)，gallery 中每张正式 PNG 旁也有对应的 stats JSON。
 
 ## 6. 测试为什么存在
 
@@ -161,7 +161,7 @@ $$
 3. 无 golden 的积分器 GPU 对照以 64×64、4 spp、depth 1、seed 1 渲染绑定/未绑定同一灯的两版 smoke 场景，要求解码 RGBA 逐字节相同且非空；
 4. 综合 mesh GPU fixture 定向覆盖共享 GAS、实例变换、UV、平滑法线、alpha 和 custom primitives；
 5. Compute Sanitizer 查找越界、竞争和未初始化数据；
-6. 素材与复现工具测试保护纹理接缝、确定性场景/模型生成、几何闭合性和资产哈希。
+6. 技术报告 pytest 逐字核对引用的源码片段，并检查数学标记没有使用渲染环境不支持的宏，避免报告与实现漂移。
 
 唯一保留的像素 golden 是 mesh fixture 的 RTX 5090 基线；积分器对照的临时 PNG 和 stats 会自动清理，不保存哈希。mesh golden 只证明定向输出与已接受结果逐字节相同，不能独立证明物理正确；跨 GPU、编译器或 `--use_fast_math` 的少量浮点差异，也不自动等于数学回归。正式 gallery 与 stats 继续作为作品和一次运行记录保存，但不再是自动测试门禁；项目也不设置自动性能阈值或 profiling 验收。可靠结论仍需要公式审查、定向场景和数值/视觉证据结合。
 

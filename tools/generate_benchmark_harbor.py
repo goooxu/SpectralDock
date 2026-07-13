@@ -25,7 +25,7 @@ def build_scene(seed=DEFAULT_SEED):
     rng = random.Random(seed)
     objects = []
 
-    # Every mascot names the same mesh resource. The schema-v2 renderer builds
+    # Every mascot names the same mesh resource. The renderer builds
     # one compacted GAS and keeps per-object transforms/materials in the IAS.
     for row in range(4):
         for column in range(4):
@@ -70,7 +70,7 @@ def build_scene(seed=DEFAULT_SEED):
             })
 
     return {
-        "schema_version": 2,
+        "schema_version": 4,
         "camera": {
             "look_from": [15.0, 10.0, 18.0],
             "look_at": [0.0, 0.1, 0.0],

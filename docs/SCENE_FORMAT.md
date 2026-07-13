@@ -1,6 +1,6 @@
 # 场景格式
 
-场景为 JSON。schema v1 保持兼容；schema v2 新增顶层 `meshes` 与 `type: "mesh"` 对象；schema v3 新增程序化 `flame` 体积光；schema v4 新增运行时 `water_surface`。未知引用、缺失资源、非有限数、退化几何和非法材质会在 CUDA/OptiX 初始化前报错。只有使用 flame 或 water_surface 的场景才分别需要升级到 v3 或 v4。
+场景为 JSON，统一使用 `schema_version: 4`。当前 schema 同时包含 OBJ mesh、程序化 `flame` 体积光和运行时 `water_surface`；旧版本不再作为输入接口。未知引用、缺失资源、非有限数、退化几何和非法材质会在 CUDA/OptiX 初始化前报错。
 
 ## 顶层字段
 
@@ -8,18 +8,18 @@
 - `background`：`constant`，或带渐变和太阳瓣的 `sky`；`exposure` 以 EV 表示。
 - `render`：`width`、`height`、`spp`、`max_depth`、`seed`、`denoise`。
 - `textures`：`constant` 或 PNG `image`，色彩空间为 `srgb`/`linear`。
-- `materials`：`lambertian`、`metal`、`dielectric`、`emitter`，以及 v4 的 `water`。
-- `meshes`（v2）：命名 OBJ 资源。
-- `objects`：sphere、rectangle、sketch、disk、cylinder、parabola、mesh，以及 v4 的 water_surface。
-- `lights`：显式采样的 rectangle、disk、sphere 面积光，以及 v3 的 flame 体积光。
+- `materials`：`lambertian`、`metal`、`dielectric`、`emitter` 和 `water`。
+- `meshes`：命名 OBJ 资源。
+- `objects`：sphere、rectangle、sketch、disk、cylinder、parabola、mesh 和 water_surface。
+- `lights`：显式采样的 rectangle、disk、sphere 面积光和 flame 体积光。
 
-`max_depth` 的范围仍为 1–64，语义是最多处理的表面事件数；最后一个事件完整估计显式直接光，但不再生成下一事件的 BSDF 射线。
+`max_depth` 的范围为 1–64，语义是最多处理的表面事件数；最后一个事件完整估计显式直接光，但不再生成下一事件的 BSDF 射线。
 
 ## OBJ 网格与实例
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 4,
   "meshes": [
     {"name": "mascot", "path": "../assets/examples/models/capsule-mascot.obj"}
   ],
@@ -51,7 +51,7 @@
 
 绑定到发光对象的显式灯必须与对象形状、位置、发光面和常量 emission 完全一致。带纹理 emitter 和 mesh emitter 不能成为显式采样灯，但可由路径命中后发光。
 
-## 程序化 flame 体积光（v3）
+## 程序化 flame 体积光
 
 ```json
 {
@@ -78,7 +78,7 @@
 
 火焰支持位于半径 `max(radius_start,radius_end)`、高度 `height` 的有向圆柱中。三 octave 确定性噪声、径向/轴向平滑包络和中心线扰动共同产生归一化密度。传输只包含吸收与自发光，不包含散射、烟雾、燃烧化学、CFD、动画或 motion blur。运行时使用 Delta Tracking 处理透射和首次真实碰撞，并在普通表面上以体积 NEE 显式采样发光密度；体积不进入 OptiX GAS/IAS/SBT，`max_depth` 仍只计算表面事件。
 
-## 解析波浪水面（v4）
+## 解析波浪水面
 
 ```json
 {
@@ -130,4 +130,4 @@ $$
 
 含 water_surface 的新渲染还在 `water` 节记录 `water_height_evaluations`、`water_tile_tests`、`water_roots_reported`、`water_shadow_transmissions` 和 `water_medium_segments`。`water_solver_overflows`、`water_medium_errors`、`water_shadow_boundary_overflows` 是安全门；任一非零时渲染器直接报错而不接受输出。无水场景不分配该逐像素计数缓冲，也不改变原随机数序列。
 
-完整示例见 `scenes/`，v1 测试场景见 `tests/scenes/`。
+完整示例见 `scenes/`，定向测试场景见 `tests/scenes/`。

@@ -208,7 +208,7 @@ struct Light {
   Vec3 emission{1.0f};
   float radius = 0.01f;
 
-  // Schema v3 procedural absorption-emission volume. The finite support runs
+  // Procedural absorption-emission volume. The finite support runs
   // from position to position + axis * height and is conservatively enclosed
   // by a cylinder whose radius is max(radius_start, radius_end).
   Vec3 axis{0.0f, 1.0f, 0.0f};
@@ -225,7 +225,6 @@ struct Light {
 };
 
 struct Scene {
-  std::uint32_t schema_version = 1;
   Camera camera{};
   Background background{};
   RenderDefaults render{};

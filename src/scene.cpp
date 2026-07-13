@@ -280,6 +280,14 @@ bool object_requires_uvs(const Scene& scene, const Object& object) {
          material_uses_texture(scene, object.back_material);
 }
 
+void require_schema_version_4(const json& root) {
+  const json& value = member(root, "schema_version", "root");
+  if (!value.is_number_unsigned() && !value.is_number_integer())
+    fail("root.schema_version", "expected the integer 4");
+  if (value != 4)
+    fail("root.schema_version", "unsupported schema version; expected 4");
+}
+
 }  // namespace
 
 TransformMatrix3x4 compose_transform(const Transform& transform) {
@@ -319,17 +327,15 @@ Scene load_scene(const std::filesystem::path& input_path, const SceneLoadOptions
     throw std::runtime_error("cannot parse scene file " + path.string() + ": " + error.what());
   }
   if (!root.is_object()) fail("root", "expected an object");
+  require_schema_version_4(root);
 
   Scene scene;
-  scene.schema_version = optional_u32(root, "schema_version", 1, 1, 4, "root");
   scene.camera = parse_camera(member(root, "camera", "root"));
   scene.background = parse_background(member(root, "background", "root"));
   if (root.contains("render")) scene.render = parse_render(root.at("render"));
 
   IdMap mesh_ids;
   if (root.contains("meshes")) {
-    if (scene.schema_version < 2)
-      fail("root.meshes", "requires schema_version 2");
     const json& meshes = root.at("meshes");
     if (!meshes.is_array()) fail("meshes", "expected an array");
     for (std::size_t i = 0; i < meshes.size(); ++i) {
@@ -398,11 +404,8 @@ Scene load_scene(const std::filesystem::path& input_path, const SceneLoadOptions
     else if (type == "metal") material.type = MaterialType::Metal;
     else if (type == "dielectric") material.type = MaterialType::Dielectric;
     else if (type == "emitter") material.type = MaterialType::Emitter;
-    else if (type == "water") {
-      if (scene.schema_version < 4)
-        fail(where + ".type", "water materials require schema_version 4");
-      material.type = MaterialType::Water;
-    } else {
+    else if (type == "water") material.type = MaterialType::Water;
+    else {
       fail(where + ".type", "unsupported type '" + type + "'");
     }
     if (material.type == MaterialType::Water) {
@@ -467,8 +470,6 @@ Scene load_scene(const std::filesystem::path& input_path, const SceneLoadOptions
     if (type != "mesh" && value.contains("transform"))
       fail(where + ".transform", "is supported only for mesh objects");
     if (type == "mesh") {
-      if (scene.schema_version < 2)
-        fail(where + ".type", "mesh objects require schema_version 2");
       object.type = GeometryType::Mesh;
       MeshInstanceData data;
       data.mesh_id = lookup(
@@ -536,8 +537,6 @@ Scene load_scene(const std::filesystem::path& input_path, const SceneLoadOptions
         fail(where, "normal must be perpendicular to focus-origin");
       object.geometry = data;
     } else if (type == "water_surface") {
-      if (scene.schema_version < 4)
-        fail(where + ".type", "water_surface objects require schema_version 4");
       if (++water_surface_count > 4)
         fail("objects", "must contain at most 4 water_surface objects");
       if (!value.contains("material") || value.contains("front_material") ||
@@ -890,8 +889,6 @@ Scene load_scene(const std::filesystem::path& input_path, const SceneLoadOptions
       light.position = vec3(member(value, "position", where), where + ".position");
 
       if (type == "flame") {
-        if (scene.schema_version < 3)
-          fail(where + ".type", "flame lights require schema_version 3");
         if (value.contains("object"))
           fail(where + ".object", "flame lights cannot be bound to objects");
         if (++flame_count > 8)

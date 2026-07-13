@@ -525,7 +525,7 @@ json build_scene(const GeneratedWorld& world, std::uint64_t seed) {
   }
 
   json scene;
-  scene["schema_version"] = 2;
+  scene["schema_version"] = 4;
   scene["camera"] = {{"look_from", {0.0, 8.0, 17.0}},
                      {"look_at", {0.0, 1.2, 0.0}},
                      {"up", {0.0, 1.0, 0.0}},

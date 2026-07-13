@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 4,
   "camera": {
     "look_from": [9.2, 4.8, 13.2],
     "look_at": [0.0, 1.9, -1.2],

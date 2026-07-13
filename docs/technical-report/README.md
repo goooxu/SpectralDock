@@ -37,7 +37,7 @@ flowchart LR
 7. [OptiX/GPU 实现](07-optix-gpu-implementation.md)：以 `render_optix` 为总入口，连起构建期 OptiX IR、context/pipeline/SBT、launch、traversal/callback 和资源销毁。
 8. [降噪、色调映射与输出](08-denoising-color-and-output.md)：展开可选 Denoiser 的完整生命周期，并划清纯 CUDA 后处理、D2H 和 CPU PNG 编码的边界。
 9. [边界、性能与验证](09-limitations-performance-and-validation.md)：区分物理模型边界、近似误差、性能指标和软件测试。
-10. [PhysX 刚体模拟与场景烘焙](10-physx-rigid-body-scene-baking.md)：从 Newton–Euler、接触约束和碰撞代理出发，解释 GPU 刚体姿态怎样成为 schema v2 场景。
+10. [PhysX 刚体模拟与场景烘焙](10-physx-rigid-body-scene-baking.md)：从 Newton–Euler、接触约束和碰撞代理出发，解释 GPU 刚体姿态怎样成为 schema v4 场景。
 11. [程序化体积火焰](11-procedural-volumetric-flame.md)：从吸收—自发光传输方程出发，解释程序密度、Delta Tracking、体积 NEE、估计器分工与安全统计。
 12. [运行时解析水面](12-runtime-analytic-water.md)：从正弦高度场与解析法线出发，解释自定义求交、精确 Fresnel/Snell、介质栈、Beer 吸收和跨水面直接光近似。
 
@@ -85,11 +85,11 @@ OptiX、CUDA、BVH、SBT（GPU 实现）
 
 因此，测试和验收不是项目主角；它们是保护渲染器数学含义和工程行为不被意外破坏的证据。
 
-Kinetic Foundry 还存在一条进入上述链条之前的可选路径：固定初始布局先经 PhysX GPU 刚体模拟，位置与姿态被烘焙成 schema v2 JSON，然后才从“几何与材质定义路径”这一层进入普通渲染流程。第 10 章完整展开这条边界。
+Kinetic Foundry 还存在一条进入上述链条之前的可选路径：固定初始布局先经 PhysX GPU 刚体模拟，位置与姿态被烘焙成 schema v4 JSON，然后才从“几何与材质定义路径”这一层进入普通渲染流程。第 10 章完整展开这条边界。
 
 ## 报告与源码
 
-关键推导旁的“源码对照”直接摘录当前仓库中的连续代码：不加入省略号，不把代码改写成伪代码，也不依赖容易漂移的行号。每个片段都由 pytest 逐字核对其来源；实现一旦变化而报告没有同步，CPU CI 会失败。片段后的说明负责指出公式符号对应的变量、控制流对应的数学条件，以及数值保护或性能优化位于哪里。
+关键推导旁的“源码对照”直接摘录当前仓库中的连续代码：不加入省略号，不把代码改写成伪代码，也不依赖容易漂移的行号。每个片段都由 pytest 逐字核对其来源；实现一旦变化而报告没有同步，host CI 会失败。片段后的说明负责指出公式符号对应的变量、控制流对应的数学条件，以及数值保护或性能优化位于哪里。
 
 章末仍保留函数和文件入口，便于继续阅读完整上下文。主要入口包括：
 

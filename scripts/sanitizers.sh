@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 source "$(dirname "$0")/common.sh"
-SCENE="${1:-tests/scenes/mesh-composite-smoke.json}"
-OUT="${2:-output/sanitizer-mesh-composite.png}"
+[[ $# -eq 0 ]] || die "sanitizers.sh does not accept arguments"
+SCENE="tests/scenes/mesh-composite-smoke.json"
+OUT="output/sanitizer-mesh-composite.png"
 
 require_file "${ROOT}/build/Debug/spectraldock"
 require_file "${ROOT}/${SCENE}"

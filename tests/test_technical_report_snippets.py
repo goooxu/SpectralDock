@@ -52,7 +52,7 @@ OPTIX_CHAPTER_SNIPPET_ORDER = (
 REQUIRED_PHYSX_FLOW_SNIPPETS = {
     "physx-baked-scene-validation",
     "physx-body-properties",
-    "physx-byte-verification",
+    "physx-contract-verification",
     "physx-capsule-proxy",
     "physx-euler-conversion",
     "physx-fixed-step-simulation",
@@ -67,7 +67,7 @@ PHYSX_CHAPTER_SNIPPET_ORDER = (
     "physx-euler-conversion",
     "physx-pose-baking",
     "physx-baked-scene-validation",
-    "physx-byte-verification",
+    "physx-contract-verification",
 )
 REQUIRED_VOLUME_SNIPPETS = {
     "volume-delta-tracking-acceptance",
@@ -223,7 +223,7 @@ def test_technical_report_source_snippets_match_the_repository():
     )
     for boundary in (
         "GPU-only",
-        "schema v2",
+        "schema v4",
         "sleeping_dynamic_actors=0",
         "motion blur",
     ):
