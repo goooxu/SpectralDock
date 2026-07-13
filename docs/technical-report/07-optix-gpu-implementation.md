@@ -248,6 +248,7 @@ static __forceinline__ __device__ SurfaceHit trace_radiance(
     float3 origin, float3 direction, unsigned long long& traced_rays) {
   SurfaceHit hit = {};
   hit.hit = 0;
+  hit.distance = kInfinity;
   unsigned int p0;
   unsigned int p1;
   pack_pointer(&hit, p0, p1);

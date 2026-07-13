@@ -372,10 +372,10 @@ std::vector<MaterialData> materials_for(const Scene& scene) {
   return result;
 }
 
-std::vector<AreaLight> lights_for(const Scene& scene) {
-  std::vector<AreaLight> result;
+std::vector<LightData> lights_for(const Scene& scene) {
+  std::vector<LightData> result;
   for (const Light& l : scene.lights) {
-    AreaLight d{}; d.emission = f3(l.emission); d.geometry_index = l.object_id;
+    LightData d{}; d.emission = f3(l.emission); d.geometry_index = l.object_id;
     if (l.type == LightType::Rectangle) {
       d.type = kLightRectangle;
       d.p0 = f3(l.position); d.edge_u = f3(l.edge_u); d.edge_v = f3(l.edge_v);
@@ -390,11 +390,25 @@ std::vector<AreaLight> lights_for(const Scene& scene) {
       d.edge_u = f3(u); d.edge_v = f3(v); d.normal = f3(normal);
       d.radius = l.radius;
       d.area = 3.14159265358979323846f * l.radius * l.radius;
-    } else {
+    } else if (l.type == LightType::Sphere) {
       d.type = kLightSphere;
       d.p0 = f3(l.position);
       d.radius = l.radius;
       d.area = 4.0f * 3.14159265358979323846f * l.radius * l.radius;
+    } else {
+      d.type = kLightFlame;
+      d.p0 = f3(l.position);
+      d.axis = f3(l.axis);
+      d.height = l.height;
+      d.radius_start = l.radius_start;
+      d.radius_end = l.radius_end;
+      d.emission_start = f3(l.emission_start);
+      d.emission_end = f3(l.emission_end);
+      d.extinction = l.extinction;
+      d.density_scale = l.density_scale;
+      d.turbulence = l.turbulence;
+      d.noise_scale = l.noise_scale;
+      d.seed = l.seed;
     }
     result.push_back(d);
   }
@@ -952,14 +966,18 @@ RenderResult render_optix(const Scene& scene,
           scene.textures[i], texture_data[i], tracker));
   }
   std::vector<MaterialData> material_data = materials_for(scene);
-  std::vector<AreaLight> light_data = lights_for(scene);
+  std::vector<LightData> light_data = lights_for(scene);
+  const std::size_t flame_count = static_cast<std::size_t>(std::count_if(
+      scene.lights.begin(), scene.lights.end(), [](const Light& light) {
+        return light.type == LightType::Flame;
+      }));
 
   DeviceBuffer material_buffer(
       tracker, material_data.size() * sizeof(MaterialData));
   DeviceBuffer texture_buffer(
       tracker, texture_data.size() * sizeof(TextureData));
   DeviceBuffer light_buffer(
-      tracker, light_data.size() * sizeof(AreaLight));
+      tracker, light_data.size() * sizeof(LightData));
   material_buffer.upload(material_data);
   texture_buffer.upload(texture_data);
   light_buffer.upload(light_data);
@@ -1035,10 +1053,16 @@ RenderResult render_optix(const Scene& scene,
   DeviceBuffer ray_count(
       tracker, checked_product(pixel_count, sizeof(unsigned long long),
                                "ray counters"));
+  DeviceBuffer volume_count(
+      tracker, flame_count == 0u
+                   ? 0u
+                   : checked_product(pixel_count, sizeof(VolumeCounters),
+                                     "volume counters"));
   beauty.clear(stream);
   albedo.clear(stream);
   normal.clear(stream);
   ray_count.clear(stream);
+  volume_count.clear(stream);
 
   LaunchParams parameters{};
   parameters.traversable = ias.handle;
@@ -1073,15 +1097,20 @@ RenderResult render_optix(const Scene& scene,
             texture_buffer.pointer());
   parameters.lights = light_data.empty()
       ? nullptr
-      : reinterpret_cast<const AreaLight*>(light_buffer.pointer());
+      : reinterpret_cast<const LightData*>(light_buffer.pointer());
   parameters.material_count =
       checked_u32(material_data.size(), "material count");
   parameters.texture_count =
       checked_u32(texture_data.size(), "texture count");
   parameters.light_count =
       checked_u32(light_data.size(), "light count");
+  parameters.flame_count = checked_u32(flame_count, "flame count");
   parameters.traced_rays =
       reinterpret_cast<unsigned long long*>(ray_count.pointer());
+  parameters.volume_counters =
+      flame_count == 0u
+          ? nullptr
+          : reinterpret_cast<VolumeCounters*>(volume_count.pointer());
 
   DeviceBuffer launch_parameters(tracker, sizeof(parameters));
   launch_parameters.upload(&parameters, sizeof(parameters), stream);
@@ -1130,14 +1159,34 @@ RenderResult render_optix(const Scene& scene,
   std::vector<std::uint8_t> rgba(
       checked_product(pixel_count, 4, "RGBA output"));
   std::vector<unsigned long long> ray_counts(pixel_count);
+  std::vector<VolumeCounters> volume_counts(
+      flame_count == 0u ? 0u : pixel_count);
   output.download(rgba.data(), rgba.size(), stream);
   ray_count.download(ray_counts.data(),
                      ray_counts.size() * sizeof(unsigned long long), stream);
+  volume_count.download(volume_counts.data(),
+                        volume_counts.size() * sizeof(VolumeCounters), stream);
   check_cuda(cudaStreamSynchronize(stream),
              "cudaStreamSynchronize(output)");
   unsigned long long traced_rays = 0;
   for (const unsigned long long count : ray_counts)
     traced_rays += count;
+  VolumeCounters volume_totals{};
+  for (const VolumeCounters& count : volume_counts) {
+    volume_totals.density_evaluations += count.density_evaluations;
+    volume_totals.real_collisions += count.real_collisions;
+    volume_totals.light_samples += count.light_samples;
+    volume_totals.majorant_violations += count.majorant_violations;
+    volume_totals.tracking_overflows += count.tracking_overflows;
+  }
+  if (volume_totals.majorant_violations != 0ull ||
+      volume_totals.tracking_overflows != 0ull) {
+    throw std::runtime_error(
+        "volume tracking safety check failed: majorant violations=" +
+        std::to_string(volume_totals.majorant_violations) +
+        ", tracking overflows=" +
+        std::to_string(volume_totals.tracking_overflows));
+  }
   tracker.sample();
 
   RenderResult result;
@@ -1156,6 +1205,13 @@ RenderResult render_optix(const Scene& scene,
   result.stats.peak_device_bytes = tracker.observed_peak();
   result.stats.peak_tracked_device_bytes = tracker.peak;
   result.stats.traced_rays = traced_rays;
+  result.stats.volume_density_evaluations =
+      volume_totals.density_evaluations;
+  result.stats.volume_real_collisions = volume_totals.real_collisions;
+  result.stats.volume_light_samples = volume_totals.light_samples;
+  result.stats.volume_majorant_violations =
+      volume_totals.majorant_violations;
+  result.stats.volume_tracking_overflows = volume_totals.tracking_overflows;
   result.stats.rays_per_second =
       render_ms > 0.0 ? traced_rays / (render_ms * 1.0e-3) : 0.0;
   result.stats.objects = scene.objects.size();

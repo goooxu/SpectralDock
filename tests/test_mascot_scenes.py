@@ -13,6 +13,7 @@ SCENE_INSTANCE_COUNTS = {
     "celestial-archive.json": 1,
     "reflector-laboratory.json": 1,
     "benchmark-harbor.json": 16,
+    "rocket-test-stand.json": 1,
 }
 LEGACY_TOKENS = (
     "tea" + "pot",
@@ -39,7 +40,7 @@ def test_all_gallery_scenes_share_only_the_mascot_mesh():
         assert not any(token in json.dumps(scene).lower() for token in LEGACY_TOKENS)
         total += len(instances)
 
-    assert total == 22
+    assert total == 23
 
 
 def test_static_gallery_mascot_placements_match_the_reviewed_compositions():
@@ -115,6 +116,30 @@ def test_neon_koi_uses_a_central_metal_mascot():
         "rotate_degrees": [0.0, 0.0, 0.0],
         "scale": [1.0, 1.0, 1.0],
     }
+
+
+def test_rocket_test_stand_uses_procedural_flame_without_warm_proxy_light():
+    scene = load_scene("rocket-test-stand.json")
+    assert scene["schema_version"] == 3
+    assert scene["render"] == {
+        "width": 1920,
+        "height": 1080,
+        "spp": 2048,
+        "max_depth": 12,
+        "seed": 707,
+        "denoise": False,
+    }
+    assert scene["camera"]["aperture"] == 0.0
+    assert [light["type"] for light in scene["lights"]] == ["flame", "disk"]
+    flame = scene["lights"][0]
+    assert flame["name"] == "rocket_plume"
+    assert flame["axis"] == [0.0, -1.0, 0.0]
+    assert flame["position"][1] - flame["height"] > 0.0
+    assert "object" not in flame
+    fill = scene["lights"][1]
+    assert fill["name"] == "inspection_fill"
+    assert fill["emission"][2] > fill["emission"][1] > fill["emission"][0]
+    assert max(fill["emission"]) <= 3.0
 
 
 def test_legacy_model_assets_and_download_tool_are_removed():

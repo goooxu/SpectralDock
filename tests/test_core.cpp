@@ -268,6 +268,122 @@ f 1/1 2/2 3/3
                "components must be greater than zero", "invalid mesh scale");
 }
 
+void test_schema_v3_flame_lights() {
+  TemporaryDirectory directory;
+  const auto scene_path = directory.path / "flame.json";
+  const std::string valid_flame = R"json({
+    "name":"plume", "type":"flame", "position":[0,1,0],
+    "axis":[0,-2,0], "height":1, "radius_start":0.4, "radius_end":0.8,
+    "emission_start":[4,5,6], "emission_end":[1,0,0], "extinction":2
+  })json";
+
+  const auto document = [](std::uint32_t schema_version,
+                           const std::string& lights) {
+    return std::string("{\"schema_version\":") +
+           std::to_string(schema_version) + R"json(,
+      "camera":{"look_from":[0,1,4],"look_at":[0,0,0],"up":[0,1,0],"vfov":40},
+      "background":{"type":"constant","color":[0,0,0]},
+      "textures":[], "materials":[{"name":"mat","type":"lambertian"}],
+      "objects":[{"name":"anchor","type":"sphere","center":[0,0,0],
+                  "radius":0.25,"material":"mat"}],
+      "lights":)json" + lights + "}";
+  };
+  const auto replace = [](std::string source, const std::string& before,
+                          const std::string& after) {
+    const std::size_t offset = source.find(before);
+    if (offset == std::string::npos)
+      throw std::runtime_error("test flame fixture replacement did not match");
+    source.replace(offset, before.size(), after);
+    return source;
+  };
+  const auto reject = [&](const std::string& flame, const std::string& expected,
+                          const std::string& message,
+                          std::uint32_t schema_version = 3) {
+    write_text(scene_path, document(schema_version, "[" + flame + "]"));
+    expect_error([&] { (void)load_scene(scene_path); }, expected, message);
+  };
+
+  write_text(scene_path, document(3, "[" + valid_flame + "]"));
+  const Scene scene = load_scene(scene_path);
+  check(scene.schema_version == 3 && scene.lights.size() == 1,
+        "schema v3 flame declaration");
+  const Light& light = scene.lights.front();
+  check(light.type == LightType::Flame && light.object_id == kInvalidId,
+        "flame light type and no object binding");
+  near(light.axis.y, -1.0f, 1.0e-6f, "flame normalized axis");
+  near(light.height, 1.0f, 1.0e-6f, "flame height");
+  near(light.radius_start, 0.4f, 1.0e-6f, "flame start radius");
+  near(light.radius_end, 0.8f, 1.0e-6f, "flame end radius");
+  near(light.extinction, 2.0f, 1.0e-6f, "flame extinction");
+  near(light.density_scale, 1.0f, 1.0e-6f, "flame default density scale");
+  near(light.turbulence, 0.35f, 1.0e-6f, "flame default turbulence");
+  near(light.noise_scale, 2.0f, 1.0e-6f, "flame default noise scale");
+  check(light.seed == 0, "flame default seed");
+
+  reject(valid_flame, "require schema_version 3", "flame schema gating", 2);
+  reject(replace(valid_flame, "\"height\":1",
+                 "\"height\":1,\"object\":\"anchor\""),
+         "cannot be bound to objects", "flame object binding");
+  reject(replace(valid_flame, "[0,-2,0]", "[0,0,0]"), "must be non-zero",
+         "flame zero axis");
+  reject(replace(valid_flame, "\"height\":1", "\"height\":0"),
+         "must be positive", "flame zero height");
+  reject(replace(valid_flame, "\"height\":1", "\"height\":1e100"),
+         "number is not finite float32", "flame non-float32 input");
+  reject(replace(valid_flame, "\"radius_start\":0.4",
+                 "\"radius_start\":-0.1"),
+         "must be non-negative", "flame negative radius");
+  reject(replace(replace(valid_flame, "\"radius_start\":0.4",
+                         "\"radius_start\":0"),
+                 "\"radius_end\":0.8", "\"radius_end\":0"),
+         "cannot both be zero", "flame zero radii");
+  reject(replace(replace(valid_flame, "[4,5,6]", "[0,0,0]"),
+                         "[1,0,0]", "[0,0,0]"),
+         "cannot both be zero", "flame zero emission");
+  reject(replace(valid_flame, "[4,5,6]", "[-1,5,6]"),
+         "components must be finite and non-negative",
+         "flame negative emission");
+  reject(replace(valid_flame, "\"extinction\":2", "\"extinction\":0"),
+         "must be positive", "flame zero extinction");
+  reject(replace(valid_flame, "\"extinction\":2",
+                 "\"extinction\":2,\"density_scale\":0"),
+         "must be positive", "flame zero density scale");
+  reject(replace(valid_flame, "\"extinction\":2",
+                 "\"extinction\":2,\"noise_scale\":0"),
+         "must be positive", "flame zero noise scale");
+  reject(replace(valid_flame, "\"extinction\":2",
+                 "\"extinction\":2,\"turbulence\":1.1"),
+         "must be in [0, 1]", "flame turbulence range");
+  reject(replace(valid_flame, "\"extinction\":2",
+                 "\"extinction\":2,\"seed\":4294967296"),
+         "must be in [0, 4294967295]", "flame seed range");
+  reject(replace(valid_flame, "\"extinction\":2", "\"extinction\":100"),
+         "optical thickness must be at most 64",
+         "flame conservative optical thickness");
+
+  const std::string optically_thick =
+      replace(valid_flame, "\"extinction\":2", "\"extinction\":20");
+  write_text(scene_path,
+             document(3, "[" + optically_thick + "," +
+                             replace(optically_thick, "\"plume\"",
+                                     "\"plume-2\"") +
+                             "]"));
+  expect_error([&] { (void)load_scene(scene_path); },
+               "optical thickness must be at most 64",
+               "combined flame conservative optical thickness");
+
+  std::string too_many = "[";
+  for (int i = 0; i < 9; ++i) {
+    if (i != 0) too_many += ',';
+    too_many += replace(valid_flame, "\"plume\"",
+                        "\"plume-" + std::to_string(i) + "\"");
+  }
+  too_many += ']';
+  write_text(scene_path, document(3, too_many));
+  expect_error([&] { (void)load_scene(scene_path); }, "at most 8 flame lights",
+               "flame count limit");
+}
+
 void test_scene_parser() {
   const auto path = temporary(".json");
   std::ofstream output(path);
@@ -306,6 +422,7 @@ int main(int argc, char** argv) {
     test_transform_order();
     test_scene_parser();
     test_schema_v2_meshes();
+    test_schema_v3_flame_lights();
     for (int i = 1; i < argc; ++i) {
       const Scene scene = load_scene(argv[i], SceneLoadOptions{false});
       check(!scene.objects.empty(), std::string("scene has no objects: ") + argv[i]);

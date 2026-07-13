@@ -1,6 +1,6 @@
 # 场景格式
 
-场景为 JSON。schema v1 保持兼容；schema v2 新增顶层 `meshes` 与 `type: "mesh"` 对象。未知引用、缺失资源、非有限数、退化几何和非法材质会在 CUDA/OptiX 初始化前报错。
+场景为 JSON。schema v1 保持兼容；schema v2 新增顶层 `meshes` 与 `type: "mesh"` 对象；schema v3 新增程序化 `flame` 体积光。未知引用、缺失资源、非有限数、退化几何和非法材质会在 CUDA/OptiX 初始化前报错。只有使用 flame 的场景需要升级到 v3。
 
 ## 顶层字段
 
@@ -11,7 +11,7 @@
 - `materials`：`lambertian`、`metal`、`dielectric`、`emitter`。
 - `meshes`（v2）：命名 OBJ 资源。
 - `objects`：sphere、rectangle、sketch、disk、cylinder、parabola、mesh。
-- `lights`：显式采样的 rectangle、disk、sphere 面积光。
+- `lights`：显式采样的 rectangle、disk、sphere 面积光，以及 v3 的 flame 体积光。
 
 `max_depth` 的范围仍为 1–64，语义是最多处理的表面事件数；最后一个事件完整估计显式直接光，但不再生成下一事件的 BSDF 射线。
 
@@ -50,6 +50,33 @@
 对象可用 `material` 同时设置两面，也可分别使用 `front_material`、`back_material`；null/缺失的一面透明。rectangle 的正面法线为 `normalize(cross(p3-p2, p2-p1))`。sketch 需要 `alpha_texture`，可设置 `alpha_cutoff`。
 
 绑定到发光对象的显式灯必须与对象形状、位置、发光面和常量 emission 完全一致。带纹理 emitter 和 mesh emitter 不能成为显式采样灯，但可由路径命中后发光。
+
+## 程序化 flame 体积光（v3）
+
+```json
+{
+  "name": "rocket_plume",
+  "type": "flame",
+  "position": [0.0, 4.02, -2.5],
+  "axis": [0.0, -1.0, 0.0],
+  "height": 2.35,
+  "radius_start": 0.34,
+  "radius_end": 0.82,
+  "emission_start": [1.2, 3.0, 12.0],
+  "emission_end": [8.0, 1.5, 0.08],
+  "extinction": 0.85,
+  "density_scale": 1.0,
+  "turbulence": 0.85,
+  "noise_scale": 3.5,
+  "seed": 707
+}
+```
+
+`position` 是根部圆心；非零 `axis` 会被归一化，`height` 必须为正。两个半径必须非负且不能同时为零。两端 emission 是非负的线性 RGB 相对辐亮度，至少一个通道必须为正；它们沿轴向线性插值，不表示温度或黑体光谱。
+
+`extinction`、`density_scale` 和 `noise_scale` 必须为正，`turbulence` 的范围是 0–1，`seed` 是 uint32。后四项默认分别为 1、0.35、2 和 0。flame 不能绑定 `object`；一个场景最多 8 个 flame。加载器还限制所有 flame 的保守光学厚度之和不超过 64，避免不可控的 null-collision 工作量。
+
+火焰支持位于半径 `max(radius_start,radius_end)`、高度 `height` 的有向圆柱中。三 octave 确定性噪声、径向/轴向平滑包络和中心线扰动共同产生归一化密度。传输只包含吸收与自发光，不包含散射、烟雾、燃烧化学、CFD、动画或 motion blur。运行时使用 Delta Tracking 处理透射和首次真实碰撞，并在普通表面上以体积 NEE 显式采样发光密度；体积不进入 OptiX GAS/IAS/SBT，`max_depth` 仍只计算表面事件。
 
 ## 统计
 

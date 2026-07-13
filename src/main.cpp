@@ -163,7 +163,14 @@ nlohmann::ordered_json stats_json(const spectraldock::RenderStats& s,
         {"mesh_triangles", s.mesh_triangles},
         {"gas_count", s.gas_count}}},
       {"performance",
-       {{"traced_rays", s.traced_rays}, {"rays_per_second", s.rays_per_second}}}};
+       {{"traced_rays", s.traced_rays},
+        {"rays_per_second", s.rays_per_second}}},
+      {"volume",
+       {{"volume_density_evaluations", s.volume_density_evaluations},
+        {"volume_real_collisions", s.volume_real_collisions},
+        {"volume_light_samples", s.volume_light_samples},
+        {"volume_majorant_violations", s.volume_majorant_violations},
+        {"volume_tracking_overflows", s.volume_tracking_overflows}}}};
 }
 
 }  // namespace

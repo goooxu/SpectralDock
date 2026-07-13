@@ -38,6 +38,7 @@ enum DeviceLightType : std::uint32_t {
   kLightRectangle = 0,
   kLightDisk = 1,
   kLightSphere = 2,
+  kLightFlame = 3,
 };
 
 enum TextureFlags : std::uint32_t {
@@ -111,7 +112,7 @@ struct HitgroupData {
   DeviceMeshData mesh;
 };
 
-struct AreaLight {
+struct LightData {
   float3 p0 = {0.0f, 0.0f, 0.0f};
   float area = 0.0f;
   float3 edge_u = {1.0f, 0.0f, 0.0f};
@@ -122,6 +123,31 @@ struct AreaLight {
   std::uint32_t type = kLightRectangle;
   float3 normal = {0.0f, 1.0f, 0.0f};
   float radius = 0.0f;
+
+  // A flame is an oriented, finite, procedural absorption-emission volume.
+  // Existing area-light fields remain valid for the three surface types.
+  float3 axis = {0.0f, 1.0f, 0.0f};
+  float height = 0.0f;
+  float3 emission_start = {0.0f, 0.0f, 0.0f};
+  float radius_start = 0.0f;
+  float3 emission_end = {0.0f, 0.0f, 0.0f};
+  float radius_end = 0.0f;
+  float extinction = 0.0f;
+  float density_scale = 0.0f;
+  float turbulence = 0.0f;
+  float noise_scale = 0.0f;
+  std::uint32_t seed = 0;
+  std::uint32_t reserved0 = 0;
+  std::uint32_t reserved1 = 0;
+  std::uint32_t reserved2 = 0;
+};
+
+struct VolumeCounters {
+  unsigned long long density_evaluations = 0;
+  unsigned long long real_collisions = 0;
+  unsigned long long light_samples = 0;
+  unsigned long long majorant_violations = 0;
+  unsigned long long tracking_overflows = 0;
 };
 
 // Camera basis uses w pointing backwards (look-from minus look-at), with u to
@@ -166,15 +192,16 @@ struct LaunchParams {
 
   const MaterialData* materials = nullptr;
   const TextureData* textures = nullptr;
-  const AreaLight* lights = nullptr;
+  const LightData* lights = nullptr;
   std::uint32_t material_count = 0;
   std::uint32_t texture_count = 0;
   std::uint32_t light_count = 0;
-  std::uint32_t reserved3 = 0;
+  std::uint32_t flame_count = 0;
 
   // Optional global counter. Every radiance and shadow optixTrace increments
   // it once, allowing rays/s reporting without estimating bounce counts.
   unsigned long long* traced_rays = nullptr;
+  VolumeCounters* volume_counters = nullptr;
 };
 
 extern "C" cudaError_t spectraldockLaunchPostprocess(

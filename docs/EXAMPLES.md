@@ -1,6 +1,6 @@
-# 示例画廊：五个内置场景与一个按需 PhysX 场景
+# 示例画廊：六个内置场景与一个按需 PhysX 场景
 
-五个内置场景的正式图由 `./scripts/render-examples.sh --preset final` 直接写入 `docs/gallery/`；下列链接保持原始 1920×1080 PNG，不使用缩略图替代。Kinetic Foundry 由独立的 PhysX 流程生成，不加入默认批处理。
+六个内置场景的正式图由 `./scripts/render-examples.sh --preset final` 直接写入 `docs/gallery/`；正式链接保持原始 1920×1080 PNG，不使用缩略图替代。Kinetic Foundry 由独立的 PhysX 流程生成，不加入默认批处理。
 
 ## Material Cathedral
 
@@ -32,11 +32,17 @@
 
 “泡泡海上的吉祥物船队”由 16 个四色胶囊吉祥物实例共享一份 5,816-triangle GAS，并由固定 seed `20260707` 生成 1,024 个互不重叠的球形波浪。该场景覆盖大 IAS、确定性生成、BVH 构建和吞吐率。
 
+## Rocket Test Stand
+
+![Rocket Test Stand](gallery/rocket-test-stand.png)
+
+近距离火箭发动机试车台只用 cylinder、disk、rectangle 与同一 mascot OBJ 搭建。向下喷流是 schema v3 的程序化异质吸收—自发光体积，采用线性 RGB 轴向渐变、Delta Tracking 和体积 NEE；它不是黑体、CFD、烟雾或动画。吉祥物观察员躲在隔热板后提供尺度参照；低能量冷色检修补光只负责读清喷管，不充当暖色火焰代理。正式图固定为 2048 spp、depth 12、无 Denoiser。
+
 ## Kinetic Foundry (PhysX)
 
 ![Kinetic Foundry](gallery/kinetic-foundry.png)
 
-该按需场景使用 PhysX 5.8.0 GPU 刚体模拟 24 个采用 capsule 碰撞代理的吉祥物与 192 颗钢珠，并在固定第 300 步（2.5 秒）截取撞击峰值；sidecar 记录 `sleeping_dynamic_actors=0`，即没有动态 actor 进入 sleeping 状态。SpectralDock/OptiX 渲染的是这一时刻清晰的静态单帧，不含 motion blur，不应解读为系统的最终静止状态。仓库只保留正式 PNG、渲染 stats 和同 stem 的 `.physics.json` 生成记录，不提交中间 `scenes/generated/kinetic-foundry.json`。PhysX 不参与路径追踪，也不会成为运行五个内置场景时的依赖；复现边界和命令见 [PhysX 场景说明](PHYSX_SCENE.md)。
+该按需场景使用 PhysX 5.8.0 GPU 刚体模拟 24 个采用 capsule 碰撞代理的吉祥物与 192 颗钢珠，并在固定第 300 步（2.5 秒）截取撞击峰值；sidecar 记录 `sleeping_dynamic_actors=0`，即没有动态 actor 进入 sleeping 状态。SpectralDock/OptiX 渲染的是这一时刻清晰的静态单帧，不含 motion blur，不应解读为系统的最终静止状态。仓库只保留正式 PNG、渲染 stats 和同 stem 的 `.physics.json` 生成记录，不提交中间 `scenes/generated/kinetic-foundry.json`。PhysX 不参与路径追踪，也不会成为运行六个内置场景时的依赖；复现边界和命令见 [PhysX 场景说明](PHYSX_SCENE.md)。
 
 ## 运行
 
@@ -51,7 +57,7 @@
 ./scripts/render-examples.sh --preset preview neon-koi reflector-laboratory
 ```
 
-上述命令只处理五个内置场景。按需生成并渲染 Kinetic Foundry：
+上述命令只处理六个内置场景；Rocket Test Stand 的 preview/final 分别固定为 256/2048 spp、depth 12、无降噪。按需生成并渲染 Kinetic Foundry：
 
 ```bash
 ./scripts/build-physx-image.sh

@@ -1,6 +1,6 @@
 # RTX 5090 基准与分析
 
-测试环境：NVIDIA GeForce RTX 5090（CC 12.0），driver 610.47.04，CUDA Driver API/runtime 13030，OptiX 90100。正式图均在 RR/MIS 修复后以 1920×1080、512 spp、depth 12 和 AI denoise 重新渲染。数据来自仓库中的 `docs/gallery/*.stats.json`。
+测试环境：NVIDIA GeForce RTX 5090（CC 12.0）与 OptiX 90100。前五个内置正式图使用 CUDA Driver API/runtime 13030、driver 610.47.04，以 1920×1080、512 spp、depth 12 和 AI denoise 渲染；Rocket Test Stand 使用 CUDA Driver API 13040/runtime 13030、driver 615.36，并固定为 2048 spp、depth 12、无降噪。数据来自仓库中的 `docs/gallery/*.stats.json`。
 
 ## 正式渲染
 
@@ -11,6 +11,7 @@
 | celestial-archive | 2.679 | 606.931 | 14.530 | 1,345.682 | 3,143,769,772 | 5.180 | 1,324.3 | 495.7 |
 | reflector-laboratory | 2.655 | 782.546 | 14.367 | 1,472.562 | 2,762,368,581 | 3.530 | 1,308.3 | 483.7 |
 | benchmark-harbor | 169.622 | 228.853 | 15.533 | 1,087.870 | 1,614,680,505 | 7.056 | 1,310.3 | 485.4 |
+| rocket-test-stand | 3.985 | 12,961.918 | 0.000 | 14,297.762 | 16,088,692,359 | 1.241 | 1,062.3 | 190.5 |
 
 `Path trace` 对应统计 JSON 的 `timings_ms.render`，只计一次 `optixLaunch`。`Total` 在 `render_optix()` 完成参数与像素数检查后开始，到返回前结束，包含 CUDA/OptiX 初始化、纹理解码与上传、BVH、追踪、可选降噪、后处理、设备到主机回传和设备信息查询；不含此前的场景/OBJ 解析、之后的 PNG/stats 写盘及函数局部 RAII 资源析构，因此不等于前三项简单相加。显存按 1 MiB = 1,048,576 bytes 换算。
 
@@ -23,12 +24,16 @@
 | celestial-archive | 9 | 9 | 1 | 5,816 | 9 |
 | reflector-laboratory | 10 | 10 | 1 | 5,816 | 10 |
 | benchmark-harbor | 1,040 | 1,040 | 1 | 5,816 | 1,025 |
+| rocket-test-stand | 21 | 21 | 1 | 5,816 | 21 |
 
 Harbor 的 16 个胶囊吉祥物共享一份 mascot GAS，另有 1,024 个 sphere GAS；`mesh_triangles` 不按实例数重复计数。
+Rocket Test Stand 的 flame 不注册为几何，因此不增加 object、instance、GAS 或 SBT 数量；其密度求值、真实碰撞和体积选灯次数由独立 volume stats 记录。
+
+该正式运行执行 6,034,687,147 次密度求值、251,502,165 次真实体积碰撞和 3,805,828,238 次 flame NEE 选灯；majorant violation 与 tracking overflow 均为 0。场景另有一盏低能量冷色检修补光用于读清喷管和尺度参照，不充当暖色火焰代理。体积求值是 raygen 中的纯 CUDA 工作，不计入 `traced_rays`，所以该场景的 rays/s 不应与纯表面场景直接比较。
 
 ## 按需 Kinetic Foundry（PhysX）
 
-Kinetic Foundry 不属于上表五个内置场景，且生成/渲染环境与上表不是同一次运行，
+Kinetic Foundry 不属于上表六个内置场景，且生成/渲染环境与上表不是同一次运行，
 因此单独记录。物理阶段使用 CUDA 12.8.1 专用镜像、PhysX 5.8.0 checked
 配置和固定 commit `fc1018a3745664a1db2b95ce03fb5e91eb585f2e`，在 RTX 5090
 上以 GPU dynamics、GPU broadphase、PCM、stabilization、seed `20260711`、
@@ -55,6 +60,8 @@ PhysX sidecar，不提交 `scenes/generated/kinetic-foundry.json`。完整生成
 综合 GPU fixture 使用 64×64、1 spp、depth 6、seed 1 和无降噪输出，覆盖带 UV/平滑法线/alpha 的 mesh、两个共享 GAS 且使用不同变换/材质的实例，以及 custom primitives。其 RTX 5090 SHA-256 为 `2ae722c6634d88de7f2ad56e790ebf54a9d7fe395eb8063e13be236a74ce6fd2`，由 `scripts/sanitizers.sh` 在三类检查后验证。
 
 积分器对照使用 smoke 场景的临时绑定/未绑定灯副本，以 64×64、4 spp、depth 1、seed 1 和无降噪渲染；两版解码 RGBA 必须逐字节相同且非空。该测试由 `acceptance.sh` 在 Release 构建后运行，临时 PNG/stats 自动清理，不建立 golden。
+
+flame fixture 额外检查固定 seed RGBA 确定性、外部漫反射面的体积 NEE、表面遮挡、面积光穿过体积后的吸收、介电 delta 路径以及 volume counters；同一 fixture 进入三种 Compute Sanitizer 检查。它不建立跨 GPU 像素 golden，也不设置自动性能阈值。
 
 正式 PNG、stats 和本页耗时表作为作品展示与一次运行记录保留，不属于自动 golden、画廊或性能回归门禁。
 

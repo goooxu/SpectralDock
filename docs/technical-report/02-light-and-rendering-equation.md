@@ -155,20 +155,17 @@ $$
 
 <!-- source-snippet id="raygen-path-state-background" path="src/device_programs.cu" anchor="background(ray_direction)" -->
 ```cpp
-  for (unsigned int sample_index = 0; sample_index < spp; ++sample_index) {
-    Pcg32 rng(params.seed, pixel, sample_index);
-    float3 ray_origin;
-    float3 ray_direction;
-    generate_camera_ray(launch_index.x, launch_index.y, rng, ray_origin,
-                        ray_direction);
-    float3 throughput = f3(1.0f, 1.0f, 1.0f);
-    float3 radiance = f3(0.0f, 0.0f, 0.0f);
-    float previous_pdf = 0.0f;
-    int previous_delta = 1;
-    int guide_written = 0;
-
-    for (unsigned int bounce = 0; bounce < params.max_depth; ++bounce) {
       const SurfaceHit hit = trace_radiance(ray_origin, ray_direction, traced_rays);
+      const VolumeCollision volume = track_volume(
+          ray_origin, ray_direction, hit.hit != 0 ? hit.distance : kInfinity,
+          rng, volume_counters);
+      if (volume.collided != 0) {
+        if (previous_delta != 0) {
+          radiance =
+              add(radiance, mul(throughput, volume.source));
+        }
+        break;
+      }
       if (hit.hit == 0) {
         radiance =
             add(radiance, mul(throughput, background(ray_direction)));
@@ -210,7 +207,8 @@ $$
       const bool next_bsdf_ray_exists = bounce + 1u < params.max_depth;
       const float3 direct =
           sample_direct_light(hit, material, base_color, wo,
-                              next_bsdf_ray_exists, rng, traced_rays);
+                              next_bsdf_ray_exists, rng, traced_rays,
+                              volume_counters);
       radiance = add(radiance, mul(throughput, direct));
       if (!next_bsdf_ray_exists) {
         break;

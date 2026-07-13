@@ -8,7 +8,7 @@
 |---|---|---|---|
 | 随机方差 | 有限样本围绕目标波动 | 小灯、太阳瓣、尖锐高光的噪点 | 能缓解，约按 $1/\sqrt N$ |
 | 数值偏差 | 算法求解了近似目标 | `max_depth` 截断长路径 | 不能 |
-| 模型误差 | 数学模型省略现实机制 | RGB、无体积、无色散 | 不能 |
+| 模型误差 | 数学模型省略现实机制 | RGB、flame 无散射、无色散 | 不能 |
 | 实现缺陷 | 代码没有实现既定公式 | PDF 漏掉选灯概率、方向写反 | 不能，必须修代码 |
 
 降噪和色调映射属于另一层：**重建与显示变换**。它们可以改变观感，却不会增加积分器已经采集的路径信息。
@@ -105,16 +105,15 @@ $$
 
 <!-- source-snippet id="validation-ray-count-sum" path="src/optix_renderer.cpp" anchor="ray_count.download" -->
 ```cpp
-  std::vector<unsigned long long> ray_counts(pixel_count);
-  output.download(rgba.data(), rgba.size(), stream);
   ray_count.download(ray_counts.data(),
                      ray_counts.size() * sizeof(unsigned long long), stream);
+  volume_count.download(volume_counts.data(),
+                        volume_counts.size() * sizeof(VolumeCounters), stream);
   check_cuda(cudaStreamSynchronize(stream),
              "cudaStreamSynchronize(output)");
   unsigned long long traced_rays = 0;
   for (const unsigned long long count : ray_counts)
     traced_rays += count;
-  tracker.sample();
 ```
 
 统计结构只保留求和结果，并用 `render_ms * 1.0e-3` 完成毫秒到秒的换算：
@@ -122,11 +121,18 @@ $$
 <!-- source-snippet id="validation-rays-per-second" path="src/optix_renderer.cpp" anchor="result.stats.rays_per_second" -->
 ```cpp
   result.stats.traced_rays = traced_rays;
+  result.stats.volume_density_evaluations =
+      volume_totals.density_evaluations;
+  result.stats.volume_real_collisions = volume_totals.real_collisions;
+  result.stats.volume_light_samples = volume_totals.light_samples;
+  result.stats.volume_majorant_violations =
+      volume_totals.majorant_violations;
+  result.stats.volume_tracking_overflows = volume_totals.tracking_overflows;
   result.stats.rays_per_second =
       render_ms > 0.0 ? traced_rays / (render_ms * 1.0e-3) : 0.0;
 ```
 
-分母为零时明确返回 0，避免统计值成为无穷或 NaN。
+分母为零时明确返回 0，避免统计值成为无穷或 NaN。体积工作量独立保存，不混入 OptiX ray 计数。
 
 ## 5. 显存指标
 
@@ -159,7 +165,7 @@ $$
 5. NEE 与命中灯面的估计用 power heuristic MIS 分权；
 6. 路径在 miss、emitter、无效散射、轮盘或最大深度处结束；最大深度的最后一个表面事件仍先完整估计直接光；
 7. 多条路径的线性 RGB 平均成为 HDR beauty；
-8. 可选降噪后，执行曝光、ACES 风格拟合、sRGB 编码和 8 bit 量化。
+8. 可选降噪后，执行曝光、ACES 风格拟合、sRGB 编码和 8 bit 量化。程序化 flame 在这条表面链的射线段上额外执行吸收—自发光估计，详见第 11 章。
 
 渲染器真正的核心正是这条链：**渲染方程给出目标，Monte Carlo 构造估计，几何与材质定义路径，OptiX/GPU 把大量路径高效执行。**
 

@@ -4,7 +4,7 @@ from pathlib import Path, PurePosixPath
 
 ROOT = Path(__file__).resolve().parents[1]
 REPORT_DIR = ROOT / "docs" / "technical-report"
-CHAPTERS = tuple("{:02d}".format(index) for index in range(1, 11))
+CHAPTERS = tuple("{:02d}".format(index) for index in range(1, 12))
 MARKER = "<!-- source-snippet "
 SNIPPET = re.compile(
     r'<!-- source-snippet id="(?P<id>[a-z0-9-]+)" '
@@ -69,6 +69,13 @@ PHYSX_CHAPTER_SNIPPET_ORDER = (
     "physx-baked-scene-validation",
     "physx-byte-verification",
 )
+REQUIRED_VOLUME_SNIPPETS = {
+    "volume-delta-tracking-acceptance",
+    "volume-host-safety-gate",
+    "volume-nee-estimator",
+    "volume-path-estimator-partition",
+    "volume-three-octave-fbm",
+}
 STANDARD_OPTIX_STAGES = (
     "准备 CUDA 几何数据",
     "构建 GAS / IAS 加速结构",
@@ -213,6 +220,23 @@ def test_technical_report_source_snippets_match_the_repository():
         assert boundary in physx_chapter, (
             "PhysX chapter must explain the {} boundary".format(boundary)
         )
+
+    missing_volume_snippets = REQUIRED_VOLUME_SNIPPETS - identifiers
+    assert not missing_volume_snippets, (
+        "missing volume source snippets: {}".format(
+            sorted(missing_volume_snippets)
+        )
+    )
+    volume_chapter = (
+        REPORT_DIR / "11-procedural-volumetric-flame.md"
+    ).read_text(encoding="utf-8")
+    for boundary in (
+        "Delta Tracking",
+        "不注册为 OptiX primitive",
+        "不散射",
+        "2048 spp",
+    ):
+        assert boundary in volume_chapter
 
 
 def test_technical_report_avoids_unsupported_math_macros():

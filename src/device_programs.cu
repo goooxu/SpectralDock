@@ -4,12 +4,13 @@
 
 #include "spectraldock/device_types.h"
 
-using spectraldock::AreaLight;
 using GeometryData = spectraldock::DeviceGeometryData;
 using spectraldock::HitgroupData;
 using spectraldock::LaunchParams;
+using spectraldock::LightData;
 using spectraldock::MaterialData;
 using spectraldock::TextureData;
+using spectraldock::VolumeCounters;
 
 extern "C" {
 __constant__ LaunchParams params;
@@ -186,13 +187,285 @@ struct Pcg32 {
   __forceinline__ __device__ float next() {
     return static_cast<float>(next_uint() >> 8) * 0x1.0p-24f;
   }
+
+  __forceinline__ __device__ float next_open01() {
+    const float value = next();
+    // Keep exponential free-flight sampling strictly inside (0, 1) without
+    // merging the zero outcome into an already occupied 24-bit sample bin.
+    return value > 0.0f ? value : 0x1.0p-25f;
+  }
 };
+
+constexpr unsigned int kMaxFlames = 8u;
+constexpr unsigned int kMaxVolumeEvents = 2u * kMaxFlames;
+constexpr unsigned int kMaxTrackingCandidates = 4096u;
+
+struct VolumeEvent {
+  float distance;
+  unsigned int flame_slot;
+  int entering;
+};
+
+struct VolumeCollision {
+  int collided;
+  float3 source;
+};
+
+static __forceinline__ __device__ float smoothstep01(float x) {
+  x = fminf(fmaxf(x, 0.0f), 1.0f);
+  return x * x * (3.0f - 2.0f * x);
+}
+
+static __forceinline__ __device__ float lattice_noise(
+    int x, int y, int z, unsigned int seed) {
+  unsigned int h = Pcg32::hash(static_cast<unsigned int>(x) ^ seed);
+  h = Pcg32::hash(h ^ (static_cast<unsigned int>(y) * 0x9e3779b9u));
+  h = Pcg32::hash(h ^ (static_cast<unsigned int>(z) * 0x85ebca6bu));
+  return static_cast<float>(h >> 8) * 0x1.0p-24f;
+}
+
+static __forceinline__ __device__ float value_noise(
+    float3 p, unsigned int seed) {
+  const int ix = static_cast<int>(floorf(p.x));
+  const int iy = static_cast<int>(floorf(p.y));
+  const int iz = static_cast<int>(floorf(p.z));
+  const float fx = smoothstep01(p.x - static_cast<float>(ix));
+  const float fy = smoothstep01(p.y - static_cast<float>(iy));
+  const float fz = smoothstep01(p.z - static_cast<float>(iz));
+  const float n000 = lattice_noise(ix, iy, iz, seed);
+  const float n100 = lattice_noise(ix + 1, iy, iz, seed);
+  const float n010 = lattice_noise(ix, iy + 1, iz, seed);
+  const float n110 = lattice_noise(ix + 1, iy + 1, iz, seed);
+  const float n001 = lattice_noise(ix, iy, iz + 1, seed);
+  const float n101 = lattice_noise(ix + 1, iy, iz + 1, seed);
+  const float n011 = lattice_noise(ix, iy + 1, iz + 1, seed);
+  const float n111 = lattice_noise(ix + 1, iy + 1, iz + 1, seed);
+  const float nx00 = n000 + (n100 - n000) * fx;
+  const float nx10 = n010 + (n110 - n010) * fx;
+  const float nx01 = n001 + (n101 - n001) * fx;
+  const float nx11 = n011 + (n111 - n011) * fx;
+  const float nxy0 = nx00 + (nx10 - nx00) * fy;
+  const float nxy1 = nx01 + (nx11 - nx01) * fy;
+  return nxy0 + (nxy1 - nxy0) * fz;
+}
+
+static __forceinline__ __device__ float flame_fbm(
+    float3 p, unsigned int seed) {
+  float value = value_noise(p, seed);
+  value += 0.5f * value_noise(mul(p, 2.0f), seed ^ 0xa511e9b3u);
+  value += 0.25f * value_noise(mul(p, 4.0f), seed ^ 0x63d83595u);
+  return value * (1.0f / 1.75f);
+}
+
+static __forceinline__ __device__ float flame_density(
+    const LightData& light, float3 point, VolumeCounters& counters,
+    float* axial_out = nullptr) {
+  ++counters.density_evaluations;
+  const float3 axis = normalize3(light.axis);
+  const float axial_distance = dot3(sub(point, light.p0), axis);
+  if (!(axial_distance >= 0.0f && axial_distance <= light.height) ||
+      !(light.height > 0.0f)) {
+    if (axial_out != nullptr) *axial_out = 0.0f;
+    return 0.0f;
+  }
+  const float axial = axial_distance / light.height;
+  if (axial_out != nullptr) *axial_out = axial;
+  const float nominal_radius =
+      light.radius_start + (light.radius_end - light.radius_start) * axial;
+  if (!(nominal_radius > 0.0f)) return 0.0f;
+
+  float3 tangent;
+  float3 bitangent;
+  make_basis(axis, tangent, bitangent);
+  const float center_frequency = axial * light.noise_scale;
+  const float offset_limit =
+      0.2f * light.turbulence * nominal_radius;
+  float offset_u =
+      (value_noise(f3(center_frequency, 17.125f, -3.75f), light.seed) *
+           2.0f -
+       1.0f) * offset_limit;
+  float offset_v =
+      (value_noise(f3(-11.25f, center_frequency, 5.625f),
+                   light.seed ^ 0x51ed270bu) *
+           2.0f -
+       1.0f) * offset_limit;
+  float offset_length = sqrtf(offset_u * offset_u + offset_v * offset_v);
+  if (offset_length > offset_limit && offset_length > 0.0f) {
+    const float scale = offset_limit / offset_length;
+    offset_u *= scale;
+    offset_v *= scale;
+    offset_length = offset_limit;
+  }
+  const float3 center =
+      add(add(light.p0, mul(axis, axial_distance)),
+          add(mul(tangent, offset_u), mul(bitangent, offset_v)));
+  // Shrinking by the actual center-line displacement keeps every non-zero
+  // density sample inside the declared max-radius support cylinder.
+  const float local_radius = nominal_radius - offset_length;
+  if (!(local_radius > 1.0e-8f)) return 0.0f;
+  const float3 radial_vector = sub(point, center);
+  const float radial_distance = length3(sub(
+      radial_vector, mul(axis, dot3(radial_vector, axis))));
+  const float radial = radial_distance / local_radius;
+  if (!(radial < 1.0f)) return 0.0f;
+
+  const float radial_envelope =
+      1.0f - smoothstep01((radial - 0.55f) / 0.45f);
+  const float root_fade = smoothstep01(axial / 0.04f);
+  const float tip_fade = 1.0f - smoothstep01((axial - 0.85f) / 0.15f);
+  const float max_radius = fmaxf(light.radius_start, light.radius_end);
+  const float inverse_scale = 1.0f / fmaxf(max_radius, 1.0e-6f);
+  const float3 local = sub(point, light.p0);
+  const float3 noise_point =
+      f3(dot3(local, tangent) * inverse_scale * light.noise_scale,
+         axial * light.noise_scale,
+         dot3(local, bitangent) * inverse_scale * light.noise_scale);
+  const float noise = flame_fbm(noise_point, light.seed ^ 0xb5297a4du);
+  const float modulation =
+      (1.0f - light.turbulence) +
+      light.turbulence * (0.35f + 0.65f * noise);
+  return fminf(fmaxf(radial_envelope * root_fade * tip_fade * modulation,
+                     0.0f),
+               1.0f);
+}
+
+static __forceinline__ __device__ float3 flame_source(
+    const LightData& light, float axial) {
+  return lerp3(light.emission_start, light.emission_end,
+               fminf(fmaxf(axial, 0.0f), 1.0f));
+}
+
+static __forceinline__ __device__ bool flame_sphere_interval(
+    const LightData& light, float3 origin, float3 direction,
+    float maximum_distance, float& near_distance, float& far_distance) {
+  const float half_height = 0.5f * light.height;
+  const float maximum_radius =
+      fmaxf(light.radius_start, light.radius_end);
+  const float sphere_radius =
+      sqrtf(half_height * half_height + maximum_radius * maximum_radius);
+  const float3 center = add(light.p0, mul(normalize3(light.axis), half_height));
+  const float3 offset = sub(origin, center);
+  const float b = dot3(offset, direction);
+  const float c = length2(offset) - sphere_radius * sphere_radius;
+  const float discriminant = b * b - c;
+  if (!(discriminant > 0.0f)) return false;
+  const float root = sqrtf(discriminant);
+  near_distance = fmaxf(-b - root, 0.0f);
+  far_distance = fminf(-b + root, maximum_distance);
+  return far_distance > near_distance;
+}
+
+static __forceinline__ __device__ VolumeCollision track_volume(
+    float3 origin, float3 direction, float maximum_distance, Pcg32& rng,
+    VolumeCounters& counters) {
+  VolumeCollision result{};
+  result.source = f3(0.0f, 0.0f, 0.0f);
+  if (params.flame_count == 0u || params.lights == nullptr) return result;
+
+  unsigned int flame_indices[kMaxFlames]{};
+  VolumeEvent events[kMaxVolumeEvents]{};
+  unsigned int flame_slots = 0u;
+  unsigned int event_count = 0u;
+  for (unsigned int light_index = 0u;
+       light_index < params.light_count && flame_slots < kMaxFlames;
+       ++light_index) {
+    const LightData& light = params.lights[light_index];
+    if (light.type != spectraldock::kLightFlame) continue;
+    const unsigned int slot = flame_slots++;
+    flame_indices[slot] = light_index;
+    float near_distance;
+    float far_distance;
+    if (!flame_sphere_interval(light, origin, direction, maximum_distance,
+                               near_distance, far_distance)) {
+      continue;
+    }
+    events[event_count++] = {near_distance, slot, 1};
+    events[event_count++] = {far_distance, slot, 0};
+  }
+  if (event_count == 0u) return result;
+  for (unsigned int i = 1u; i < event_count; ++i) {
+    const VolumeEvent value = events[i];
+    unsigned int j = i;
+    while (j > 0u && events[j - 1u].distance > value.distance) {
+      events[j] = events[j - 1u];
+      --j;
+    }
+    events[j] = value;
+  }
+
+  unsigned int active_mask = 0u;
+  unsigned int candidate_count = 0u;
+  unsigned int event_index = 0u;
+  float distance = 0.0f;
+  while (event_index < event_count) {
+    const float event_distance = events[event_index].distance;
+    if (event_distance > distance && active_mask != 0u) {
+      float majorant = 0.0f;
+      for (unsigned int slot = 0u; slot < flame_slots; ++slot) {
+        if ((active_mask & (1u << slot)) == 0u) continue;
+        const LightData& light = params.lights[flame_indices[slot]];
+        majorant += light.extinction * light.density_scale;
+      }
+      float candidate_distance = distance;
+      while (majorant > 0.0f) {
+        if (++candidate_count > kMaxTrackingCandidates) {
+          ++counters.tracking_overflows;
+          result.collided = 1;
+          return result;
+        }
+        const float u = rng.next_open01();
+        candidate_distance += -log1pf(-u) / majorant;
+        if (!(candidate_distance < event_distance)) break;
+        const float3 point = add(origin, mul(direction, candidate_distance));
+        float sigma_total = 0.0f;
+        float3 source_numerator = f3(0.0f, 0.0f, 0.0f);
+        for (unsigned int slot = 0u; slot < flame_slots; ++slot) {
+          if ((active_mask & (1u << slot)) == 0u) continue;
+          const LightData& light = params.lights[flame_indices[slot]];
+          float axial = 0.0f;
+          const float density = flame_density(light, point, counters, &axial);
+          const float sigma =
+              light.extinction * light.density_scale * density;
+          sigma_total += sigma;
+          source_numerator =
+              add(source_numerator, mul(flame_source(light, axial), sigma));
+        }
+        if (sigma_total > majorant) {
+          ++counters.majorant_violations;
+        }
+        const float acceptance =
+            fminf(fmaxf(sigma_total / majorant, 0.0f), 1.0f);
+        if (rng.next() < acceptance) {
+          ++counters.real_collisions;
+          result.collided = 1;
+          result.source = sigma_total > 0.0f
+              ? divv(source_numerator, sigma_total)
+              : f3(0.0f, 0.0f, 0.0f);
+          return result;
+        }
+      }
+    }
+    distance = event_distance;
+    do {
+      const unsigned int bit = 1u << events[event_index].flame_slot;
+      if (events[event_index].entering != 0) {
+        active_mask |= bit;
+      } else {
+        active_mask &= ~bit;
+      }
+      ++event_index;
+    } while (event_index < event_count &&
+             events[event_index].distance == event_distance);
+  }
+  return result;
+}
 
 struct SurfaceHit {
   int hit;
   int material_index;
   int light_index;
   int front_face;
+  float distance;
   float3 position;
   float3 normal;
   float2 uv;
@@ -421,6 +694,7 @@ static __forceinline__ __device__ SurfaceHit trace_radiance(
     float3 origin, float3 direction, unsigned long long& traced_rays) {
   SurfaceHit hit = {};
   hit.hit = 0;
+  hit.distance = kInfinity;
   unsigned int p0;
   unsigned int p1;
   pack_pointer(&hit, p0, p1);
@@ -584,7 +858,7 @@ static __forceinline__ __device__ float light_direction_pdf(
       params.lights == nullptr || params.light_count == 0) {
     return 0.0f;
   }
-  const AreaLight light = params.lights[light_index];
+  const LightData light = params.lights[light_index];
   if (light.geometry_index < 0) {
     return 0.0f;
   }
@@ -609,7 +883,7 @@ static __forceinline__ __device__ float light_direction_pdf(
 }
 
 static __forceinline__ __device__ void sample_light_surface(
-    const AreaLight& light, float u0, float u1,
+    const LightData& light, float u0, float u1,
     float3& point, float3& normal) {
   if (light.type == spectraldock::kLightDisk) {
     const float radius = light.radius * sqrtf(u0);
@@ -633,10 +907,24 @@ static __forceinline__ __device__ void sample_light_surface(
   normal = normalize3(light.normal);
 }
 
+static __forceinline__ __device__ float3 sample_flame_volume(
+    const LightData& light, float u0, float u1, float u2) {
+  float3 tangent;
+  float3 bitangent;
+  const float3 axis = normalize3(light.axis);
+  make_basis(axis, tangent, bitangent);
+  const float radius =
+      fmaxf(light.radius_start, light.radius_end) * sqrtf(u0);
+  const float phi = 2.0f * kPi * u1;
+  return add(add(light.p0, mul(axis, u2 * light.height)),
+             add(mul(tangent, radius * cosf(phi)),
+                 mul(bitangent, radius * sinf(phi))));
+}
+
 static __forceinline__ __device__ float3 sample_direct_light(
     const SurfaceHit& hit, const MaterialData& material, float3 base_color,
     float3 wo, bool next_bsdf_ray_exists, Pcg32& rng,
-    unsigned long long& traced_rays) {
+    unsigned long long& traced_rays, VolumeCounters& volume_counters) {
   if (params.lights == nullptr || params.light_count == 0 ||
       (material.type != spectraldock::kMaterialLambertian &&
        material.type != spectraldock::kMaterialMetal)) {
@@ -646,7 +934,57 @@ static __forceinline__ __device__ float3 sample_direct_light(
       static_cast<unsigned int>(rng.next() * params.light_count);
   const unsigned int light_index =
       candidate < params.light_count ? candidate : params.light_count - 1u;
-  const AreaLight light = params.lights[light_index];
+  const LightData light = params.lights[light_index];
+  if (light.type == spectraldock::kLightFlame) {
+    ++volume_counters.light_samples;
+    const float3 light_point = sample_flame_volume(
+        light, rng.next(), rng.next(), rng.next());
+    float axial = 0.0f;
+    const float density =
+        flame_density(light, light_point, volume_counters, &axial);
+    const float sigma =
+        light.extinction * light.density_scale * density;
+    if (!(sigma > 0.0f)) return f3(0.0f, 0.0f, 0.0f);
+    const float3 displacement = sub(light_point, hit.position);
+    const float distance2 = length2(displacement);
+    if (distance2 <= params.scene_epsilon * params.scene_epsilon) {
+      return f3(0.0f, 0.0f, 0.0f);
+    }
+    const float distance = sqrtf(distance2);
+    const float3 wi = divv(displacement, distance);
+    const float no_l = dot3(hit.normal, wi);
+    if (no_l <= 0.0f) return f3(0.0f, 0.0f, 0.0f);
+    float3 bsdf;
+    float bsdf_pdf;
+    evaluate_bsdf(material, base_color, hit.normal, wo, wi, bsdf, bsdf_pdf);
+    if (!(bsdf_pdf > 0.0f)) return f3(0.0f, 0.0f, 0.0f);
+    const float3 shadow_origin =
+        add(hit.position, mul(hit.normal, params.scene_epsilon * 2.0f));
+    const float3 shadow_displacement = sub(light_point, shadow_origin);
+    const float shadow_distance = length3(shadow_displacement);
+    if (!(shadow_distance > params.scene_epsilon * 2.0f)) {
+      return f3(0.0f, 0.0f, 0.0f);
+    }
+    const float3 shadow_direction =
+        divv(shadow_displacement, shadow_distance);
+    if (!trace_visible(shadow_origin, shadow_direction, shadow_distance,
+                       static_cast<int>(light_index), traced_rays)) {
+      return f3(0.0f, 0.0f, 0.0f);
+    }
+    if (track_volume(shadow_origin, shadow_direction, shadow_distance, rng,
+                     volume_counters).collided != 0) {
+      return f3(0.0f, 0.0f, 0.0f);
+    }
+    const float maximum_radius =
+        fmaxf(light.radius_start, light.radius_end);
+    const float support_volume =
+        kPi * maximum_radius * maximum_radius * light.height;
+    const float3 emission_coefficient =
+        mul(flame_source(light, axial), sigma);
+    return mul(mul(bsdf, emission_coefficient),
+               no_l * support_volume * static_cast<float>(params.light_count) /
+                   distance2);
+  }
   float3 light_point;
   float3 light_normal;
   sample_light_surface(light, rng.next(), rng.next(),
@@ -692,6 +1030,10 @@ static __forceinline__ __device__ float3 sample_direct_light(
       divv(shadow_displacement, shadow_distance);
   if (!trace_visible(shadow_origin, shadow_direction, shadow_distance,
                      static_cast<int>(light_index), traced_rays)) {
+    return f3(0.0f, 0.0f, 0.0f);
+  }
+  if (track_volume(shadow_origin, shadow_direction, shadow_distance, rng,
+                   volume_counters).collided != 0) {
     return f3(0.0f, 0.0f, 0.0f);
   }
   const float mis = direct_light_mis_weight(
@@ -836,6 +1178,7 @@ extern "C" __global__ void __raygen__pathtrace() {
   float3 albedo_sum = f3(0.0f, 0.0f, 0.0f);
   float3 normal_sum = f3(0.0f, 0.0f, 0.0f);
   unsigned long long traced_rays = 0ull;
+  VolumeCounters volume_counters{};
 
   for (unsigned int sample_index = 0; sample_index < spp; ++sample_index) {
     Pcg32 rng(params.seed, pixel, sample_index);
@@ -851,6 +1194,16 @@ extern "C" __global__ void __raygen__pathtrace() {
 
     for (unsigned int bounce = 0; bounce < params.max_depth; ++bounce) {
       const SurfaceHit hit = trace_radiance(ray_origin, ray_direction, traced_rays);
+      const VolumeCollision volume = track_volume(
+          ray_origin, ray_direction, hit.hit != 0 ? hit.distance : kInfinity,
+          rng, volume_counters);
+      if (volume.collided != 0) {
+        if (previous_delta != 0) {
+          radiance =
+              add(radiance, mul(throughput, volume.source));
+        }
+        break;
+      }
       if (hit.hit == 0) {
         radiance =
             add(radiance, mul(throughput, background(ray_direction)));
@@ -894,7 +1247,8 @@ extern "C" __global__ void __raygen__pathtrace() {
       const bool next_bsdf_ray_exists = bounce + 1u < params.max_depth;
       const float3 direct =
           sample_direct_light(hit, material, base_color, wo,
-                              next_bsdf_ray_exists, rng, traced_rays);
+                              next_bsdf_ray_exists, rng, traced_rays,
+                              volume_counters);
       radiance = add(radiance, mul(throughput, direct));
       if (!next_bsdf_ray_exists) {
         break;
@@ -935,6 +1289,9 @@ extern "C" __global__ void __raygen__pathtrace() {
 
   if (params.traced_rays != nullptr) {
     params.traced_rays[pixel] = traced_rays;
+  }
+  if (params.volume_counters != nullptr) {
+    params.volume_counters[pixel] = volume_counters;
   }
 
   const float inv_spp = 1.0f / static_cast<float>(spp);
@@ -993,6 +1350,7 @@ extern "C" __global__ void __closesthit__radiance() {
   hit->material_index = material;
   hit->light_index = geometry.light_index;
   hit->front_face = front_face ? 1 : 0;
+  hit->distance = t;
   hit->position = world_point;
   hit->normal = front_face ? world_shading : neg(world_shading);
   hit->uv = geometry_uv(*record, object_point);

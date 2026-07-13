@@ -26,7 +26,7 @@ enum class GeometryType : std::uint32_t {
   Mesh,
 };
 enum class BackgroundType : std::uint32_t { Constant, Sky };
-enum class LightType : std::uint32_t { Sphere, Rectangle, Disk };
+enum class LightType : std::uint32_t { Sphere, Rectangle, Disk, Flame };
 
 struct Camera {
   Vec3 look_from{0.0f, 0.0f, 5.0f};
@@ -182,6 +182,21 @@ struct Light {
   Vec3 normal{0.0f, -1.0f, 0.0f};
   Vec3 emission{1.0f};
   float radius = 0.01f;
+
+  // Schema v3 procedural absorption-emission volume. The finite support runs
+  // from position to position + axis * height and is conservatively enclosed
+  // by a cylinder whose radius is max(radius_start, radius_end).
+  Vec3 axis{0.0f, 1.0f, 0.0f};
+  Vec3 emission_start{1.0f};
+  Vec3 emission_end{1.0f};
+  float height = 1.0f;
+  float radius_start = 0.1f;
+  float radius_end = 0.1f;
+  float extinction = 1.0f;
+  float density_scale = 1.0f;
+  float turbulence = 0.35f;
+  float noise_scale = 2.0f;
+  std::uint32_t seed = 0;
 };
 
 struct Scene {

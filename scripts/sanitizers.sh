@@ -24,3 +24,18 @@ gpu_container python3 tests/check_mesh_smoke.py \
   "${SCENE}" tests/assets/uv-quad.obj "${OUT}" \
   "${OUT%.png}.stats.json" \
   tests/golden/mesh-composite-smoke-64x64-spp1-depth6-seed1.sha256
+
+FLAME_SCENE="tests/scenes/flame-smoke.json"
+FLAME_OUT="output/sanitizer-flame-smoke.png"
+require_file "${ROOT}/${FLAME_SCENE}"
+FLAME_COMMON=(
+  build/Debug/spectraldock
+  --scene "${FLAME_SCENE}" --output "${FLAME_OUT}"
+  --width 64 --height 64 --spp 1 --max-depth 3 --seed 71
+  --no-denoise
+)
+for tool in memcheck initcheck racecheck; do
+  echo "== compute-sanitizer ${tool} (flame) =="
+  gpu_container compute-sanitizer --tool "${tool}" \
+    --report-api-errors explicit --error-exitcode 99 "${FLAME_COMMON[@]}"
+done

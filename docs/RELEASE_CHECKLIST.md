@@ -27,7 +27,7 @@
 - [ ] 确认 CUDA、OptiX、PhysX 和其他外部 SDK 或构建产物未进入仓库。
 - [ ] 确认仓库总量低于 20 MiB，没有需要 Git LFS 的文件。
 - [ ] 检查 `.gitignore`、`.dockerignore` 和 `.gitattributes`；确认 `build/`、`output/`、`reports/` 不会进入提交。
-- [ ] 确认五个内置场景仍引用同一个 `assets/examples/models/capsule-mascot.obj`，场景名、schema、CLI 和 gallery 路径未意外变化。
+- [ ] 确认六个内置场景仍引用同一个 `assets/examples/models/capsule-mascot.obj`，场景名、schema、CLI 和 gallery 路径未意外变化；mascot 实例总数为 23。
 - [ ] 确认 `scenes/generated/kinetic-foundry.json` 未被跟踪；gallery 中仅保留 Kinetic Foundry 的 PNG、stats 和 `.physics.json`。
 
 ## 4. Host-only CI 与确定性
@@ -71,8 +71,10 @@
 - [ ] 完成 Debug clean build 与 OptiX validation。
 - [ ] 完成 MIS 对照。
 - [ ] 完成 Compute Sanitizer memcheck、initcheck、racecheck。
+- [ ] 完成 flame fixture 的确定性、体积 NEE、遮挡、吸收、delta 可见性与 volume counter 检查；确认 majorant 违例和 tracking overflow 均为零。
 - [ ] 验证 mesh composite 的 RTX 5090 定向 golden。
-- [ ] 检查五个内置场景预览；需要更新正式 gallery 时，以 `--preset final` 生成并逐张核对 PNG 与 stats。
+- [ ] 检查六个内置场景预览；Rocket Test Stand 使用 960×540、256 spp、depth 12、无降噪，且无硬边、分层、NaN firefly 或明显错误照明。
+- [ ] 以 1920×1080、2048 spp、depth 12、无降噪生成 Rocket Test Stand 正式 PNG/stats，填写实测基准，确认 PNG 不超过 3 MiB，并把 CC0 明列资产数更新为 13。
 - [ ] 检查 Kinetic Foundry 的正式 PNG、渲染 stats 和 PhysX sidecar 三者同 stem 且内容对应。
 - [ ] 确认没有把 RTX 5090 结果描述为跨 GPU golden 或性能保证。
 

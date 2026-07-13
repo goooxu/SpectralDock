@@ -12,6 +12,8 @@ require_optix_root
 gpu_container cmake --build build/Release --clean-first --parallel
 gpu_container python3 tests/check_integrator_mis.py \
   build/Release/spectraldock tests/scenes/smoke.json
+gpu_container python3 tests/check_flame_transport.py \
+  build/Release/spectraldock tests/scenes/flame-smoke.json
 "$(dirname "$0")/configure.sh" Debug
 gpu_container cmake --build build/Debug --clean-first --parallel
 

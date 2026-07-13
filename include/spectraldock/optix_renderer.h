@@ -42,6 +42,11 @@ struct RenderStats {
   std::size_t peak_tracked_device_bytes = 0;
   std::uint64_t traced_rays = 0;
   double rays_per_second = 0.0;
+  std::uint64_t volume_density_evaluations = 0;
+  std::uint64_t volume_real_collisions = 0;
+  std::uint64_t volume_light_samples = 0;
+  std::uint64_t volume_majorant_violations = 0;
+  std::uint64_t volume_tracking_overflows = 0;
   std::uint64_t objects = 0;
   std::uint64_t instances = 0;
   std::uint64_t unique_meshes = 0;

@@ -315,7 +315,7 @@ Scene load_scene(const std::filesystem::path& input_path, const SceneLoadOptions
   if (!root.is_object()) fail("root", "expected an object");
 
   Scene scene;
-  scene.schema_version = optional_u32(root, "schema_version", 1, 1, 2, "root");
+  scene.schema_version = optional_u32(root, "schema_version", 1, 1, 3, "root");
   scene.camera = parse_camera(member(root, "camera", "root"));
   scene.background = parse_background(member(root, "background", "root"));
   if (root.contains("render")) scene.render = parse_render(root.at("render"));
@@ -520,18 +520,89 @@ Scene load_scene(const std::filesystem::path& input_path, const SceneLoadOptions
     if (!lights.is_array()) fail("lights", "expected an array");
     std::unordered_set<std::string> light_names;
     std::unordered_set<std::int32_t> linked_objects;
+    std::size_t flame_count = 0;
+    double total_flame_optical_thickness = 0.0;
     for (std::size_t i = 0; i < lights.size(); ++i) {
       const json& value = lights[i];
       const std::string where = "lights[" + std::to_string(i) + "]";
       Light light;
       light.name = text(member(value, "name", where), where + ".name");
       if (!light_names.insert(light.name).second) fail(where, "duplicate name '" + light.name + "'");
+      const std::string type = text(member(value, "type", where), where + ".type");
+      light.position = vec3(member(value, "position", where), where + ".position");
+
+      if (type == "flame") {
+        if (scene.schema_version < 3)
+          fail(where + ".type", "flame lights require schema_version 3");
+        if (value.contains("object"))
+          fail(where + ".object", "flame lights cannot be bound to objects");
+        if (++flame_count > 8)
+          fail("lights", "must contain at most 8 flame lights");
+
+        light.type = LightType::Flame;
+        light.axis = unit_vector(member(value, "axis", where), where + ".axis");
+        light.height = number(member(value, "height", where), where + ".height");
+        light.radius_start =
+            number(member(value, "radius_start", where), where + ".radius_start");
+        light.radius_end =
+            number(member(value, "radius_end", where), where + ".radius_end");
+        light.emission_start =
+            vec3(member(value, "emission_start", where), where + ".emission_start");
+        light.emission_end =
+            vec3(member(value, "emission_end", where), where + ".emission_end");
+        light.extinction =
+            number(member(value, "extinction", where), where + ".extinction");
+        light.density_scale =
+            optional_number(value, "density_scale", light.density_scale, where);
+        light.turbulence =
+            optional_number(value, "turbulence", light.turbulence, where);
+        light.noise_scale =
+            optional_number(value, "noise_scale", light.noise_scale, where);
+        light.seed = optional_u32(
+            value, "seed", light.seed, 0,
+            std::numeric_limits<std::uint32_t>::max(), where);
+
+        if (!(light.height > 0.0f))
+          fail(where + ".height", "must be positive");
+        if (light.radius_start < 0.0f)
+          fail(where + ".radius_start", "must be non-negative");
+        if (light.radius_end < 0.0f)
+          fail(where + ".radius_end", "must be non-negative");
+        if (!(light.radius_start > 0.0f || light.radius_end > 0.0f))
+          fail(where, "radius_start and radius_end cannot both be zero");
+        nonnegative(light.emission_start, where + ".emission_start");
+        nonnegative(light.emission_end, where + ".emission_end");
+        if (max_component(light.emission_start) <= 0.0f &&
+            max_component(light.emission_end) <= 0.0f)
+          fail(where, "emission_start and emission_end cannot both be zero");
+        if (!(light.extinction > 0.0f))
+          fail(where + ".extinction", "must be positive");
+        if (!(light.density_scale > 0.0f))
+          fail(where + ".density_scale", "must be positive");
+        if (!(light.noise_scale > 0.0f))
+          fail(where + ".noise_scale", "must be positive");
+        if (light.turbulence < 0.0f || light.turbulence > 1.0f)
+          fail(where + ".turbulence", "must be in [0, 1]");
+
+        const double half_height = 0.5 * static_cast<double>(light.height);
+        const double max_radius =
+            static_cast<double>(std::max(light.radius_start, light.radius_end));
+        const double bounds_radius =
+            std::sqrt(half_height * half_height + max_radius * max_radius);
+        total_flame_optical_thickness +=
+            2.0 * bounds_radius * static_cast<double>(light.extinction) *
+            static_cast<double>(light.density_scale);
+        if (!(total_flame_optical_thickness <= 64.0))
+          fail("lights", "total conservative flame optical thickness must be at most 64");
+
+        scene.lights.push_back(std::move(light));
+        continue;
+      }
+
       light.object_id = optional_reference(value, "object", object_ids, where);
       if (light.object_id != kInvalidId &&
           !linked_objects.insert(light.object_id).second)
         fail(where + ".object", "object is already linked to another light");
-      const std::string type = text(member(value, "type", where), where + ".type");
-      light.position = vec3(member(value, "position", where), where + ".position");
       light.emission = vec3(member(value, "emission", where), where + ".emission");
       nonnegative(light.emission, where + ".emission");
       if (max_component(light.emission) <= 0.0f) fail(where + ".emission", "must contain positive energy");

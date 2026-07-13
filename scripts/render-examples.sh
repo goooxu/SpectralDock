@@ -8,10 +8,11 @@ usage() {
     'Usage: ./scripts/render-examples.sh --preset preview|final [scene ...]' \
     '' \
     'Scene arguments may be bare names (for example material-cathedral) or JSON' \
-    'paths. With no scene arguments all five portfolio scenes are rendered.' \
+    'paths. With no scene arguments all six portfolio scenes are rendered.' \
     '' \
     'preview: 960x540, 64 spp, depth 8, AI denoising' \
     'final:   1920x1080, 512 spp, depth 12, AI denoising' \
+    'rocket-test-stand: 256/2048 spp, depth 12, no denoising' \
     'Warning: --preset final writes version-controlled files in docs/gallery.'
 }
 
@@ -73,6 +74,7 @@ if [[ $# -eq 0 ]]; then
     celestial-archive
     reflector-laboratory
     benchmark-harbor
+    rocket-test-stand
   )
 else
   scenes=("$@")
@@ -91,9 +93,21 @@ for requested in "${scenes[@]}"; do
   fi
   stem="$(basename "${scene_path}" .json)"
   output_path="${output_dir}/${stem}${suffix}.png"
-  echo "rendering ${stem} (${preset}) -> ${output_path}"
+  scene_spp="${spp}"
+  scene_depth="${depth}"
+  denoise_option="--denoise"
+  if [[ "${stem}" == "rocket-test-stand" ]]; then
+    scene_depth=12
+    denoise_option="--no-denoise"
+    if [[ "${preset}" == "preview" ]]; then
+      scene_spp=256
+    else
+      scene_spp=2048
+    fi
+  fi
+  echo "rendering ${stem} (${preset}, ${scene_spp} spp) -> ${output_path}"
   gpu_container "build/${BUILD_TYPE}/spectraldock" \
     --scene "${scene_path}" --output "${output_path}" \
-    --width "${width}" --height "${height}" --spp "${spp}" \
-    --max-depth "${depth}" --denoise
+    --width "${width}" --height "${height}" --spp "${scene_spp}" \
+    --max-depth "${scene_depth}" "${denoise_option}"
 done

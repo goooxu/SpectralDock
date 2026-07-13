@@ -111,6 +111,10 @@ $$
                      static_cast<int>(light_index), traced_rays)) {
     return f3(0.0f, 0.0f, 0.0f);
   }
+  if (track_volume(shadow_origin, shadow_direction, shadow_distance, rng,
+                   volume_counters).collided != 0) {
+    return f3(0.0f, 0.0f, 0.0f);
+  }
   const float mis = direct_light_mis_weight(
       light_pdf, bsdf_pdf, light.geometry_index >= 0,
       next_bsdf_ray_exists);
@@ -118,7 +122,7 @@ $$
 }
 ```
 
-`trace_visible` 把 `tmax` 设在灯点之前，并同时启用“首个命中即终止”和“禁用 closest-hit”。因此它只返回二值可见性，不构造第二个表面的完整着色结果。
+`trace_visible` 把 `tmax` 设在灯点之前，并同时启用“首个命中即终止”和“禁用 closest-hit”。因此它只返回二值表面可见性，不构造第二个表面的完整着色结果；随后的 `track_volume` 再估计火焰吸收，完整体积推导见第 11 章。
 
 <!-- source-snippet id="shadow-ray-visibility-query" path="src/device_programs.cu" anchor="OPTIX_RAY_FLAG_TERMINATE_ON_FIRST_HIT" -->
 ```cpp
