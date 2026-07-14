@@ -12,7 +12,7 @@
 
 ![Radiance Pavilion](gallery/radiance-pavilion.png)
 
-开放式 look-dev 展台以胶囊吉祥物为中央展品，周围四颗参考球分别覆盖漫反射、粗糙金属、光滑金属和介电材质。场景没有 emitter，也没有任何显式 `lights`；2048×1024 的程序化 Radiance RGBE 影棚环境是唯一光源。环境贴图包含暖色主光、冷色补光、顶部条光和琥珀轮廓光，schema v5 的 `direct_light_sampling: "importance"` 按线性亮度与 texel 立体角选择方向，并与 BSDF 采样进行 MIS。正式配置固定为 1920×1080、512 spp、depth 12、seed 909，并启用 AI Denoiser。
+开放式海岸 look-dev 展台以胶囊吉祥物为中央展品，四件户外观测装置沿非对称弧线展开：漫反射陶土风向标、粗糙青铜日晷、光滑铬抛物面日光镜和玻璃双透镜观测仪。场景没有 emitter，也没有任何显式 `lights`；2048×1024 的程序化 Radiance RGBE 日落海岸环境是唯一光源。环境贴图包含低角度金色夕阳、暖色分层云、冷色天顶、暗青海面、太阳反光带与远岛剪影，使各向异性的高动态热点和大范围天空补光同时出现在背景与材质响应中。schema v5 的 `direct_light_sampling: "importance"` 按线性亮度与 texel 立体角选择方向，并与 BSDF 采样进行 MIS，用这个唯一光源直观展示重要性采样如何减少样本浪费。正式配置固定为 1920×1080、512 spp、depth 12、seed 909，并启用 AI Denoiser。
 
 ## Neon Koi
 

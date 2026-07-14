@@ -15,6 +15,8 @@ gpu_container python3 tests/check_water_transport.py \
   build/Release/spectraldock tests/scenes/water-smoke.json
 gpu_container python3 tests/check_environment_importance.py \
   build/Release/spectraldock tests/scenes/environment-smoke.json
+gpu_container python3 tests/check_radiance_pavilion_importance.py \
+  build/Release/spectraldock scenes/radiance-pavilion.json
 gpu_container python3 tests/check_light_importance.py \
   build/Release/spectraldock
 "$(dirname "$0")/configure.sh" Debug

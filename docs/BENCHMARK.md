@@ -13,7 +13,7 @@
 | benchmark-harbor | 240.535 | 362.303 | 14.979 | 4,431.763 | 1,582,396,661 | 4.368 | 1,776.3 | 496.2 |
 | ember-forge | 18.021 | 15,751.946 | 0.000 | 19,655.473 | 23,399,632,667 | 1.486 | 1,468.3 | 190.6 |
 | moonlit-stepwell | 10.468 | 16,414.631 | 0.000 | 20,277.932 | 16,591,435,204 | 1.011 | 1,516.3 | 238.0 |
-| radiance-pavilion | 5.298 | 632.996 | 12.140 | 4,584.080 | 2,220,210,444 | 3.507 | 1,816.3 | 534.4 |
+| radiance-pavilion | 8.307 | 762.571 | 12.128 | 4,737.143 | 2,407,120,944 | 3.157 | 1,816.3 | 534.4 |
 
 `Path trace` 对应统计 JSON 的 `timings_ms.render`，只计一次 `optixLaunch`。`Total` 在 `render_optix()` 完成参数与像素数检查后开始，到返回前结束，包含 CUDA/OptiX 初始化、纹理解码与上传、BVH、追踪、可选降噪、后处理、设备到主机回传和设备信息查询；不含此前的场景/OBJ 解析、之后的 PNG/stats 写盘及函数局部 RAII 资源析构，因此不等于前三项简单相加。显存按 1 MiB = 1,048,576 bytes 换算。
 
@@ -28,14 +28,14 @@
 | benchmark-harbor | 1,040 | 1,040 | 1 | 5,816 | 1,025 |
 | ember-forge | 87 | 87 | 1 | 5,816 | 87 |
 | moonlit-stepwell | 36 | 36 | 1 | 5,816 | 36 |
-| radiance-pavilion | 18 | 18 | 1 | 5,816 | 18 |
+| radiance-pavilion | 37 | 37 | 1 | 5,816 | 37 |
 
 Harbor 的 16 个胶囊吉祥物共享一份 mascot GAS，另有 1,024 个 sphere GAS；`mesh_triangles` 不按实例数重复计数。
 Ember Forge 的三段 flame 不注册为几何，因此不增加 object、instance、GAS 或 SBT 数量；87 个几何对象来自砖砌锻炉、烟罩、铁砧、胶囊铁匠与锤子、工具墙、风箱、淬火桶、钢材和工坊结构。其密度求值、真实碰撞和体积选灯次数由独立 volume stats 记录。该场景的正式运行执行 26,880,900,322 次密度求值、719,613,737 次真实体积碰撞和 15,188,592,750 次 flame NEE 选灯；majorant violation 与 tracking overflow 均为 0。场景使用纯黑 constant background，不含 emitter、面积灯或隐藏补光，全部可见照明只来自三段 flame。体积求值是 raygen 中的纯 CUDA 工作，不计入 `traced_rays`，所以该场景的 rays/s 不应与纯表面场景直接比较。
 
 Moonlit Stepwell 的 water_surface 注册为一个共享波面参数的 custom-primitive GAS；最短波长决定 tile 数和 GAS primitive 数，但不把解析曲面三角化。本次正式运行记录 60,926,005,748 次 height evaluation、6,291,528,775 次 tile test、1,582,598,299 个 reported root、448,068,253 次 shadow transmission 和 2,127,949,731 个 medium segment，solver overflow、medium error 与 shadow-boundary overflow 均为 0。其路径追踪耗时和 rays/s 因包含 OptiX 自定义 intersection 中的 CUDA 数值求根、介质栈与 Beer 计算，不应直接与纯表面场景比较。
 
-Radiance Pavilion 不放置有限面积灯或 emissive 几何，唯一照明来自 2048×1024 Radiance RGBE 环境贴图。它同时展示漫反射、粗糙金属、光滑金属、介电材质和 mascot mesh，用于观察环境亮区的重要性采样、镜面反射与折射；HDR 纹理和两级 CDF 的设备内存计入显存统计。
+Radiance Pavilion 不放置有限面积灯或 emissive 几何，唯一照明来自 2048×1024 Radiance RGBE 日落海岸环境贴图。中央 mascot 与陶土风向标、青铜日晷、铬制抛物面日光镜和玻璃双透镜观测仪这四件户外观测装置同时展示漫反射、粗糙金属、光滑金属和介电材质，用于观察环境亮区的重要性采样、镜面反射与折射；HDR 纹理和两级 CDF 的设备内存计入显存统计。
 
 ## 按需 Kinetic Foundry（PhysX）
 

@@ -36,7 +36,7 @@ BSD-3-Clause 许可证。
 | `planet-ember.png` | 1774×887 RGB | `14cb336904b10e18758aa1923ad786a2651e326e4f92dd116fd689675d1d5d52` |
 | `koi-mask.png` | 1024×1536 RGBA | `fd4376986b5622043fdb63386bc02450f9ec162d7f4517ebb154e45e3052bf60` |
 | `circuit-panel.png` | 1536×1024 RGB | `9361c04d5fab6098676cee2f65efb8d222246ddba0b1828a7ab4088f9f05f0be` |
-| `environments/radiance-pavilion.hdr` | 2048×1024 Radiance RGBE，modern RLE | `610ce6a4875c62e5e5cdef4a233c9153755c29d388d84e4550f3c539cbafb186` |
+| `environments/radiance-pavilion.hdr` | 2048×1024 Radiance RGBE，modern RLE | `33b6e651abbacbf7458aac0c2610f96705a763251a1699e5548615ca36dbf6d7` |
 
 上述四张 PNG 为本项目通过 AI 图像生成工作流生成，按现状提供，不保证
 唯一性或排他性；仅在贡献者拥有相关权利的范围内作 CC0 dedication。
@@ -51,8 +51,8 @@ OpenAI Media Service；仓库保留该结构，但不验证其密码学有效性
 sidecar，不应解释为签名来源声明。
 
 `radiance-pavilion.hdr` 不是 AI 生成图。它由 Python 标准库生成器按固定
-解析公式构造暗色环幕、地面反弹以及暖色主光、冷色补光、顶部条光和琥珀
-轮廓光四块高动态范围影棚光板，再按固定顺序转换为 RGBE 与 modern RLE；
+球面解析公式构造冷色天顶、暖色分层云、低角度金色夕阳、暗青海面、太阳
+反光带和远岛剪影，再按固定顺序转换为 RGBE 与 modern RLE；
 文件不含时间戳或机器相关元数据。生成器按 Apache-2.0 提供，明确列出的
 `.hdr` 输出按 CC0-1.0 提供。
 

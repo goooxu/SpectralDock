@@ -28,14 +28,14 @@ post-processed runtime textures do not retain C2PA data.
 - Runtime size and encoding: 2048 x 1024 Radiance RGBE, linear Rec.709 RGB,
   `FORMAT=32-bit_rle_rgbe`, `-Y 1024 +X 2048`, modern per-component scanline
   RLE.
-- Runtime byte size: 298,600 bytes.
+- Runtime byte size: 2,876,893 bytes.
 - Runtime SHA-256:
-  `610ce6a4875c62e5e5cdef4a233c9153755c29d388d84e4550f3c539cbafb186`.
+  `33b6e651abbacbf7458aac0c2610f96705a763251a1699e5548615ca36dbf6d7`.
 - Deterministic rebuild:
   `python3 tools/generate_hdr_environment.py`.
-- Construction: an analytical dim cyclorama and floor bounce are combined
-  with four feathered spherical studio panels: a warm key, cool vertical fill,
-  neutral overhead strip and amber rim. Pixel centers are sampled in a fixed
+- Construction: an analytical sunset coast combines a cool zenith, layered
+  warm clouds, a low golden sun, a dark teal sea, a reflected-sun path and
+  distant island silhouettes. Pixel centers are sampled in a fixed
   equirectangular order, converted directly to RGBE, then encoded with a fixed
   literal/run partition. The file has no timestamp or machine-dependent
   metadata.

@@ -21,25 +21,25 @@
     "direct_light_sampling": "importance"
   },
   "timings_ms": {
-    "bvh_build": 5.298336029052734,
-    "render": 632.9962158203125,
-    "denoise": 12.140447616577148,
-    "total": 4584.080368
+    "bvh_build": 8.307392120361328,
+    "render": 762.5714111328125,
+    "denoise": 12.127776145935059,
+    "total": 4737.143002
   },
   "memory": {
     "peak_device_bytes": 1904541696,
-    "peak_tracked_device_bytes": 560312092
+    "peak_tracked_device_bytes": 560348280
   },
   "geometry": {
-    "objects": 18,
-    "instances": 18,
+    "objects": 37,
+    "instances": 37,
     "unique_meshes": 1,
     "mesh_triangles": 5816,
-    "gas_count": 18
+    "gas_count": 37
   },
   "performance": {
-    "traced_rays": 2220210444,
-    "rays_per_second": 3507462427.9116497
+    "traced_rays": 2407120944,
+    "rays_per_second": 3156584299.985993
   },
   "volume": {
     "volume_density_evaluations": 0,
