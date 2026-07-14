@@ -16,6 +16,7 @@ find_package(nlohmann_json CONFIG REQUIRED)
 
 add_library(spectraldock_core STATIC
   src/scene.cpp
+  src/sampling.cpp
   src/obj_loader.cpp
   src/image_io.cpp
 )
@@ -107,11 +108,13 @@ if(BUILD_TESTING)
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/scenes/smoke.json"
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/scenes/geometry-smoke.json"
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/scenes/mesh-composite-smoke.json"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/scenes/environment-smoke.json"
     "${CMAKE_CURRENT_SOURCE_DIR}/scenes/material-cathedral.json"
     "${CMAKE_CURRENT_SOURCE_DIR}/scenes/neon-koi.json"
     "${CMAKE_CURRENT_SOURCE_DIR}/scenes/celestial-archive.json"
     "${CMAKE_CURRENT_SOURCE_DIR}/scenes/reflector-laboratory.json"
     "${CMAKE_CURRENT_SOURCE_DIR}/scenes/benchmark-harbor.json"
     "${CMAKE_CURRENT_SOURCE_DIR}/scenes/ember-forge.json"
-    "${CMAKE_CURRENT_SOURCE_DIR}/scenes/moonlit-stepwell.json")
+    "${CMAKE_CURRENT_SOURCE_DIR}/scenes/moonlit-stepwell.json"
+    "${CMAKE_CURRENT_SOURCE_DIR}/scenes/radiance-pavilion.json")
 endif()

@@ -4,7 +4,7 @@ from pathlib import Path, PurePosixPath
 
 ROOT = Path(__file__).resolve().parents[1]
 REPORT_DIR = ROOT / "docs" / "technical-report"
-CHAPTERS = tuple("{:02d}".format(index) for index in range(1, 13))
+CHAPTERS = tuple("{:02d}".format(index) for index in range(1, 14))
 MARKER = "<!-- source-snippet "
 SNIPPET = re.compile(
     r'<!-- source-snippet id="(?P<id>[a-z0-9-]+)" '
@@ -85,6 +85,16 @@ REQUIRED_WATER_SNIPPETS = {
     "water-medium-stack-update",
     "water-solid-sphere-intersection",
     "water-straight-shadow-boundaries",
+}
+REQUIRED_ENVIRONMENT_SNIPPETS = {
+    "environment-direction-to-uv",
+    "environment-infinite-nee",
+    "environment-miss-mis",
+    "environment-texel-solid-angle",
+    "finite-flame-selection-pdf",
+    "finite-light-power-mixture",
+    "hdr-rgbe-linear-decode",
+    "sampling-realized-float-probabilities",
 }
 STANDARD_OPTIX_STAGES = (
     "准备 CUDA 几何数据",
@@ -223,7 +233,7 @@ def test_technical_report_source_snippets_match_the_repository():
     )
     for boundary in (
         "GPU-only",
-        "schema v4",
+        "schema v5",
         "sleeping_dynamic_actors=0",
         "motion blur",
     ):
@@ -268,6 +278,29 @@ def test_technical_report_source_snippets_match_the_repository():
         "2048 spp",
     ):
         assert boundary in water_chapter
+
+    missing_environment_snippets = REQUIRED_ENVIRONMENT_SNIPPETS - identifiers
+    assert not missing_environment_snippets, (
+        "missing HDR environment source snippets: {}".format(
+            sorted(missing_environment_snippets)
+        )
+    )
+    environment_chapter = (
+        REPORT_DIR / "13-hdr-environment-and-importance-sampling.md"
+    ).read_text(encoding="utf-8")
+    for boundary in (
+        "RGBE",
+        "线性 Rec.709",
+        "texel",
+        "二维 CDF",
+        "uniform",
+        "importance",
+        "两个 connection",
+        "flame",
+        "power heuristic",
+        "2048×1024",
+    ):
+        assert boundary in environment_chapter
 
 
 def test_technical_report_avoids_unsupported_math_macros():

@@ -34,6 +34,7 @@ struct RenderStats {
   std::uint32_t max_depth = 0;
   std::uint32_t seed = 0;
   bool denoised = false;
+  std::string direct_light_sampling;
   double bvh_build_ms = 0.0;
   double render_ms = 0.0;
   double denoise_ms = 0.0;

@@ -208,7 +208,9 @@ Camera parse_camera(const json& value) {
   return camera;
 }
 
-Background parse_background(const json& value) {
+Background parse_background(const json& value,
+                            const std::filesystem::path& scene_path,
+                            const SceneLoadOptions& options) {
   const std::string where = "background";
   Background background;
   const std::string type = text(member(value, "type", where), where + ".type");
@@ -230,10 +232,44 @@ Background parse_background(const json& value) {
     nonnegative(background.sun_color, where + ".sun_color");
     if (background.sun_cos_angle < -1.0f || background.sun_cos_angle > 2.0f)
       fail(where + ".sun_cos_angle", "must be in [-1, 2]");
+  } else if (type == "environment") {
+    background.type = BackgroundType::Environment;
+    background.environment_path = resolve_path(
+        scene_path, text(member(value, "path", where), where + ".path"));
+    background.environment_intensity = optional_number(
+        value, "intensity", background.environment_intensity, where);
+    background.environment_rotation_degrees = optional_number(
+        value, "rotation_degrees", background.environment_rotation_degrees,
+        where);
+    if (background.environment_intensity < 0.0f)
+      fail(where + ".intensity", "must be non-negative");
+    if (options.require_assets &&
+        !std::filesystem::is_regular_file(background.environment_path)) {
+      fail(where + ".path",
+           "asset not found: " + background.environment_path.string());
+    }
   } else {
     fail(where + ".type", "unsupported type '" + type + "'");
   }
   return background;
+}
+
+Integrator parse_integrator(const json& value) {
+  const std::string where = "integrator";
+  if (!value.is_object()) fail(where, "expected an object");
+  Integrator integrator;
+  const auto sampling = value.find("direct_light_sampling");
+  if (sampling == value.end()) return integrator;
+  const std::string mode = text(*sampling, where + ".direct_light_sampling");
+  if (mode == "uniform") {
+    integrator.direct_light_sampling = DirectLightSampling::Uniform;
+  } else if (mode == "importance") {
+    integrator.direct_light_sampling = DirectLightSampling::Importance;
+  } else {
+    fail(where + ".direct_light_sampling",
+         "expected 'uniform' or 'importance'");
+  }
+  return integrator;
 }
 
 RenderDefaults parse_render(const json& value) {
@@ -280,12 +316,12 @@ bool object_requires_uvs(const Scene& scene, const Object& object) {
          material_uses_texture(scene, object.back_material);
 }
 
-void require_schema_version_4(const json& root) {
+void require_schema_version_5(const json& root) {
   const json& value = member(root, "schema_version", "root");
   if (!value.is_number_unsigned() && !value.is_number_integer())
-    fail("root.schema_version", "expected the integer 4");
-  if (value != 4)
-    fail("root.schema_version", "unsupported schema version; expected 4");
+    fail("root.schema_version", "expected the integer 5");
+  if (value != 5)
+    fail("root.schema_version", "unsupported schema version; expected 5");
 }
 
 }  // namespace
@@ -327,11 +363,14 @@ Scene load_scene(const std::filesystem::path& input_path, const SceneLoadOptions
     throw std::runtime_error("cannot parse scene file " + path.string() + ": " + error.what());
   }
   if (!root.is_object()) fail("root", "expected an object");
-  require_schema_version_4(root);
+  require_schema_version_5(root);
 
   Scene scene;
   scene.camera = parse_camera(member(root, "camera", "root"));
-  scene.background = parse_background(member(root, "background", "root"));
+  scene.background =
+      parse_background(member(root, "background", "root"), path, options);
+  if (root.contains("integrator"))
+    scene.integrator = parse_integrator(root.at("integrator"));
   if (root.contains("render")) scene.render = parse_render(root.at("render"));
 
   IdMap mesh_ids;
@@ -875,6 +914,8 @@ Scene load_scene(const std::filesystem::path& input_path, const SceneLoadOptions
   if (root.contains("lights")) {
     const json& lights = root.at("lights");
     if (!lights.is_array()) fail("lights", "expected an array");
+    if (lights.size() > 4096)
+      fail("lights", "must contain at most 4096 explicit lights");
     std::unordered_set<std::string> light_names;
     std::unordered_set<std::int32_t> linked_objects;
     std::size_t flame_count = 0;
@@ -981,6 +1022,9 @@ Scene load_scene(const std::filesystem::path& input_path, const SceneLoadOptions
       }
       if (light.object_id != kInvalidId) {
         const Object& object = scene.objects[light.object_id];
+        if (object.alpha_texture != kInvalidId)
+          fail(where + ".object",
+               "alpha-cutout emitters cannot be explicitly sampled");
         const bool type_matches =
             (light.type == LightType::Sphere && object.type == GeometryType::Sphere) ||
             (light.type == LightType::Rectangle && object.type == GeometryType::Rectangle) ||

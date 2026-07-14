@@ -35,6 +35,7 @@ enum PrimitiveType : std::uint32_t {
 enum DeviceBackgroundType : std::uint32_t {
   kBackgroundConstant = 0,
   kBackgroundSky = 1,
+  kBackgroundEnvironment = 2,
 };
 
 enum DeviceLightType : std::uint32_t {
@@ -146,6 +147,11 @@ struct LightData {
   std::uint32_t type = kLightRectangle;
   float3 normal = {0.0f, 1.0f, 0.0f};
   float radius = 0.0f;
+  // Probability of selecting this light from the finite-light CDF. It is
+  // copied from the actual float CDF intervals uploaded for this launch, so
+  // sampling, NEE estimators and emitter-hit MIS all use the same value.
+  float selection_pdf = 0.0f;
+  std::uint32_t selection_reserved = 0;
 
   // A flame is an oriented, finite, procedural absorption-emission volume.
   // Existing area-light fields remain valid for the three surface types.
@@ -224,9 +230,24 @@ struct LaunchParams {
   float3 sun_color = {0.0f, 0.0f, 0.0f};
   std::uint32_t reserved_sun = 0;
 
+  // Linear RGB latitude-longitude environment. Image row zero is the north
+  // pole (+Y). The texture uses normalized coordinates, wraps in U and clamps
+  // in V. CDFs include their zero endpoint: H+1 row values and H*(W+1)
+  // conditional values. Their float interval widths are the authoritative
+  // probabilities used by sampling and MIS.
+  std::uint64_t environment_texture = 0;
+  const float* environment_row_cdf = nullptr;
+  const float* environment_conditional_cdf = nullptr;
+  std::uint32_t environment_width = 0;
+  std::uint32_t environment_height = 0;
+  float environment_intensity = 1.0f;
+  float environment_rotation_radians = 0.0f;
+  std::uint64_t environment_reserved = 0;
+
   const MaterialData* materials = nullptr;
   const TextureData* textures = nullptr;
   const LightData* lights = nullptr;
+  const float* light_cdf = nullptr;
   std::uint32_t material_count = 0;
   std::uint32_t texture_count = 0;
   std::uint32_t light_count = 0;

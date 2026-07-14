@@ -20,9 +20,9 @@
 - 以稳态表面光传输为主，没有通用雾、烟或散射参与介质、次表面散射与传播时间；特化的 flame 只做吸收—自发光，water 只做均匀 RGB 吸收；
 - 使用线性 RGB，不模拟波长、色散、衍射或偏振；
 - `max_depth` 会截断最后一个已处理表面事件之后的继续路径；最后一个事件自身的显式直接光仍完整估计；
-- 环境天空和太阳瓣没有显式重要性采样；
+- Radiance HDR 环境有显式重要性采样；constant、sky 渐变和太阳瓣仍没有；
 - 纹理 emitter 和 mesh emitter 不能进入 NEE 灯列表；
-- 灯按数量而非功率均匀选择，球灯按整个球面而非可见立体角采样。
+- 有限灯按发光功率代理选择，但球灯仍按整个球面而非可见立体角采样。
 
 ### 材质
 
@@ -41,7 +41,7 @@
 - 8 bit PNG 不保存原始 HDR 缓冲区。
 - sRGB 纹理先对编码码值做硬件双线性过滤，之后才解码到线性空间。
 
-发光材质命中后立即终止路径，不会同时反射；背景也只是 y 向渐变加一个硬边太阳瓣，而非环境贴图或光度学天空。
+发光材质命中后立即终止路径，不会同时反射；HDR 环境是纬经贴图，不是光度学天空，也不包含大气散射模型。
 
 这些是明确的设计边界。未来扩展时，应先判断新功能属于渲染方程、采样策略、几何查询还是显示变换。
 
@@ -156,12 +156,13 @@ $$
 
 测试不是渲染器的核心功能，而是按层保存其行为证据：
 
-1. Host-only 单元测试检查向量、场景解析、OBJ、PNG I/O 和输入语义；
+1. Host-only 单元测试检查向量、场景解析、OBJ、PNG/HDR I/O、CDF 分布和输入语义；
 2. parser fixtures 覆盖 primitive、灯、UV、alpha、实例与共享 GAS 的输入组合，但不执行 GPU 着色；
-3. 无 golden 的积分器 GPU 对照以 64×64、4 spp、depth 1、seed 1 渲染绑定/未绑定同一灯的两版 smoke 场景，要求解码 RGBA 逐字节相同且非空；
-4. 综合 mesh GPU fixture 定向覆盖共享 GAS、实例变换、UV、平滑法线、alpha 和 custom primitives；
-5. Compute Sanitizer 查找越界、竞争和未初始化数据；
-6. 技术报告 pytest 逐字核对引用的源码片段，并检查数学标记没有使用渲染环境不支持的宏，避免报告与实现漂移。
+3. 无 golden 的积分器 GPU 对照覆盖末端 bound/unbound MIS、HDR 环境唯一照明、旋转、确定性、零强度黑场，以及 uniform/importance 的高 spp 均值与低 spp MSE；
+4. 多灯对照分别触发 rectangle、disk、sphere、flame，再验证功率选择降低强弱灯场景的低 spp MSE；
+5. 综合 mesh GPU fixture 定向覆盖共享 GAS、实例变换、UV、平滑法线、alpha 和 custom primitives；
+6. Compute Sanitizer 对 mesh、water、flame 和 HDR environment fixture 查找越界、竞争和未初始化数据；
+7. 技术报告 pytest 逐字核对引用的源码片段，并检查数学标记没有使用渲染环境不支持的宏，避免报告与实现漂移。
 
 唯一保留的像素 golden 是 mesh fixture 的 RTX 5090 基线；积分器对照的临时 PNG 和 stats 会自动清理，不保存哈希。mesh golden 只证明定向输出与已接受结果逐字节相同，不能独立证明物理正确；跨 GPU、编译器或 `--use_fast_math` 的少量浮点差异，也不自动等于数学回归。正式 gallery 与 stats 继续作为作品和一次运行记录保存，但不再是自动测试门禁；项目也不设置自动性能阈值或 profiling 验收。可靠结论仍需要公式审查、定向场景和数值/视觉证据结合。
 
@@ -171,10 +172,10 @@ $$
 
 1. 在像素与镜头上取样，得到相机射线；
 2. OptiX 遍历 IAS/GAS/BVH，内建或自定义 intersection 返回最近交点；解析水面在 tile AABB 内求高度场根，得到法线、UV 和水材质；
-3. 普通表面用 NEE 连接面积灯：无水路径用二值 shadow ray，含水路径沿直线累计界面 Fresnel 与 Beer 透射，flame 再沿同一段估计吸收；
+3. 普通表面对有限灯和 HDR 环境分别执行一个 NEE 样本：无水路径用二值 shadow ray，含水路径沿直线累计界面 Fresnel 与 Beer 透射，flame 再沿连接段估计吸收；
 4. BSDF 选择下一方向，吞吐量乘 `scatter.weight`；连续事件对应 $f_s|\mathbf n\cdot\boldsymbol\omega_i|/p_B$，介电 delta 分支按离散事件处理，含水路径用介质栈决定两侧 IOR 并在传播段累计 Beer 吸收；
-5. NEE 与命中灯面的估计用 power heuristic MIS 分权；
-6. 路径在 miss、emitter、无效散射、轮盘或最大深度处结束；最大深度的最后一个表面事件仍先完整估计直接光；
+5. 面积灯 NEE 与命中灯面、环境 NEE 与 BSDF miss 分别用 power heuristic MIS 分权；flame 保留互斥体积估计器；
+6. 路径在 miss、emitter、无效散射、轮盘或最大深度处结束；最大深度的最后一个表面事件仍先完整估计两个直接光域；
 7. 多条路径的线性 RGB 平均成为 HDR beauty；
 8. 可选降噪后，执行曝光、ACES 风格拟合、sRGB 编码和 8 bit 量化。程序化 flame 的吸收—自发光见第 11 章，解析水面的求交、介质传输与工程近似见第 12 章。
 

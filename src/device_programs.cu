@@ -202,6 +202,19 @@ struct Pcg32 {
     // merging the zero outcome into an already occupied 24-bit sample bin.
     return value > 0.0f ? value : 0x1.0p-25f;
   }
+
+  // A 53-bit [0, 1) uniform is used for environment CDF inversion. Even a
+  // 32-bit variate cannot reach every positive conditional interval created
+  // by the 1% sphere floor in a high-resolution map near its poles.
+  __forceinline__ __device__ double next_cdf() {
+    const unsigned long long high =
+        static_cast<unsigned long long>(next_uint() >> 5u);
+    const unsigned long long low =
+        static_cast<unsigned long long>(next_uint() >> 6u);
+    const unsigned long long bits = (high << 26u) | low;
+    return static_cast<double>(bits) *
+           1.1102230246251565404236316680908203125e-16;
+  }
 };
 
 constexpr unsigned int kMaxFlames = 8u;
@@ -1417,8 +1430,8 @@ static __forceinline__ __device__ float light_direction_pdf(
   if (cos_light <= 0.0f || area <= 0.0f) {
     return 0.0f;
   }
-  return distance2 /
-         (cos_light * area * static_cast<float>(params.light_count));
+  if (!(light.selection_pdf > 0.0f)) return 0.0f;
+  return light.selection_pdf * distance2 / (cos_light * area);
 }
 
 static __forceinline__ __device__ void sample_light_surface(
@@ -1460,7 +1473,29 @@ static __forceinline__ __device__ float3 sample_flame_volume(
                  mul(bitangent, radius * sinf(phi))));
 }
 
-static __forceinline__ __device__ float3 sample_direct_light(
+static __forceinline__ __device__ unsigned int sample_finite_light_index(
+    float value) {
+  if (params.light_count == 0u) return 0u;
+  if (params.light_cdf == nullptr) {
+    const unsigned int candidate =
+        static_cast<unsigned int>(value * params.light_count);
+    return candidate < params.light_count ? candidate
+                                          : params.light_count - 1u;
+  }
+  unsigned int lower = 0u;
+  unsigned int upper = params.light_count;
+  while (lower + 1u < upper) {
+    const unsigned int middle = lower + (upper - lower) / 2u;
+    if (value < params.light_cdf[middle]) {
+      upper = middle;
+    } else {
+      lower = middle;
+    }
+  }
+  return lower;
+}
+
+static __forceinline__ __device__ float3 sample_finite_direct_light(
     const SurfaceHit& hit, const MaterialData& material, float3 base_color,
     float3 wo, bool next_bsdf_ray_exists, Pcg32& rng,
     unsigned long long& traced_rays, VolumeCounters& volume_counters,
@@ -1470,11 +1505,12 @@ static __forceinline__ __device__ float3 sample_direct_light(
        material.type != spectraldock::kMaterialMetal)) {
     return f3(0.0f, 0.0f, 0.0f);
   }
-  const unsigned int candidate =
-      static_cast<unsigned int>(rng.next() * params.light_count);
   const unsigned int light_index =
-      candidate < params.light_count ? candidate : params.light_count - 1u;
+      sample_finite_light_index(rng.next());
   const LightData light = params.lights[light_index];
+  if (!(light.selection_pdf > 0.0f)) {
+    return f3(0.0f, 0.0f, 0.0f);
+  }
   if (light.type == spectraldock::kLightFlame) {
     ++volume_counters.light_samples;
     const float3 light_point = sample_flame_volume(
@@ -1532,8 +1568,8 @@ static __forceinline__ __device__ float3 sample_direct_light(
     const float3 emission_coefficient =
         mul(flame_source(light, axial), sigma);
     return mul(mul(mul(bsdf, emission_coefficient), surface_transmittance),
-               no_l * support_volume * static_cast<float>(params.light_count) /
-                   distance2);
+               no_l * support_volume /
+                   (light.selection_pdf * distance2));
   }
   float3 light_point;
   float3 light_normal;
@@ -1561,8 +1597,7 @@ static __forceinline__ __device__ float3 sample_direct_light(
     return f3(0.0f, 0.0f, 0.0f);
   }
   const float light_pdf =
-      distance2 /
-      (cos_light * area * static_cast<float>(params.light_count));
+      light.selection_pdf * distance2 / (cos_light * area);
   float3 bsdf;
   float bsdf_pdf;
   evaluate_bsdf(material, base_color, hit.normal, wo, wi, bsdf, bsdf_pdf);
@@ -1603,7 +1638,219 @@ static __forceinline__ __device__ float3 sample_direct_light(
              no_l * mis / light_pdf);
 }
 
+static __forceinline__ __device__ bool has_environment() {
+  return params.background_type == spectraldock::kBackgroundEnvironment &&
+         params.environment_texture != 0u &&
+         params.environment_width > 0u && params.environment_height > 0u;
+}
+
+static __forceinline__ __device__ float3 rotate_environment_to_local(
+    float3 direction) {
+  const float c = cosf(params.environment_rotation_radians);
+  const float s = sinf(params.environment_rotation_radians);
+  return f3(c * direction.x - s * direction.z,
+            direction.y,
+            s * direction.x + c * direction.z);
+}
+
+static __forceinline__ __device__ float3 rotate_environment_to_world(
+    float3 direction) {
+  const float c = cosf(params.environment_rotation_radians);
+  const float s = sinf(params.environment_rotation_radians);
+  return f3(c * direction.x + s * direction.z,
+            direction.y,
+            -s * direction.x + c * direction.z);
+}
+
+static __forceinline__ __device__ float2 environment_uv(float3 direction) {
+  const float3 local = rotate_environment_to_local(normalize3(direction));
+  float u = atan2f(local.z, local.x) / (2.0f * kPi) + 0.5f;
+  u -= floorf(u);
+  const float v = acosf(fminf(fmaxf(local.y, -1.0f), 1.0f)) / kPi;
+  return f2(u, fminf(fmaxf(v, 0.0f), 1.0f));
+}
+
+static __forceinline__ __device__ float3 environment_radiance(
+    float3 direction) {
+  if (!has_environment() || !(params.environment_intensity > 0.0f)) {
+    return f3(0.0f, 0.0f, 0.0f);
+  }
+  const float2 uv = environment_uv(direction);
+  const float4 value = tex2D<float4>(
+      static_cast<cudaTextureObject_t>(params.environment_texture),
+      uv.x, uv.y);
+  return mul(clamp_nonnegative(f3(value.x, value.y, value.z)),
+             params.environment_intensity);
+}
+
+static __forceinline__ __device__ unsigned int sample_cdf_interval(
+    const float* cdf, unsigned int count, double value) {
+  unsigned int lower = 0u;
+  unsigned int upper = count;
+  while (lower + 1u < upper) {
+    const unsigned int middle = lower + (upper - lower) / 2u;
+    if (value < cdf[middle]) {
+      upper = middle;
+    } else {
+      lower = middle;
+    }
+  }
+  return lower;
+}
+
+static __forceinline__ __device__ float environment_direction_pdf(
+    float3 direction) {
+  if (!has_environment()) return 0.0f;
+  if (params.environment_row_cdf == nullptr ||
+      params.environment_conditional_cdf == nullptr) {
+    return 1.0f / (4.0f * kPi);
+  }
+  const float2 uv = environment_uv(direction);
+  const unsigned int raw_column =
+      static_cast<unsigned int>(uv.x * params.environment_width);
+  const unsigned int raw_row =
+      static_cast<unsigned int>(uv.y * params.environment_height);
+  const unsigned int column = raw_column < params.environment_width
+      ? raw_column : params.environment_width - 1u;
+  const unsigned int row = raw_row < params.environment_height
+      ? raw_row : params.environment_height - 1u;
+  const float row_probability =
+      params.environment_row_cdf[row + 1u] -
+      params.environment_row_cdf[row];
+  const unsigned int stride = params.environment_width + 1u;
+  const float* conditional =
+      params.environment_conditional_cdf + row * stride;
+  const float column_probability =
+      conditional[column + 1u] - conditional[column];
+  const float theta0 = kPi * static_cast<float>(row) /
+                       static_cast<float>(params.environment_height);
+  const float theta1 = kPi * static_cast<float>(row + 1u) /
+                       static_cast<float>(params.environment_height);
+  const float solid_angle =
+      (2.0f * kPi / static_cast<float>(params.environment_width)) *
+      (cosf(theta0) - cosf(theta1));
+  return solid_angle > 0.0f
+             ? fmaxf(row_probability, 0.0f) *
+                   fmaxf(column_probability, 0.0f) / solid_angle
+             : 0.0f;
+}
+
+static __forceinline__ __device__ float3 sample_environment_direction(
+    double row_sample, double column_sample, float& pdf) {
+  if (params.environment_row_cdf == nullptr ||
+      params.environment_conditional_cdf == nullptr) {
+    const float y = 1.0f - 2.0f * static_cast<float>(row_sample);
+    const float radial = sqrtf(fmaxf(0.0f, 1.0f - y * y));
+    const float phi = 2.0f * kPi * static_cast<float>(column_sample);
+    pdf = 1.0f / (4.0f * kPi);
+    return f3(radial * cosf(phi), y, radial * sinf(phi));
+  }
+
+  const unsigned int row = sample_cdf_interval(
+      params.environment_row_cdf, params.environment_height, row_sample);
+  const float row_begin = params.environment_row_cdf[row];
+  const float row_probability =
+      params.environment_row_cdf[row + 1u] - row_begin;
+  float row_fraction = row_probability > 0.0f
+      ? static_cast<float>(fmin(fmax(
+            (row_sample - static_cast<double>(row_begin)) /
+                static_cast<double>(row_probability),
+            0.0), 0.9999999999999999))
+      : 0.5f;
+  row_fraction = fminf(row_fraction, 0x1.fffffep-1f);
+
+  const unsigned int stride = params.environment_width + 1u;
+  const float* conditional =
+      params.environment_conditional_cdf + row * stride;
+  const unsigned int column = sample_cdf_interval(
+      conditional, params.environment_width, column_sample);
+  const float column_begin = conditional[column];
+  const float column_probability = conditional[column + 1u] - column_begin;
+  float column_fraction = column_probability > 0.0f
+      ? static_cast<float>(fmin(fmax(
+            (column_sample - static_cast<double>(column_begin)) /
+                static_cast<double>(column_probability),
+            0.0), 0.9999999999999999))
+      : 0.5f;
+  column_fraction = fminf(column_fraction, 0x1.fffffep-1f);
+
+  const float theta0 = kPi * static_cast<float>(row) /
+                       static_cast<float>(params.environment_height);
+  const float theta1 = kPi * static_cast<float>(row + 1u) /
+                       static_cast<float>(params.environment_height);
+  const float cos_theta0 = cosf(theta0);
+  const float cos_theta1 = cosf(theta1);
+  const float cos_theta =
+      cos_theta0 + (cos_theta1 - cos_theta0) * row_fraction;
+  const float sin_theta =
+      sqrtf(fmaxf(0.0f, 1.0f - cos_theta * cos_theta));
+  const float u =
+      (static_cast<float>(column) + column_fraction) /
+      static_cast<float>(params.environment_width);
+  const float phi = 2.0f * kPi * (u - 0.5f);
+  const float3 local =
+      f3(sin_theta * cosf(phi), cos_theta, sin_theta * sinf(phi));
+  const float solid_angle =
+      (2.0f * kPi / static_cast<float>(params.environment_width)) *
+      (cos_theta0 - cos_theta1);
+  pdf = solid_angle > 0.0f
+      ? fmaxf(row_probability, 0.0f) *
+            fmaxf(column_probability, 0.0f) / solid_angle
+      : 0.0f;
+  return normalize3(rotate_environment_to_world(local));
+}
+
+static __forceinline__ __device__ float3 sample_environment_direct_light(
+    const SurfaceHit& hit, const MaterialData& material, float3 base_color,
+    float3 wo, bool next_bsdf_ray_exists, Pcg32& rng,
+    unsigned long long& traced_rays, VolumeCounters& volume_counters,
+    const MediumState& media, WaterCounters& water_counters) {
+  if (!has_environment() || !(params.environment_intensity > 0.0f) ||
+      (material.type != spectraldock::kMaterialLambertian &&
+       material.type != spectraldock::kMaterialMetal)) {
+    return f3(0.0f, 0.0f, 0.0f);
+  }
+  float light_pdf = 0.0f;
+  const float3 wi =
+      sample_environment_direction(rng.next_cdf(), rng.next_cdf(), light_pdf);
+  if (!(light_pdf > 0.0f)) return f3(0.0f, 0.0f, 0.0f);
+  const float no_l = dot3(hit.normal, wi);
+  if (!(no_l > 0.0f)) return f3(0.0f, 0.0f, 0.0f);
+  float3 bsdf;
+  float bsdf_pdf;
+  evaluate_bsdf(material, base_color, hit.normal, wo, wi, bsdf, bsdf_pdf);
+  if (!(bsdf_pdf > 0.0f)) return f3(0.0f, 0.0f, 0.0f);
+
+  const float3 shadow_origin =
+      add(hit.position, mul(hit.normal, params.scene_epsilon * 2.0f));
+  float3 surface_transmittance = f3(1.0f, 1.0f, 1.0f);
+  if (params.water_surface_count == 0u) {
+    if (!trace_visible(shadow_origin, wi, kInfinity, -1, traced_rays)) {
+      return f3(0.0f, 0.0f, 0.0f);
+    }
+  } else {
+    surface_transmittance = trace_water_transmittance(
+        shadow_origin, wi, kInfinity, -1, media, traced_rays,
+        water_counters);
+    if (!(max_component(surface_transmittance) > 0.0f)) {
+      return f3(0.0f, 0.0f, 0.0f);
+    }
+  }
+  if (track_volume(shadow_origin, wi, kInfinity, rng,
+                   volume_counters).collided != 0) {
+    return f3(0.0f, 0.0f, 0.0f);
+  }
+  const float mis = direct_light_mis_weight(
+      light_pdf, bsdf_pdf, true, next_bsdf_ray_exists);
+  return mul(mul(mul(bsdf, environment_radiance(wi)),
+                     surface_transmittance),
+             no_l * mis / light_pdf);
+}
+
 static __forceinline__ __device__ float3 background(float3 direction) {
+  if (params.background_type == spectraldock::kBackgroundEnvironment) {
+    return environment_radiance(direction);
+  }
   float3 result = params.background_color;
   if (params.background_type == spectraldock::kBackgroundSky) {
     const float t = 0.5f * (fminf(fmaxf(direction.y, -1.0f), 1.0f) + 1.0f);
@@ -1784,8 +2031,16 @@ extern "C" __global__ void __raygen__pathtrace() {
         break;
       }
       if (hit.hit == 0) {
-        radiance =
-            add(radiance, mul(throughput, background(ray_direction)));
+        const float environment_pdf =
+            previous_delta == 0 ? environment_direction_pdf(ray_direction)
+                                : 0.0f;
+        const float miss_weight =
+            previous_delta != 0 || !(environment_pdf > 0.0f)
+                ? 1.0f
+                : power_heuristic(previous_pdf, environment_pdf);
+        radiance = add(
+            radiance,
+            mul(mul(throughput, background(ray_direction)), miss_weight));
         break;
       }
       if (hit.material_index < 0 ||
@@ -1824,11 +2079,17 @@ extern "C" __global__ void __raygen__pathtrace() {
 
       const float3 wo = neg(ray_direction);
       const bool next_bsdf_ray_exists = bounce + 1u < params.max_depth;
-      const float3 direct =
-          sample_direct_light(hit, material, base_color, wo,
-                              next_bsdf_ray_exists, rng, traced_rays,
-                              volume_counters, media, water_counters);
-      radiance = add(radiance, mul(throughput, direct));
+      const float3 finite_direct =
+          sample_finite_direct_light(hit, material, base_color, wo,
+                                     next_bsdf_ray_exists, rng, traced_rays,
+                                     volume_counters, media, water_counters);
+      const float3 environment_direct =
+          sample_environment_direct_light(
+              hit, material, base_color, wo, next_bsdf_ray_exists, rng,
+              traced_rays, volume_counters, media, water_counters);
+      radiance = add(
+          radiance,
+          mul(throughput, add(finite_direct, environment_direct)));
       if (!next_bsdf_ray_exists) {
         break;
       }

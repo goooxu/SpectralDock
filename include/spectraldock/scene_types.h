@@ -32,7 +32,8 @@ enum class GeometryType : std::uint32_t {
   Mesh,
   WaterSurface,
 };
-enum class BackgroundType : std::uint32_t { Constant, Sky };
+enum class BackgroundType : std::uint32_t { Constant, Sky, Environment };
+enum class DirectLightSampling : std::uint32_t { Uniform, Importance };
 enum class LightType : std::uint32_t { Sphere, Rectangle, Disk, Flame };
 
 struct Camera {
@@ -52,7 +53,15 @@ struct Background {
   Vec3 sun_direction{1.0f, 0.0f, 0.0f};
   Vec3 sun_color{0.0f};
   float sun_cos_angle = 2.0f;  // Values > 1 disable the sun lobe.
+  std::filesystem::path environment_path;
+  float environment_intensity = 1.0f;
+  float environment_rotation_degrees = 0.0f;
   float exposure = 0.0f;       // Exposure value in stops (EV).
+};
+
+struct Integrator {
+  DirectLightSampling direct_light_sampling =
+      DirectLightSampling::Importance;
 };
 
 struct RenderDefaults {
@@ -227,6 +236,7 @@ struct Light {
 struct Scene {
   Camera camera{};
   Background background{};
+  Integrator integrator{};
   RenderDefaults render{};
   std::vector<Texture> textures;
   std::vector<Material> materials;

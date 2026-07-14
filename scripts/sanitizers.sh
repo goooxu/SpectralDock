@@ -21,6 +21,23 @@ for tool in memcheck initcheck racecheck; do
     --report-api-errors explicit --error-exitcode 99 "${COMMON[@]}"
 done
 
+ENVIRONMENT_SCENE="tests/scenes/environment-smoke.json"
+ENVIRONMENT_OUT="output/sanitizer-environment-smoke.png"
+require_file "${ROOT}/${ENVIRONMENT_SCENE}"
+require_file "${ROOT}/assets/examples/environments/radiance-pavilion.hdr"
+ENVIRONMENT_COMMON=(
+  build/Debug/spectraldock
+  --scene "${ENVIRONMENT_SCENE}" --output "${ENVIRONMENT_OUT}"
+  --width 64 --height 64 --spp 1 --max-depth 4 --seed 109
+  --no-denoise
+)
+for tool in memcheck initcheck racecheck; do
+  echo "== compute-sanitizer ${tool} (HDR environment) =="
+  gpu_container compute-sanitizer --tool "${tool}" \
+    --report-api-errors explicit --error-exitcode 99 \
+    "${ENVIRONMENT_COMMON[@]}"
+done
+
 WATER_SCENE="tests/scenes/water-smoke.json"
 WATER_OUT="output/sanitizer-water-smoke.png"
 require_file "${ROOT}/${WATER_SCENE}"

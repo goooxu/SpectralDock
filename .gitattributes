@@ -16,3 +16,4 @@
 *.sha256 text eol=lf
 
 *.png binary
+*.hdr binary

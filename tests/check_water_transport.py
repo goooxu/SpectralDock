@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Directional GPU checks for schema-v4 runtime water transport."""
+"""Directional GPU checks for schema-v5 runtime water transport."""
 
 import copy
 import json

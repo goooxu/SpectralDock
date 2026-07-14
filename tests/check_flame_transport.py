@@ -98,7 +98,7 @@ def area_transmission_scene(with_flame):
             }
         )
     return {
-        "schema_version": 4,
+        "schema_version": 5,
         "camera": {
             "look_from": [0.0, 1.25, 5.0], "look_at": [0.0, 1.25, -1.5],
             "up": [0.0, 1.0, 0.0], "vfov": 30.0,

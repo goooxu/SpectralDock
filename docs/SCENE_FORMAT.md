@@ -1,11 +1,12 @@
 # 场景格式
 
-场景为 JSON，统一使用 `schema_version: 4`。当前 schema 同时包含 OBJ mesh、程序化 `flame` 体积光和运行时 `water_surface`；旧版本不再作为输入接口。未知引用、缺失资源、非有限数、退化几何和非法材质会在 CUDA/OptiX 初始化前报错。
+场景为 JSON，统一使用 `schema_version: 5`。当前 schema 同时包含 OBJ mesh、程序化 `flame` 体积光、运行时 `water_surface`、Radiance HDR 环境和直接光重要性采样；v1–v4 与未来未知版本都不再作为输入接口。未知引用、缺失资源、非有限数、退化几何和非法材质会在 CUDA/OptiX 初始化前报错。
 
 ## 顶层字段
 
 - `camera`：`look_from`、`look_at`、`up`、`vfov`/`vertical_fov_degrees`、`aperture`、`focus_distance`。
-- `background`：`constant`，或带渐变和太阳瓣的 `sky`；`exposure` 以 EV 表示。
+- `integrator`：`direct_light_sampling` 可为 `importance` 或 `uniform`，省略时默认为 `importance`。
+- `background`：`constant`、带渐变和太阳瓣的 `sky`，或 Radiance RGBE `environment`；`exposure` 以 EV 表示。
 - `render`：`width`、`height`、`spp`、`max_depth`、`seed`、`denoise`。
 - `textures`：`constant` 或 PNG `image`，色彩空间为 `srgb`/`linear`。
 - `materials`：`lambertian`、`metal`、`dielectric`、`emitter` 和 `water`。
@@ -15,11 +16,52 @@
 
 `max_depth` 的范围为 1–64，语义是最多处理的表面事件数；最后一个事件完整估计显式直接光，但不再生成下一事件的 BSDF 射线。
 
+## HDR 环境
+
+```json
+{
+  "schema_version": 5,
+  "integrator": {"direct_light_sampling": "importance"},
+  "background": {
+    "type": "environment",
+    "path": "../assets/examples/environments/radiance-pavilion.hdr",
+    "intensity": 1.0,
+    "rotation_degrees": 0.0,
+    "exposure": 0.0
+  }
+}
+```
+
+`path` 相对场景 JSON 解析。`intensity` 是非负的线性环境辐亮度缩放；`exposure` 仍只作用于最终显示变换，二者不能互换。`rotation_degrees` 把环境绕世界 `+Y` 轴按右手方向旋转，任意有限角度都可使用。纬经图顶部对应 `+Y`，U 方向环绕，V 方向在两极截断。
+
+v5 只接受带 `FORMAT=32-bit_rle_rgbe` 的 Radiance RGBE `.hdr`，颜色解释为线性 Rec.709 RGB。文件方向必须是常见的 `-Y H +X W`；现代逐通道 RLE 与原始 RGBE scanline 都受支持。最大宽度为 8192、高度为 4096、总像素数不超过 $2^{25}$；非法头部、截断 packet、尺寸溢出、负值或非有限解码结果都会在 CUDA 上传前失败。首版不接受 OpenEXR，也不输出 HDR 文件。
+
+环境查找使用纬经映射。第 $j$ 行覆盖的精确 texel 立体角是
+
+$$
+\Omega_j=\frac{2\pi}{W}
+\left(\cos\frac{\pi j}{H}-\cos\frac{\pi(j+1)}{H}\right).
+$$
+
+`importance` 模式按 Rec.709 亮度 $Y_{ij}\Omega_j$ 建立行 CDF 与行内条件 CDF，并混入 1% 均匀球面概率；全黑环境自动退化为均匀球面采样。`uniform` 对照模式始终按均匀球面分布采样。两种模式改变方差而不应改变收敛均值。
+
+## 有限灯选择与两个 NEE 域
+
+`importance` 模式还会按发光功率代理选择 `lights`。rectangle、disk 和 sphere 使用 $\pi A Y(L_e)$；flame 使用包围圆柱体积、消光系数、密度缩放和两端平均亮度构成的各向同性发光代理。这些值只用于分配样本，不是物理瓦特值。每个灯的选择概率为
+
+$$
+q_i=0.99\frac{w_i}{\sum_k w_k}+\frac{0.01}{N},
+$$
+
+全零代理或 `uniform` 模式退化为 $q_i=1/N$。显式灯最多 4096 个。最终上传的是严格递增的 float CDF；设备端 PDF 使用实际相邻 CDF 边界之差，而不是构建 CDF 前的 double 权重。
+
+在支持 NEE 的 Lambert 与 GGX 表面，环境域和有限灯域各独立取得一个样本；两者都存在时每个事件最多形成两个 shadow connection，但可见性查询被遮挡后不一定实际发出两条 OptiX 射线。面积灯的方向 PDF 包含 $q_i$；flame 的无散射体积估计同样除以 $q_i$。环境 NEE 与稍后 BSDF miss 使用 power-heuristic MIS；flame 保留体积碰撞/NEE 的互斥估计器，不套用表面 emitter 的 MIS。
+
 ## OBJ 网格与实例
 
 ```json
 {
-  "schema_version": 4,
+  "schema_version": 5,
   "meshes": [
     {"name": "mascot", "path": "../assets/examples/models/capsule-mascot.obj"}
   ],
@@ -119,6 +161,8 @@ $$
 相机路径在水面使用精确光滑介电 Fresnel 与 Snell 折射，介质栈跟踪当前 IOR/吸收系数，每段水下距离按 `exp(-absorption * distance)` 衰减。跨水面的显式直接光最多处理 8 个边界，保留表面遮挡并应用 Fresnel 透射与 Beer 衰减；为控制成本，这条 shadow 路径保持直线，不执行 Snell 弯折，因此不是焦散求解器。水面是固定单帧，不包含时间、流体动力学、泡沫或 motion blur。
 
 ## 统计
+
+stats JSON 的 `render.direct_light_sampling` 记录实际使用的 `importance` 或 `uniform`，因此采样策略是正式结果可复现信息的一部分。
 
 渲染统计的 `geometry` 节包含：
 

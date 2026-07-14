@@ -1,13 +1,13 @@
 # 05　直接光照、NEE 与 MIS
 
-仅按 BSDF 随机游走在数学上可行，但一盏小灯在表面半球中只占很小方向范围。随机射线可能经过成千上万次尝试也撞不到灯，画面便出现高方差亮点。SpectralDock 在 Lambert 和 metal 表面**主动连接一个灯面样本**，这叫 Next Event Estimation（NEE）。
+仅按 BSDF 随机游走在数学上可行，但一盏小灯或 HDR 环境中的高亮区域在表面半球中只占很小方向范围。随机射线可能经过成千上万次尝试也找不到它，画面便出现高方差亮点。SpectralDock 在 Lambert 和 metal 表面主动连接一个有限灯样本，并在存在 HDR 环境时另取一个环境样本；这叫 Next Event Estimation（NEE）。
 
 ## 1. 在灯面上取一个随机点
 
-假设场景有 $N_L$ 盏显式面积灯。算法先等概率选一盏，再在其面积 $A$ 上均匀取点 $\mathbf y$。相对于面积的联合 PDF 是
+假设第 $i$ 盏显式面积灯以概率 $q_i$ 被选择，再在其面积 $A_i$ 上均匀取点 $\mathbf y$。相对于面积的联合 PDF 是
 
 $$
-p_A(\mathbf y)=\frac{1}{N_L A}.
+p_A(\mathbf y)=\frac{q_i}{A_i}.
 $$
 
 矩形灯按两条边的均匀坐标取点；圆盘灯用 $r=\sqrt\xi$ 均匀采面积；球灯均匀采整个球面。
@@ -28,23 +28,23 @@ p_\omega
 =p_A\frac{r^2}{|\mathbf n_l\cdot(-\boldsymbol\omega_i)|}.
 $$
 
-代入 $p_A=1/(N_LA)$，得到
+代入 $p_A=q_i/A_i$，得到
 
 $$
 \boxed{
 p_L(\boldsymbol\omega_i)=
-\frac{r^2}
-{N_L A\,|\mathbf n_l\cdot(-\boldsymbol\omega_i)|}
+\frac{q_i r^2}
+{A_i\,|\mathbf n_l\cdot(-\boldsymbol\omega_i)|}
 }
 $$
 
-这正是第 2 章立体角关系的倒数变换。PDF 中必须有 $1/N_L$ 的选灯概率；漏掉它会让灯越多，估计反而错误地越暗。
+这正是第 2 章立体角关系的倒数变换。PDF 中必须保留实际选灯概率 $q_i$；漏掉它会让改变采样分布也改变收敛能量。
 
-例如 $N_L=2$、$A=4$、$r=3$、灯面余弦为 0.5 时，$p_A=1/8$，而 $dA/d\omega=18$，所以 $p_\omega=2.25\ \mathrm{sr}^{-1}$。距离越远，同一面积覆盖的方向范围越小，单位立体角的概率密度反而越大。
+例如 $q_i=0.5$、$A_i=4$、$r=3$、灯面余弦为 0.5 时，$p_A=1/8$，而 $dA/d\omega=18$，所以 $p_\omega=2.25\ \mathrm{sr}^{-1}$。距离越远，同一面积覆盖的方向范围越小，单位立体角的概率密度反而越大。
 
-`light_direction_pdf` 逐项实现了这个换元：`distance2` 是 $r^2$，`cos_light` 是灯面余弦，`area` 与 `light_count` 分别对应 $A$ 和 $N_L$。两面灯先对余弦取绝对值；单面灯背面或退化面积直接返回零。
+`light_direction_pdf` 逐项实现了这个换元：`distance2` 是 $r^2$，`cos_light` 是灯面余弦，`area` 对应 $A_i$，`selection_pdf` 是从最终 float CDF 反推的 $q_i$。两面灯先对余弦取绝对值；单面灯背面或退化面积直接返回零。
 
-<!-- source-snippet id="light-area-to-solid-angle-pdf" path="src/device_programs.cu" anchor="return distance2 /" -->
+<!-- source-snippet id="light-area-to-solid-angle-pdf" path="src/device_programs.cu" anchor="return light.selection_pdf" -->
 ```cpp
   const float3 displacement = sub(point, from);
   const float distance2 = length2(displacement);
@@ -62,8 +62,8 @@ $$
   if (cos_light <= 0.0f || area <= 0.0f) {
     return 0.0f;
   }
-  return distance2 /
-         (cos_light * area * static_cast<float>(params.light_count));
+  if (!(light.selection_pdf > 0.0f)) return 0.0f;
+  return light.selection_pdf * distance2 / (cos_light * area);
 }
 ```
 
@@ -90,7 +90,7 @@ $$
 - 遮挡让 $V=0$，形成阴影；
 - 面积灯上不同点可能部分可见，形成软阴影；
 - $r^2$ 出现在 PDF 分母的倒数中，自然产生距离平方衰减；
-- 每次只选一盏灯，但 $1/N_L$ 的概率已被权重补偿。
+- 每次只选一盏有限灯，但 $q_i$ 已包含在 PDF 并被权重补偿。
 
 无 `water_surface` 的兼容路径不计算第二个表面的完整材质，只需要判断“是否被挡”，因此把介电质也视作阴影遮挡物；alpha cutoff 可以让被裁掉的纹素不遮挡。含水路径则把二值 $V$ 推广为 RGB 直线透射率：反复取得透明边界的完整命中，每段乘 Beer 吸收、每个界面乘 $1-F$，普通不透明交点仍把贡献归零。它不按 Snell 弯折到灯的连接，因此不是焦散求解；详见[第 12 章第 6 节](12-runtime-analytic-water.md#6-跨水面直接光的工程近似)。
 
@@ -192,7 +192,7 @@ static __forceinline__ __device__ float power_heuristic(
 }
 ```
 
-- `sample_direct_light` 的 NEE 项乘 $w_L$；
+- 有限灯与环境 NEE 项各自乘对应的 $w_L$；
 - BSDF 路径稍后命中绑定几何的 emitter 时乘 $w_B$；
 - 两个 PDF 都以当前着色点的**方向测度**表示，才能放进同一公式。
 
@@ -252,15 +252,15 @@ $$
 
 ## 7. 当前直接光采样的边界
 
-[`sample_direct_light`](../../src/device_programs.cu) 只在 Lambert 和 metal 表面执行。介电质是 delta BSDF，通过继续路径寻找灯光。
+[`sample_finite_direct_light`](../../src/device_programs.cu) 与 [`sample_environment_direct_light`](../../src/device_programs.cu) 只在 Lambert 和 metal 表面执行。介电质是 delta BSDF，通过继续路径寻找灯光。
 
-显式 NEE 列表仅支持 rectangle、disk、sphere 面积灯。以下光源不被主动采样：
+有限灯 NEE 支持 rectangle、disk、sphere 面积灯和程序化 flame，HDR environment 则通过独立的无限远 NEE 域采样。以下光源仍不被主动采样：
 
-- 天空渐变和太阳瓣；
+- constant、sky 渐变和太阳瓣；
 - mesh emitter；
 - 任何绑定纹理的 emitter。
 
-它们仍可由 BSDF 路径命中或 miss 得到，因此不是必然缺失，但小而亮时可能有很高方差。灯的选择目前按数量均匀，而不是按功率加权；这保持估计正确，却不一定达到最低方差。
+它们仍可由 BSDF 路径命中或 miss 得到，因此不是必然缺失，但小而亮时可能有很高方差。v5 默认按亮度与面积/体积代理选择有限灯，并按亮度乘 texel 立体角选择 HDR 环境方向；`uniform` 只作为正确性与方差对照。完整构造见[第 13 章](13-hdr-environment-and-importance-sampling.md)。
 
 ## 8. 对应实现
 
@@ -269,7 +269,9 @@ $$
 - `sample_light_surface`：矩形、圆盘和球面的面积采样；
 - `light_direction_pdf`：面积 PDF 到方向 PDF 的换元；
 - `trace_visible`：有限距离阴影射线；
-- `sample_direct_light`：NEE、BSDF 评估和 $w_L$；
+- `sample_finite_direct_light`：有限灯 NEE、BSDF 评估和 $w_L$；
+- `sample_environment_direct_light`：无限远环境 NEE、透射和 $w_L$；
+- raygen 调用点：把两个独立 NEE 域的估计相加；
 - `power_heuristic`：数值稳定的平方权重；
 - `resolve_continuation`：RR 存活、吞吐量补偿和原始 BSDF PDF；
 - `direct_light_mis_weight`、`emitter_hit_mis_weight`：只有竞争策略真实存在时才使用 MIS；

@@ -17,17 +17,18 @@
     "spp": 2048,
     "max_depth": 16,
     "seed": 808,
-    "denoised": false
+    "denoised": false,
+    "direct_light_sampling": "importance"
   },
   "timings_ms": {
-    "bvh_build": 9.44326400756836,
-    "render": 17065.0234375,
+    "bvh_build": 10.467552185058594,
+    "render": 16414.630859375,
     "denoise": 0.0,
-    "total": 19669.169566
+    "total": 20277.931505
   },
   "memory": {
     "peak_device_bytes": 1589968896,
-    "peak_tracked_device_bytes": 249541028
+    "peak_tracked_device_bytes": 249541136
   },
   "geometry": {
     "objects": 36,
@@ -37,8 +38,8 @@
     "gas_count": 36
   },
   "performance": {
-    "traced_rays": 15553006112,
-    "rays_per_second": 911396703.846455
+    "traced_rays": 16591435204,
+    "rays_per_second": 1010771143.5084766
   },
   "volume": {
     "volume_density_evaluations": 0,
@@ -48,11 +49,11 @@
     "volume_tracking_overflows": 0
   },
   "water": {
-    "water_height_evaluations": 66080894763,
-    "water_tile_tests": 6841808741,
-    "water_roots_reported": 1620050797,
-    "water_shadow_transmissions": 403826143,
-    "water_medium_segments": 2303902049,
+    "water_height_evaluations": 60926005748,
+    "water_tile_tests": 6291528775,
+    "water_roots_reported": 1582598299,
+    "water_shadow_transmissions": 448068253,
+    "water_medium_segments": 2127949731,
     "water_solver_overflows": 0,
     "water_medium_errors": 0,
     "water_shadow_boundary_overflows": 0

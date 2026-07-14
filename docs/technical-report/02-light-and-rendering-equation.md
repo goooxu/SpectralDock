@@ -136,7 +136,7 @@ $$
 - **表面为主**：没有通用散射介质、雾或次表面传输；程序化 flame 只估计吸收—自发光，解析 water 只加入均匀 RGB 吸收；
 - **几何光学**：不模拟衍射和干涉；
 - **离线积分**：每个像素使用多条随机路径，不以实时帧率为设计目标。
-- **简化背景**：天空只是按方向 $y$ 分量线性插值的渐变，太阳是在角阈值内直接相加的硬边常量瓣；没有环境贴图或光度学太阳模型。
+- **方向背景**：既支持常量与简化 sky，也支持线性 RGB Radiance HDR 纬经环境；仍不模拟光度学太阳、大气散射或光谱天空。
 
 这些边界不妨碍它展示路径追踪的核心数学，但决定了结果不能被称作对现实世界的完整物理仿真。
 
@@ -155,14 +155,29 @@ $$
 
 <!-- source-snippet id="raygen-path-state-background" path="src/device_programs.cu" anchor="background(ray_direction)" -->
 ```cpp
+      if (volume.collided != 0) {
+        if (previous_delta != 0) {
+          radiance =
+              add(radiance, mul(throughput, volume.source));
+        }
+        break;
+      }
       if (hit.hit == 0) {
-        radiance =
-            add(radiance, mul(throughput, background(ray_direction)));
+        const float environment_pdf =
+            previous_delta == 0 ? environment_direction_pdf(ray_direction)
+                                : 0.0f;
+        const float miss_weight =
+            previous_delta != 0 || !(environment_pdf > 0.0f)
+                ? 1.0f
+                : power_heuristic(previous_pdf, environment_pdf);
+        radiance = add(
+            radiance,
+            mul(mul(throughput, background(ray_direction)), miss_weight));
         break;
       }
 ```
 
-`radiance` 是当前样本已经累计的 $L_o$ 估计，`throughput` 是此前各次散射权重的乘积 $\boldsymbol\beta$。初始吞吐量为 1；射线未命中时，方向背景就是路径末端的 $L_i$，因此累加式严格是 `radiance += throughput * background`。循环代替函数递归，`break` 表示这条光路已经终止。
+`radiance` 是当前样本已经累计的 $L_o$ 估计，`throughput` 是此前各次散射权重的乘积 $\boldsymbol\beta$。体积真实碰撞先按第 11 章的互斥策略处理；没有碰撞且射线未命中表面时，方向背景就是路径末端的 $L_i$。若前一事件是非 delta 表面且背景为可显式采样的 HDR 环境，同一路径也可能由环境 NEE 生成，因此再乘 BSDF 一侧的 `miss_weight`；常量、sky、相机直达或 delta 前驱的权重仍为 1。循环代替函数递归，`break` 表示这条光路已经终止。
 
 ### 5.2 发光面项
 
@@ -190,35 +205,29 @@ $$
 
 ### 5.3 直接光与下一次散射
 
-<!-- source-snippet id="raygen-direct-and-scatter" path="src/device_programs.cu" anchor="sample_direct_light" -->
+<!-- source-snippet id="raygen-direct-and-scatter" path="src/device_programs.cu" anchor="sample_environment_direct_light" -->
 ```cpp
+      const float3 wo = neg(ray_direction);
       const bool next_bsdf_ray_exists = bounce + 1u < params.max_depth;
-      const float3 direct =
-          sample_direct_light(hit, material, base_color, wo,
-                              next_bsdf_ray_exists, rng, traced_rays,
-                              volume_counters, media, water_counters);
-      radiance = add(radiance, mul(throughput, direct));
+      const float3 finite_direct =
+          sample_finite_direct_light(hit, material, base_color, wo,
+                                     next_bsdf_ray_exists, rng, traced_rays,
+                                     volume_counters, media, water_counters);
+      const float3 environment_direct =
+          sample_environment_direct_light(
+              hit, material, base_color, wo, next_bsdf_ray_exists, rng,
+              traced_rays, volume_counters, media, water_counters);
+      radiance = add(
+          radiance,
+          mul(throughput, add(finite_direct, environment_direct)));
       if (!next_bsdf_ray_exists) {
         break;
       }
-
-      const BsdfSample scatter =
-          sample_bsdf(material, base_color, hit.normal, wo,
-                      hit.front_face, hit.material_index, rng,
-                      params.water_surface_count != 0u ? &media : nullptr,
-                      water_counters);
-      if (scatter.valid == 0) {
-        break;
-      }
-      throughput = clamp_nonnegative(mul(throughput, scatter.weight));
-      if (max_component(throughput) <= 0.0f) {
-        break;
-      }
-      previous_pdf = scatter.pdf;
-      previous_delta = scatter.delta;
 ```
 
-`wo` 对应 $\boldsymbol\omega_o$；`direct` 是对渲染方程积分中显式灯光部分的一次估计，仍需乘当前 $\boldsymbol\beta$ 才能加入 `radiance`。随后 `sample_bsdf` 选出新的 $\boldsymbol\omega_i$：对 Lambert/GGX 连续分支，`weight` 包含 $f_s|\mathbf n\cdot\boldsymbol\omega_i|/p_B$；对 dielectric delta 分支，它是离散反射或折射事件的权重，透射时还包含 $(\eta_i/\eta_t)^2$。因此两类分支都只需一次乘法即可更新吞吐量。无下一跳、无效样本或零吞吐量都会尽早结束路径，避免无贡献追踪。
+有限灯与 HDR 环境是两个独立 NEE 域，所以它们各自产生一个估计后相加；“最多两个 connection”不等于无条件发出两条 OptiX shadow ray，PDF、余弦或遮挡检查都可能提前返回。最后一个表面事件仍计算这两项，之后才停止。若还有深度，紧随其后的 `sample_bsdf` 产生下一方向并更新吞吐量、`previous_pdf` 与 delta 标记。
+
+`wo` 对应 $\boldsymbol\omega_o$；`finite_direct` 和 `environment_direct` 分别是对渲染方程中有限灯域与无限远环境域的一次估计，二者相加后仍需乘当前 $\boldsymbol\beta$ 才能加入 `radiance`。随后 `sample_bsdf` 选出新的 $\boldsymbol\omega_i$：对 Lambert/GGX 连续分支，`weight` 包含 $f_s|\mathbf n\cdot\boldsymbol\omega_i|/p_B$；对 dielectric delta 分支，它是离散反射或折射事件的权重，透射时还包含 $(\eta_i/\eta_t)^2$。因此两类分支都只需一次乘法即可更新吞吐量。无下一跳、无效样本或零吞吐量都会尽早结束路径，避免无贡献追踪。
 
 下一章先研究方程中的材质项 $f_s$，再讨论如何用随机样本估计整个积分。
 

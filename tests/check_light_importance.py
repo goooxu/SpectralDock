@@ -1,0 +1,378 @@
+#!/usr/bin/env python3
+"""GPU checks for finite-light selection and power-weighted sampling."""
+
+import copy
+import json
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+from PIL import Image
+
+
+WIDTH = 48
+HEIGHT = 48
+ROI = (4, 4, 44, 44)
+
+
+def base_scene():
+    return {
+        "schema_version": 5,
+        "camera": {
+            "look_from": [0.0, 0.0, 4.0],
+            "look_at": [0.0, 0.0, 0.0],
+            "up": [0.0, 1.0, 0.0],
+            "vfov": 40.0,
+            "aperture": 0.0,
+            "focus_distance": 4.0,
+        },
+        "integrator": {"direct_light_sampling": "importance"},
+        "background": {
+            "type": "constant",
+            "color": [0.0, 0.0, 0.0],
+            "exposure": -3.0,
+        },
+        "render": {
+            "width": WIDTH,
+            "height": HEIGHT,
+            "spp": 8,
+            "max_depth": 1,
+            "seed": 811,
+            "denoise": False,
+        },
+        "textures": [],
+        "materials": [
+            {
+                "name": "receiver",
+                "type": "lambertian",
+                "base_color": [0.76, 0.76, 0.76],
+            }
+        ],
+        "objects": [
+            {
+                "name": "receiver",
+                "type": "rectangle",
+                "p1": [-2.0, -2.0, 0.0],
+                "p2": [-2.0, 2.0, 0.0],
+                "p3": [2.0, 2.0, 0.0],
+                "material": "receiver",
+            }
+        ],
+        "lights": [],
+    }
+
+
+def representative_lights():
+    return [
+        {
+            "name": "dominant_rectangle",
+            "type": "rectangle",
+            "position": [-0.6, 0.6, 1.8],
+            "edge_u": [1.2, 0.0, 0.0],
+            "edge_v": [0.0, -1.2, 0.0],
+            "emission": [32.0, 26.0, 18.0],
+        },
+        {
+            "name": "dim_disk",
+            "type": "disk",
+            "position": [-1.35, 0.8, 1.5],
+            "normal": [0.0, 0.0, -1.0],
+            "radius": 0.28,
+            "emission": [0.08, 0.10, 0.14],
+        },
+        {
+            "name": "dim_sphere",
+            "type": "sphere",
+            "position": [1.2, 0.75, 1.4],
+            "radius": 0.22,
+            "emission": [0.12, 0.08, 0.05],
+        },
+        {
+            "name": "dim_flame",
+            "type": "flame",
+            "position": [1.45, -0.6, 1.25],
+            "axis": [0.0, 1.0, 0.0],
+            "height": 0.8,
+            "radius_start": 0.16,
+            "radius_end": 0.10,
+            "emission_start": [0.20, 0.06, 0.01],
+            "emission_end": [0.08, 0.01, 0.001],
+            "extinction": 0.35,
+            "density_scale": 0.8,
+            "turbulence": 0.0,
+            "noise_scale": 2.0,
+            "seed": 811,
+        },
+    ]
+
+
+def render(renderer, scene_data, directory, name, mode, spp, seed,
+           max_depth=1):
+    data = copy.deepcopy(scene_data)
+    data["integrator"]["direct_light_sampling"] = mode
+    data["render"]["spp"] = spp
+    data["render"]["seed"] = seed
+    scene = directory / (name + ".json")
+    output = directory / (name + ".png")
+    scene.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    subprocess.run(
+        [
+            str(renderer),
+            "--scene", str(scene),
+            "--output", str(output),
+            "--width", str(WIDTH),
+            "--height", str(HEIGHT),
+            "--spp", str(spp),
+            "--max-depth", str(max_depth),
+            "--seed", str(seed),
+            "--no-denoise",
+        ],
+        check=True,
+    )
+    with Image.open(output) as decoded:
+        decoded.load()
+        if decoded.size != (WIDTH, HEIGHT) or decoded.mode != "RGBA":
+            raise RuntimeError(
+                "unexpected finite-light output: {} {}".format(
+                    decoded.size, decoded.mode
+                )
+            )
+        image = decoded.copy()
+    stats = json.loads(
+        output.with_suffix(".stats.json").read_text(encoding="utf-8")
+    )
+    actual_mode = stats.get("render", {}).get("direct_light_sampling")
+    if actual_mode != mode:
+        raise RuntimeError(
+            "stats report direct_light_sampling={!r}, expected {!r}".format(
+                actual_mode, mode
+            )
+        )
+    return image, stats
+
+
+def bound_emitter_mis_scene():
+    scene = base_scene()
+    scene["materials"].extend(
+        [
+            {
+                "name": "visible_emitter",
+                "type": "emitter",
+                "emission": [12.0, 12.0, 12.0],
+            },
+            {
+                "name": "back_emitter",
+                "type": "emitter",
+                "emission": [108.0, 108.0, 108.0],
+            },
+        ]
+    )
+    scene["objects"].extend(
+        [
+            {
+                "name": "visible_panel",
+                "type": "rectangle",
+                "p1": [-2.0, 3.2, 1.0],
+                "p2": [-2.0, 1.2, 1.0],
+                "p3": [2.0, 1.2, 1.0],
+                "material": "visible_emitter",
+            },
+            {
+                "name": "back_panel",
+                "type": "rectangle",
+                "p1": [-2.0, 1.0, -1.2],
+                "p2": [-2.0, -1.0, -1.2],
+                "p3": [2.0, -1.0, -1.2],
+                "material": "back_emitter",
+            },
+        ]
+    )
+    scene["lights"] = [
+        {
+            "name": "visible_panel_sample",
+            "type": "rectangle",
+            "object": "visible_panel",
+            "position": [-2.0, 3.2, 1.0],
+            "edge_u": [4.0, 0.0, 0.0],
+            "edge_v": [0.0, -2.0, 0.0],
+            "emission": [12.0, 12.0, 12.0],
+        },
+        {
+            "name": "back_panel_sample",
+            "type": "rectangle",
+            "object": "back_panel",
+            "position": [-2.0, 1.0, -1.2],
+            "edge_u": [4.0, 0.0, 0.0],
+            "edge_v": [0.0, -2.0, 0.0],
+            "emission": [108.0, 108.0, 108.0],
+        },
+    ]
+    return scene
+
+
+def metric(tree, name):
+    if isinstance(tree, dict):
+        if name in tree:
+            return tree[name]
+        matches = [metric(child, name) for child in tree.values()]
+        matches = [value for value in matches if value is not None]
+        if len(matches) > 1:
+            raise RuntimeError("duplicate stats metric: {}".format(name))
+        return matches[0] if matches else None
+    if isinstance(tree, list):
+        matches = [metric(child, name) for child in tree]
+        matches = [value for value in matches if value is not None]
+        return matches[0] if len(matches) == 1 else None
+    return None
+
+
+def rgb_values(image):
+    return [pixel[:3] for pixel in image.crop(ROI).getdata()]
+
+
+def mean_luminance(image):
+    values = rgb_values(image)
+    return sum(
+        0.2126 * red + 0.7152 * green + 0.0722 * blue
+        for red, green, blue in values
+    ) / len(values)
+
+
+def mse(image, reference):
+    left = rgb_values(image)
+    right = rgb_values(reference)
+    return sum(
+        (a - b) * (a - b)
+        for left_pixel, right_pixel in zip(left, right)
+        for a, b in zip(left_pixel, right_pixel)
+    ) / (3.0 * len(left))
+
+
+def main():
+    if len(sys.argv) != 2:
+        raise RuntimeError("usage: check_light_importance.py RENDERER")
+    renderer = Path(sys.argv[1]).resolve()
+    if not renderer.is_file():
+        raise RuntimeError("renderer not found: {}".format(renderer))
+
+    with tempfile.TemporaryDirectory(prefix="spectraldock-light-importance-") as tmp:
+        directory = Path(tmp)
+        lights = representative_lights()
+
+        # Exercise every finite-light sampling branch independently before the
+        # unequal-power comparison. A one-light distribution also checks that
+        # its realized selection probability is exactly one.
+        for index, light in enumerate(lights):
+            scene = base_scene()
+            isolated = copy.deepcopy(light)
+            if isolated["type"] != "rectangle":
+                if isolated["type"] == "flame":
+                    isolated["emission_start"] = [20.0, 6.0, 0.5]
+                    isolated["emission_end"] = [8.0, 1.0, 0.08]
+                    isolated["extinction"] = 1.2
+                else:
+                    isolated["emission"] = [18.0, 18.0, 18.0]
+            scene["lights"] = [isolated]
+            image, stats = render(
+                renderer, scene, directory,
+                "single-{}".format(isolated["type"]),
+                "importance", 64, 821 + index
+            )
+            if mean_luminance(image) <= 0.1:
+                raise RuntimeError(
+                    "{} light did not illuminate the receiver".format(
+                        isolated["type"]
+                    )
+                )
+            if isolated["type"] == "flame":
+                samples = metric(stats, "volume_light_samples")
+                if samples is None or samples <= 0:
+                    raise RuntimeError("flame NEE branch was not sampled")
+
+        # Both panels are real emitter geometry and therefore compete with a
+        # BSDF-hit path at depth two. The bright panel sits behind the receiver:
+        # it changes q_i without contributing to the visible hemisphere. The
+        # visible panel consequently has q_i != 1/N in importance mode. NEE and
+        # emitter-hit MIS must use that same q_i for uniform and importance to
+        # converge to the same mean.
+        bound_scene = bound_emitter_mis_scene()
+        bound_uniform, _ = render(
+            renderer, bound_scene, directory, "bound-mis-uniform",
+            "uniform", 768, 1451, max_depth=2
+        )
+        bound_importance, _ = render(
+            renderer, bound_scene, directory, "bound-mis-importance",
+            "importance", 768, 1559, max_depth=2
+        )
+        bound_uniform_mean = mean_luminance(bound_uniform)
+        bound_importance_mean = mean_luminance(bound_importance)
+        if min(bound_uniform_mean, bound_importance_mean) <= 1.0:
+            raise RuntimeError("bound-emitter MIS comparison rendered blank")
+        bound_relative_error = abs(
+            bound_uniform_mean - bound_importance_mean
+        ) / max(0.5 * (bound_uniform_mean + bound_importance_mean), 1.0)
+        if bound_relative_error > 0.08:
+            raise RuntimeError(
+                "bound-emitter uniform/importance means disagree; emitter-hit "
+                "MIS may not include q_i: {:.3f}".format(bound_relative_error)
+            )
+
+        scene = base_scene()
+        scene["lights"] = lights
+        reference, _ = render(
+            renderer, scene, directory, "reference", "importance", 1024, 907
+        )
+        uniform_high, uniform_stats = render(
+            renderer, scene, directory, "uniform-high", "uniform", 2048, 1013
+        )
+        reference_mean = mean_luminance(reference)
+        uniform_mean = mean_luminance(uniform_high)
+        relative_mean_error = abs(reference_mean - uniform_mean) / max(
+            reference_mean, 1.0
+        )
+        if relative_mean_error > 0.12:
+            raise RuntimeError(
+                "finite-light uniform/importance high-spp means did not "
+                "converge: {:.3f}".format(relative_mean_error)
+            )
+        if metric(uniform_stats, "volume_light_samples") in (None, 0):
+            raise RuntimeError("mixed-light uniform run did not sample flame NEE")
+
+        uniform_error = 0.0
+        importance_error = 0.0
+        for index, seed in enumerate((1103, 1213, 1321)):
+            uniform, _ = render(
+                renderer, scene, directory, "uniform-low-{}".format(index),
+                "uniform", 8, seed
+            )
+            importance, _ = render(
+                renderer, scene, directory,
+                "importance-low-{}".format(index),
+                "importance", 8, seed
+            )
+            uniform_error += mse(uniform, reference)
+            importance_error += mse(importance, reference)
+        if not importance_error < 0.85 * uniform_error:
+            raise RuntimeError(
+                "power-weighted light selection did not reduce low-spp MSE: "
+                "importance={:.3f}, uniform={:.3f}".format(
+                    importance_error, uniform_error
+                )
+            )
+
+    print("finite-light importance sampling checks passed")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except (
+        json.JSONDecodeError,
+        OSError,
+        RuntimeError,
+        subprocess.CalledProcessError,
+    ) as error:
+        print("error: {}".format(error), file=sys.stderr)
+        raise SystemExit(1)

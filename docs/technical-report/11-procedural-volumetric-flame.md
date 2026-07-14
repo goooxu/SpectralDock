@@ -133,7 +133,7 @@ $$
 
 ## 5. 从表面连接体积光
 
-对普通表面，选灯仍在全部显式灯之间均匀进行。若选中 flame，就在最大半径支撑圆柱中均匀取点，圆柱体积为
+对普通表面，先按第 13 章构造的实际概率 $q_i$ 选择一个显式灯；`uniform` 对照模式才令 $q_i=1/N$。若选中 flame，就在最大半径支撑圆柱中均匀取点，圆柱体积为
 
 $$
 V=\pi R_{\max}^2h,
@@ -164,11 +164,11 @@ $$
     const float3 emission_coefficient =
         mul(flame_source(light, axial), sigma);
     return mul(mul(mul(bsdf, emission_coefficient), surface_transmittance),
-               no_l * support_volume * static_cast<float>(params.light_count) /
-                   distance2);
+               no_l * support_volume /
+                   (light.selection_pdf * distance2));
 ```
 
-连接段还先发出普通 OptiX shadow ray 检查表面遮挡。rectangle/disk/sphere 面积光的连接也增加同样的体积透射测试，所以火焰能衰减从其他灯到表面的光。原有面积光与 BSDF 的 MIS 权重保持不变。
+连接段还先发出普通 OptiX shadow ray 检查表面遮挡。rectangle/disk/sphere 面积光的连接也增加同样的体积透射测试，所以火焰能衰减从其他灯到表面的光。面积光与 BSDF 的 MIS 结构保持不变，但灯方向 PDF 现在包含实际 $q_i$。
 
 ## 6. 安全边界、统计与性能
 

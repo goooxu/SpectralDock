@@ -1,6 +1,6 @@
 {
-  "scene": "scenes/generated/kinetic-foundry.json",
-  "output": "docs/gallery/kinetic-foundry.png",
+  "scene": "scenes/radiance-pavilion.json",
+  "output": "docs/gallery/radiance-pavilion.png",
   "hardware": {
     "gpu": "NVIDIA GeForce RTX 5090",
     "compute_capability": "12.0"
@@ -16,30 +16,30 @@
     "height": 1080,
     "spp": 512,
     "max_depth": 12,
-    "seed": 20260711,
+    "seed": 909,
     "denoised": true,
     "direct_light_sampling": "importance"
   },
   "timings_ms": {
-    "bvh_build": 53.02444839477539,
-    "render": 767.5831298828125,
-    "denoise": 15.336576461791992,
-    "total": 4710.809101
+    "bvh_build": 5.298336029052734,
+    "render": 632.9962158203125,
+    "denoise": 12.140447616577148,
+    "total": 4584.080368
   },
   "memory": {
-    "peak_device_bytes": 1860501504,
-    "peak_tracked_device_bytes": 518721808
+    "peak_device_bytes": 1904541696,
+    "peak_tracked_device_bytes": 560312092
   },
   "geometry": {
-    "objects": 220,
-    "instances": 220,
+    "objects": 18,
+    "instances": 18,
     "unique_meshes": 1,
     "mesh_triangles": 5816,
-    "gas_count": 197
+    "gas_count": 18
   },
   "performance": {
-    "traced_rays": 2856046929,
-    "rays_per_second": 3720830771.041092
+    "traced_rays": 2220210444,
+    "rays_per_second": 3507462427.9116497
   },
   "volume": {
     "volume_density_evaluations": 0,

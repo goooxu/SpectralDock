@@ -13,10 +13,14 @@ gpu_container python3 tests/check_flame_transport.py \
   build/Release/spectraldock tests/scenes/flame-smoke.json
 gpu_container python3 tests/check_water_transport.py \
   build/Release/spectraldock tests/scenes/water-smoke.json
+gpu_container python3 tests/check_environment_importance.py \
+  build/Release/spectraldock tests/scenes/environment-smoke.json
+gpu_container python3 tests/check_light_importance.py \
+  build/Release/spectraldock
 "$(dirname "$0")/configure.sh" Debug
 gpu_container cmake --build build/Debug --clean-first --parallel
 
 "$(dirname "$0")/test.sh"
 "$(dirname "$0")/sanitizers.sh"
 
-echo "RTX 5090 core renderer acceptance completed"
+echo "GPU core renderer acceptance completed"

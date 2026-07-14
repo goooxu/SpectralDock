@@ -1,10 +1,13 @@
 # Example asset manifest
 
-Generated 2026-07-07 with the built-in `imagegen` workflow. These images are
-generated for this project through an AI image-generation workflow. They are
-provided as-is, without a representation of uniqueness or exclusivity.
-Runtime image paths are relative to this directory.
-The compact distribution omits generation, chroma-key, and seam-repair
+Runtime image paths are relative to this directory. The four PNG textures were
+generated for this project on 2026-07-07 through the built-in `imagegen`
+workflow. They are provided as-is, without a representation of uniqueness or
+exclusivity. The Radiance HDR environment is an analytical, deterministic
+output of the Apache-2.0 Python generator in `tools/`, not an AI-generated
+image.
+
+The compact distribution omits PNG generation, chroma-key, and seam-repair
 intermediate bitmaps; their dimensions, processing steps, prompts, and SHA-256
 digests remain recorded below.
 
@@ -13,12 +16,31 @@ the image model lightly redrew pixels outside the requested center band rather
 than keeping those regions byte-identical. The initial-bitmap digests remain in
 this manifest so this distinction stays auditable.
 
-The four runtime texture PNG files listed here are dedicated under CC0-1.0.
-This Markdown sidecar is licensed under Apache-2.0 and is not a signed
-provenance claim. Only textures/circuit-panel.png retains an embedded
-caBX/JUMBF C2PA structure identifying OpenAI Media Service; cryptographic
-validity is not verified by this project. The other three post-processed
-runtime textures do not retain C2PA data.
+The four runtime texture PNG files and the HDR environment listed here are
+dedicated under CC0-1.0. This Markdown sidecar is licensed under Apache-2.0 and
+is not a signed provenance claim. Only textures/circuit-panel.png retains an
+embedded caBX/JUMBF C2PA structure identifying OpenAI Media Service;
+cryptographic validity is not verified by this project. The other three
+post-processed runtime textures do not retain C2PA data.
+
+## `environments/radiance-pavilion.hdr`
+
+- Runtime size and encoding: 2048 x 1024 Radiance RGBE, linear Rec.709 RGB,
+  `FORMAT=32-bit_rle_rgbe`, `-Y 1024 +X 2048`, modern per-component scanline
+  RLE.
+- Runtime byte size: 298,600 bytes.
+- Runtime SHA-256:
+  `610ce6a4875c62e5e5cdef4a233c9153755c29d388d84e4550f3c539cbafb186`.
+- Deterministic rebuild:
+  `python3 tools/generate_hdr_environment.py`.
+- Construction: an analytical dim cyclorama and floor bounce are combined
+  with four feathered spherical studio panels: a warm key, cool vertical fill,
+  neutral overhead strip and amber rim. Pixel centers are sampled in a fixed
+  equirectangular order, converted directly to RGBE, then encoded with a fixed
+  literal/run partition. The file has no timestamp or machine-dependent
+  metadata.
+- Licensing: the generator is Apache-2.0; the generated `.hdr` file is one of
+  the visual assets explicitly dedicated under CC0-1.0.
 
 ## `textures/planet-azure.png`
 

@@ -1,6 +1,6 @@
 # 12　运行时解析水面：波面求交、介电传输与 Beer 吸收
 
-Moonlit Stepwell 的水不是平面贴图，也不是预先烘焙的网格。它是 schema v4 在运行时求值的有限解析高度场：OptiX 用保守 tile AABB 找出候选区域，自定义 intersection 程序求射线与波面的根，路径积分器再处理 Fresnel 反射、Snell 折射和水下吸收。
+Moonlit Stepwell 的水不是平面贴图，也不是预先烘焙的网格。它是 schema v5 在运行时求值的有限解析高度场：OptiX 用保守 tile AABB 找出候选区域，自定义 intersection 程序求射线与波面的根，路径积分器再处理 Fresnel 反射、Snell 折射和水下吸收。
 
 这里的“水体”有严格边界：`water_surface` 只是有限顶界面，不自带侧壁或底部。v0.1 加载器强制相机 aperture 位于水和玻璃外；场景还必须用不透明池壁与池底封住水下区域。它不是流体模拟，也没有时间演化、泡沫、飞溅、专用焦散或 motion blur。
 
@@ -291,4 +291,4 @@ stats 分开记录 height evaluations、tile tests、roots reported、shadow tra
 
 输入字段和约束见[场景格式](../SCENE_FORMAT.md)，展示构图见 [Moonlit Stepwell](../EXAMPLES.md#moonlit-stepwell)。
 
-[上一章：程序化体积火焰](11-procedural-volumetric-flame.md) · [返回目录](README.md)
+[上一章：程序化体积火焰](11-procedural-volumetric-flame.md) · [返回目录](README.md) · [下一章：HDR 环境与重要性采样](13-hdr-environment-and-importance-sampling.md)

@@ -2,6 +2,7 @@
 
 #include "spectraldock/device_types.h"
 #include "spectraldock/math.h"
+#include "spectraldock/sampling.h"
 #include "spectraldock/scene_types.h"
 
 #include <cuda.h>
@@ -354,6 +355,54 @@ TextureHandle make_texture(const Texture& source, TextureData& out,
   return h;
 }
 
+TextureHandle make_environment_texture(const ImageRgb32f& source,
+                                       MemoryTracker& tracker) {
+  if (source.empty()) throw std::runtime_error("empty HDR environment");
+  const std::size_t pixel_count = checked_product(
+      static_cast<std::size_t>(source.width), source.height,
+      "HDR environment pixel count");
+  if (source.pixels.size() != checked_product(
+          pixel_count, std::size_t{3}, "HDR environment component count")) {
+    throw std::runtime_error("HDR environment pixel buffer size mismatch");
+  }
+  std::vector<float4> pixels(pixel_count);
+  for (std::size_t i = 0; i < pixel_count; ++i) {
+    pixels[i] = make_float4(source.pixels[3u * i],
+                            source.pixels[3u * i + 1u],
+                            source.pixels[3u * i + 2u], 1.0f);
+  }
+
+  TextureHandle handle;
+  handle.tracker = &tracker;
+  handle.bytes = checked_product(pixel_count, sizeof(float4),
+                                 "HDR environment texture");
+  const cudaChannelFormatDesc channel = cudaCreateChannelDesc<float4>();
+  check_cuda(cudaMallocArray(&handle.array, &channel, source.width,
+                             source.height),
+             "cudaMallocArray(HDR environment)");
+  tracker.add(handle.bytes);
+  const std::size_t pitch = checked_product(
+      static_cast<std::size_t>(source.width), sizeof(float4),
+      "HDR environment pitch");
+  check_cuda(cudaMemcpy2DToArray(
+                 handle.array, 0, 0, pixels.data(), pitch, pitch,
+                 source.height, cudaMemcpyHostToDevice),
+             "cudaMemcpy2DToArray(HDR environment)");
+  cudaResourceDesc resource{};
+  resource.resType = cudaResourceTypeArray;
+  resource.res.array.array = handle.array;
+  cudaTextureDesc texture{};
+  texture.addressMode[0] = cudaAddressModeWrap;
+  texture.addressMode[1] = cudaAddressModeClamp;
+  texture.filterMode = cudaFilterModeLinear;
+  texture.readMode = cudaReadModeElementType;
+  texture.normalizedCoords = 1;
+  check_cuda(cudaCreateTextureObject(
+                 &handle.object, &resource, &texture, nullptr),
+             "cudaCreateTextureObject(HDR environment)");
+  return handle;
+}
+
 std::vector<MaterialData> materials_for(const Scene& scene) {
   std::vector<MaterialData> result;
   for (const Material& m : scene.materials) {
@@ -374,10 +423,18 @@ std::vector<MaterialData> materials_for(const Scene& scene) {
   return result;
 }
 
-std::vector<LightData> lights_for(const Scene& scene) {
+std::vector<LightData> lights_for(
+    const Scene& scene, const std::vector<float>& selection_probabilities) {
+  if (selection_probabilities.size() != scene.lights.size()) {
+    throw std::runtime_error("finite-light probability count mismatch");
+  }
   std::vector<LightData> result;
-  for (const Light& l : scene.lights) {
+  result.reserve(scene.lights.size());
+  for (std::size_t light_index = 0; light_index < scene.lights.size();
+       ++light_index) {
+    const Light& l = scene.lights[light_index];
     LightData d{}; d.emission = f3(l.emission); d.geometry_index = l.object_id;
+    d.selection_pdf = selection_probabilities[light_index];
     if (l.type == LightType::Rectangle) {
       d.type = kLightRectangle;
       d.p0 = f3(l.position); d.edge_u = f3(l.edge_u); d.edge_v = f3(l.edge_v);
@@ -1052,8 +1109,24 @@ RenderResult render_optix(const Scene& scene,
       textures.push_back(make_texture(
           scene.textures[i], texture_data[i], tracker));
   }
+  ImageRgb32f environment_image;
+  EnvironmentDistribution environment_distribution;
+  std::vector<TextureHandle> environment_textures;
+  environment_textures.reserve(1u);
+  if (scene.background.type == BackgroundType::Environment) {
+    NvtxRange range("HDR environment upload");
+    environment_image = load_radiance_hdr(scene.background.environment_path);
+    environment_distribution = build_environment_distribution(
+        environment_image, scene.integrator.direct_light_sampling);
+    environment_textures.push_back(
+        make_environment_texture(environment_image, tracker));
+  }
   std::vector<MaterialData> material_data = materials_for(scene);
-  std::vector<LightData> light_data = lights_for(scene);
+  const FiniteLightDistribution finite_light_distribution =
+      build_finite_light_distribution(
+          scene.lights, scene.integrator.direct_light_sampling);
+  std::vector<LightData> light_data =
+      lights_for(scene, finite_light_distribution.probabilities);
   const std::size_t flame_count = static_cast<std::size_t>(std::count_if(
       scene.lights.begin(), scene.lights.end(), [](const Light& light) {
         return light.type == LightType::Flame;
@@ -1070,9 +1143,20 @@ RenderResult render_optix(const Scene& scene,
       tracker, texture_data.size() * sizeof(TextureData));
   DeviceBuffer light_buffer(
       tracker, light_data.size() * sizeof(LightData));
+  DeviceBuffer light_cdf_buffer(
+      tracker, finite_light_distribution.cdf.size() * sizeof(float));
+  DeviceBuffer environment_row_cdf_buffer(
+      tracker, environment_distribution.row_cdf.size() * sizeof(float));
+  DeviceBuffer environment_conditional_cdf_buffer(
+      tracker,
+      environment_distribution.conditional_cdf.size() * sizeof(float));
   material_buffer.upload(material_data);
   texture_buffer.upload(texture_data);
   light_buffer.upload(light_data);
+  light_cdf_buffer.upload(finite_light_distribution.cdf);
+  environment_row_cdf_buffer.upload(environment_distribution.row_cdf);
+  environment_conditional_cdf_buffer.upload(
+      environment_distribution.conditional_cdf);
 
   Event bvh_start, bvh_end;
   bvh_start.record(stream);
@@ -1178,13 +1262,34 @@ RenderResult render_optix(const Scene& scene,
   parameters.camera = camera_for(scene, settings);
   parameters.background_type =
       scene.background.type == BackgroundType::Sky
-          ? kBackgroundSky : kBackgroundConstant;
+          ? kBackgroundSky
+          : scene.background.type == BackgroundType::Environment
+                ? kBackgroundEnvironment
+                : kBackgroundConstant;
   parameters.background_color = f3(scene.background.color);
   parameters.sky_bottom = f3(scene.background.sky_bottom);
   parameters.sky_top = f3(scene.background.sky_top);
   parameters.sun_direction = f3(scene.background.sun_direction);
   parameters.sun_color = f3(scene.background.sun_color);
   parameters.sun_cos_angle = scene.background.sun_cos_angle;
+  parameters.environment_texture = environment_textures.empty()
+      ? 0u
+      : static_cast<std::uint64_t>(environment_textures.front().object);
+  parameters.environment_row_cdf = environment_distribution.row_cdf.empty()
+      ? nullptr
+      : reinterpret_cast<const float*>(environment_row_cdf_buffer.pointer());
+  parameters.environment_conditional_cdf =
+      environment_distribution.conditional_cdf.empty()
+          ? nullptr
+          : reinterpret_cast<const float*>(
+                environment_conditional_cdf_buffer.pointer());
+  parameters.environment_width = environment_distribution.width;
+  parameters.environment_height = environment_distribution.height;
+  parameters.environment_intensity =
+      scene.background.environment_intensity;
+  parameters.environment_rotation_radians =
+      scene.background.environment_rotation_degrees *
+      (3.14159265358979323846f / 180.0f);
   parameters.materials = material_data.empty()
       ? nullptr
       : reinterpret_cast<const MaterialData*>(
@@ -1196,6 +1301,9 @@ RenderResult render_optix(const Scene& scene,
   parameters.lights = light_data.empty()
       ? nullptr
       : reinterpret_cast<const LightData*>(light_buffer.pointer());
+  parameters.light_cdf = light_data.empty()
+      ? nullptr
+      : reinterpret_cast<const float*>(light_cdf_buffer.pointer());
   parameters.material_count =
       checked_u32(material_data.size(), "material count");
   parameters.texture_count =
@@ -1328,6 +1436,10 @@ RenderResult render_optix(const Scene& scene,
   result.stats.max_depth = settings.max_depth;
   result.stats.seed = settings.seed;
   result.stats.denoised = settings.denoise;
+  result.stats.direct_light_sampling =
+      scene.integrator.direct_light_sampling == DirectLightSampling::Uniform
+          ? "uniform"
+          : "importance";
   result.stats.bvh_build_ms = bvh_ms;
   result.stats.render_ms = render_ms;
   result.stats.denoise_ms = denoise_ms;

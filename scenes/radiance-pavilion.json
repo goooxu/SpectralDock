@@ -1,0 +1,69 @@
+{
+  "schema_version": 5,
+  "camera": {
+    "look_from": [10.5, 4.7, 14.5],
+    "look_at": [0.0, 1.55, -1.25],
+    "up": [0.0, 1.0, 0.0],
+    "vfov": 35.0,
+    "aperture": 0.035,
+    "focus_distance": 19.2
+  },
+  "integrator": {
+    "direct_light_sampling": "importance"
+  },
+  "background": {
+    "type": "environment",
+    "path": "../assets/examples/environments/radiance-pavilion.hdr",
+    "intensity": 1.0,
+    "rotation_degrees": 22.0,
+    "exposure": 0.0
+  },
+  "render": {
+    "width": 1920,
+    "height": 1080,
+    "spp": 512,
+    "max_depth": 12,
+    "seed": 909,
+    "denoise": true
+  },
+  "textures": [],
+  "materials": [
+    {"name": "pavilion_floor", "type": "lambertian", "base_color": [0.11, 0.12, 0.14]},
+    {"name": "stage", "type": "lambertian", "base_color": [0.30, 0.31, 0.33]},
+    {"name": "pedestal", "type": "metal", "base_color": [0.18, 0.20, 0.24], "roughness": 0.24},
+    {"name": "mascot_porcelain", "type": "lambertian", "base_color": [0.74, 0.79, 0.86]},
+    {"name": "diffuse_vermilion", "type": "lambertian", "base_color": [0.72, 0.075, 0.028]},
+    {"name": "rough_bronze", "type": "metal", "base_color": [0.84, 0.43, 0.13], "roughness": 0.38},
+    {"name": "smooth_chrome", "type": "metal", "base_color": [0.91, 0.94, 0.98], "roughness": 0.025},
+    {"name": "optical_glass", "type": "dielectric", "base_color": [0.96, 0.99, 1.0], "ior": 1.5}
+  ],
+  "meshes": [
+    {"name": "mascot", "path": "../assets/examples/models/capsule-mascot.obj"}
+  ],
+  "objects": [
+    {"name": "open_floor", "type": "rectangle", "p1": [-12.0, 0.0, 8.0], "p2": [-12.0, 0.0, -12.0], "p3": [12.0, 0.0, -12.0], "material": "pavilion_floor"},
+    {"name": "main_stage", "type": "cylinder", "base": [0.0, 0.0, -1.0], "axis": [0.0, 1.0, 0.0], "height": 0.34, "radius": 5.9, "material": "stage"},
+    {"name": "main_stage_top", "type": "disk", "center": [0.0, 0.34, -1.0], "normal": [0.0, 1.0, 0.0], "radius": 5.9, "material": "stage"},
+
+    {"name": "mascot_pedestal", "type": "cylinder", "base": [0.0, 0.34, -0.35], "axis": [0.0, 1.0, 0.0], "height": 0.62, "radius": 1.55, "material": "pedestal"},
+    {"name": "mascot_pedestal_top", "type": "disk", "center": [0.0, 0.96, -0.35], "normal": [0.0, 1.0, 0.0], "radius": 1.55, "material": "pedestal"},
+    {"name": "pavilion_mascot", "type": "mesh", "mesh": "mascot", "transform": {"translate": [0.0, 0.96, -0.35], "rotate_degrees": [0.0, 24.0, 0.0], "scale": [0.98, 0.98, 0.98]}, "material": "mascot_porcelain"},
+
+    {"name": "diffuse_pedestal", "type": "cylinder", "base": [-4.05, 0.34, -1.65], "axis": [0.0, 1.0, 0.0], "height": 0.48, "radius": 1.0, "material": "pedestal"},
+    {"name": "diffuse_pedestal_top", "type": "disk", "center": [-4.05, 0.82, -1.65], "normal": [0.0, 1.0, 0.0], "radius": 1.0, "material": "pedestal"},
+    {"name": "diffuse_reference", "type": "sphere", "center": [-4.05, 1.78, -1.65], "radius": 0.96, "material": "diffuse_vermilion"},
+
+    {"name": "rough_metal_pedestal", "type": "cylinder", "base": [-2.35, 0.34, -4.15], "axis": [0.0, 1.0, 0.0], "height": 0.72, "radius": 1.0, "material": "pedestal"},
+    {"name": "rough_metal_pedestal_top", "type": "disk", "center": [-2.35, 1.06, -4.15], "normal": [0.0, 1.0, 0.0], "radius": 1.0, "material": "pedestal"},
+    {"name": "rough_metal_reference", "type": "sphere", "center": [-2.35, 2.02, -4.15], "radius": 0.96, "material": "rough_bronze"},
+
+    {"name": "smooth_metal_pedestal", "type": "cylinder", "base": [2.25, 0.34, -4.15], "axis": [0.0, 1.0, 0.0], "height": 0.72, "radius": 1.0, "material": "pedestal"},
+    {"name": "smooth_metal_pedestal_top", "type": "disk", "center": [2.25, 1.06, -4.15], "normal": [0.0, 1.0, 0.0], "radius": 1.0, "material": "pedestal"},
+    {"name": "smooth_metal_reference", "type": "sphere", "center": [2.25, 2.02, -4.15], "radius": 0.96, "material": "smooth_chrome"},
+
+    {"name": "glass_pedestal", "type": "cylinder", "base": [4.05, 0.34, -1.65], "axis": [0.0, 1.0, 0.0], "height": 0.48, "radius": 1.0, "material": "pedestal"},
+    {"name": "glass_pedestal_top", "type": "disk", "center": [4.05, 0.82, -1.65], "normal": [0.0, 1.0, 0.0], "radius": 1.0, "material": "pedestal"},
+    {"name": "glass_reference", "type": "sphere", "center": [4.05, 1.78, -1.65], "radius": 0.96, "material": "optical_glass"}
+  ],
+  "lights": []
+}

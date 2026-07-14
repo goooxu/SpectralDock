@@ -8,7 +8,7 @@ usage() {
     'Usage: ./scripts/render-examples.sh --preset preview|final [scene ...]' \
     '' \
     'Scene arguments may be bare names (for example material-cathedral) or JSON' \
-    'paths. With no scene arguments all seven teaching scenes are rendered.' \
+    'paths. With no scene arguments all eight teaching scenes are rendered.' \
     '' \
     'preview: 960x540, 64 spp, depth 8, AI denoising' \
     'final:   1920x1080, 512 spp, depth 12, AI denoising' \
@@ -77,6 +77,7 @@ if [[ $# -eq 0 ]]; then
     benchmark-harbor
     ember-forge
     moonlit-stepwell
+    radiance-pavilion
   )
 else
   scenes=("$@")

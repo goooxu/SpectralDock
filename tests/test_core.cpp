@@ -1,5 +1,6 @@
 #include "spectraldock/math.h"
 #include "spectraldock/obj_loader.h"
+#include "spectraldock/sampling.h"
 #include "spectraldock/scene_types.h"
 
 #include <chrono>
@@ -48,6 +49,15 @@ void write_text(const std::filesystem::path& path, const std::string& contents) 
   if (!output) throw std::runtime_error("cannot write test file: " + path.string());
 }
 
+void write_binary(const std::filesystem::path& path,
+                  const std::vector<std::uint8_t>& contents) {
+  std::ofstream output(path, std::ios::binary);
+  if (!output) throw std::runtime_error("cannot create test file: " + path.string());
+  output.write(reinterpret_cast<const char*>(contents.data()),
+               static_cast<std::streamsize>(contents.size()));
+  if (!output) throw std::runtime_error("cannot write test file: " + path.string());
+}
+
 void expect_error(const std::function<void()>& action,
                   const std::string& expected,
                   const std::string& message) {
@@ -89,6 +99,117 @@ void test_png() {
   std::filesystem::remove(path);
   check(actual.width == 2 && actual.height == 2, "PNG dimensions");
   check(actual.pixels == expected, "PNG lossless RGBA round trip");
+}
+
+void test_hdr_and_sampling_distributions() {
+  TemporaryDirectory directory;
+  const std::string raw_header =
+      "#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 1 +X 2\n";
+  std::vector<std::uint8_t> raw(raw_header.begin(), raw_header.end());
+  raw.insert(raw.end(), {128, 64, 32, 129, 0, 0, 0, 0});
+  const auto raw_path = directory.path / "raw.hdr";
+  write_binary(raw_path, raw);
+  const ImageRgb32f raw_image = load_radiance_hdr(raw_path);
+  check(raw_image.width == 2 && raw_image.height == 1,
+        "raw RGBE dimensions");
+  near(raw_image.pixels[0], 1.0f, 1.0e-6f, "raw RGBE red");
+  near(raw_image.pixels[1], 0.5f, 1.0e-6f, "raw RGBE green");
+  near(raw_image.pixels[2], 0.25f, 1.0e-6f, "raw RGBE blue");
+  near(raw_image.pixels[3], 0.0f, 0.0f, "zero-exponent RGBE");
+
+  const std::string rle_header =
+      "#?RGBE\nFORMAT=32-bit_rle_rgbe\n\n-Y 1 +X 128\n";
+  std::vector<std::uint8_t> rle(rle_header.begin(), rle_header.end());
+  rle.insert(rle.end(), {2, 2, 0, 128});
+  for (const std::uint8_t value : {std::uint8_t{128}, std::uint8_t{64},
+                                   std::uint8_t{32}, std::uint8_t{129}}) {
+    rle.push_back(128);  // A legal 128-byte literal packet.
+    rle.insert(rle.end(), 128, value);
+  }
+  const auto rle_path = directory.path / "modern-rle.hdr";
+  write_binary(rle_path, rle);
+  const ImageRgb32f rle_image = load_radiance_hdr(rle_path);
+  check(rle_image.width == 128 && rle_image.height == 1,
+        "modern RLE dimensions");
+  near(rle_image.pixels[127 * 3], 1.0f, 1.0e-6f,
+       "128-byte RLE literal");
+
+  std::vector<std::uint8_t> malformed(rle_header.begin(), rle_header.end());
+  malformed.insert(malformed.end(), {2, 2, 0, 128, 0});
+  const auto malformed_path = directory.path / "malformed.hdr";
+  write_binary(malformed_path, malformed);
+  expect_error([&] { (void)load_radiance_hdr(malformed_path); },
+               "zero-length RLE packet", "zero-length HDR RLE rejection");
+
+  std::vector<std::uint8_t> trailing(raw);
+  trailing.push_back(0);
+  const auto trailing_path = directory.path / "trailing.hdr";
+  write_binary(trailing_path, trailing);
+  expect_error([&] { (void)load_radiance_hdr(trailing_path); },
+               "unexpected trailing data", "trailing HDR payload rejection");
+
+  const auto oversized_path = directory.path / "oversized.hdr";
+  write_text(oversized_path,
+             "#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 1 +X 8193\n");
+  expect_error([&] { (void)load_radiance_hdr(oversized_path); },
+               "width must be in", "oversized HDR rejection");
+
+  Light small;
+  small.type = LightType::Sphere;
+  small.radius = 0.1f;
+  small.emission = {1.0f, 1.0f, 1.0f};
+  Light large;
+  large.type = LightType::Rectangle;
+  large.edge_u = {10.0f, 0.0f, 0.0f};
+  large.edge_v = {0.0f, 0.0f, 10.0f};
+  large.emission = {10.0f, 10.0f, 10.0f};
+  const std::vector<Light> lights{small, large};
+  const FiniteLightDistribution uniform_lights =
+      build_finite_light_distribution(lights, DirectLightSampling::Uniform);
+  const FiniteLightDistribution important_lights =
+      build_finite_light_distribution(lights, DirectLightSampling::Importance);
+  check(uniform_lights.cdf.size() == 3 &&
+            uniform_lights.probabilities.size() == 2,
+        "finite-light distribution dimensions");
+  near(uniform_lights.probabilities[0], 0.5f, 1.0e-6f,
+       "uniform finite-light probability");
+  check(important_lights.probabilities[1] > 0.98f &&
+            important_lights.probabilities[0] > 0.0f,
+        "finite-light importance and support floor");
+  for (std::size_t i = 0; i < important_lights.probabilities.size(); ++i) {
+    near(important_lights.probabilities[i],
+         important_lights.cdf[i + 1] - important_lights.cdf[i], 0.0f,
+         "finite-light CDF interval source of truth");
+  }
+
+  ImageRgb32f black;
+  black.width = 2;
+  black.height = 2;
+  black.pixels.assign(12, 0.0f);
+  const EnvironmentDistribution black_distribution =
+      build_environment_distribution(black, DirectLightSampling::Importance);
+  check(black_distribution.black, "black environment fallback flag");
+  near(black_distribution.row_probabilities[0], 0.5f, 1.0e-6f,
+       "black environment uniform-sphere row");
+  near(black_distribution.conditional_probabilities[0], 0.5f, 1.0e-6f,
+       "black environment uniform longitude");
+
+  ImageRgb32f bright = black;
+  bright.pixels[0] = bright.pixels[1] = bright.pixels[2] = 100.0f;
+  const EnvironmentDistribution important_environment =
+      build_environment_distribution(bright, DirectLightSampling::Importance);
+  const EnvironmentDistribution uniform_environment =
+      build_environment_distribution(bright, DirectLightSampling::Uniform);
+  check(!important_environment.black, "non-black environment flag");
+  const float bright_mass = important_environment.row_probabilities[0] *
+                            important_environment.conditional_probabilities[0];
+  check(bright_mass > 0.98f &&
+            important_environment.conditional_probabilities[1] > 0.0f,
+        "environment importance and sphere support floor");
+  near(uniform_environment.row_probabilities[0], 0.5f, 1.0e-6f,
+       "uniform environment sphere row");
+  near(uniform_environment.conditional_probabilities[0], 0.5f, 1.0e-6f,
+       "uniform environment longitude");
 }
 
 void test_obj_loader() {
@@ -210,7 +331,7 @@ f 1/1 2/2 3/3
 )obj");
   const auto scene_path = directory.path / "scene.json";
   write_text(scene_path, R"json({
-    "schema_version": 4,
+    "schema_version": 5,
     "camera": {"look_from":[0,1,4],"look_at":[0,0,0],"up":[0,1,0],"vfov":40},
     "background": {"type":"constant","color":[0,0,0]},
     "textures": [],
@@ -242,7 +363,7 @@ f 1/1 2/2 3/3
              "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n");
   const auto textured = directory.path / "textured-no-uv.json";
   write_text(textured, R"json({
-    "schema_version": 4,
+    "schema_version": 5,
     "camera": {"look_from":[0,1,4],"look_at":[0,0,0],"up":[0,1,0],"vfov":40},
     "background": {"type":"constant","color":[0,0,0]},
     "textures": [{"name":"paint","type":"constant","color":[1,1,1]}],
@@ -255,7 +376,7 @@ f 1/1 2/2 3/3
 
   const auto bad_scale = directory.path / "bad-scale.json";
   write_text(bad_scale, R"json({
-    "schema_version": 4,
+    "schema_version": 5,
     "camera": {"look_from":[0,1,4],"look_at":[0,0,0],"up":[0,1,0],"vfov":40},
     "background": {"type":"constant","color":[0,0,0]},
     "textures": [], "materials": [{"name":"m","type":"lambertian"}],
@@ -277,7 +398,7 @@ void test_flame_lights() {
   })json";
 
   const auto document = [](const std::string& lights) {
-    return std::string(R"json({"schema_version":4,
+    return std::string(R"json({"schema_version":5,
       "camera":{"look_from":[0,4,4],"look_at":[0,0,0],"up":[0,1,0],"vfov":40},
       "background":{"type":"constant","color":[0,0,0]},
       "textures":[], "materials":[{"name":"mat","type":"lambertian"}],
@@ -391,7 +512,7 @@ void test_water_surfaces() {
      ]})json";
   const auto document = [](const std::string& materials,
                            const std::string& objects) {
-    return std::string(R"json({"schema_version":4,
+    return std::string(R"json({"schema_version":5,
       "camera":{"look_from":[0,4,4],"look_at":[0,0,0],"up":[0,1,0],"vfov":40},
       "background":{"type":"constant","color":[0,0,0]},
       "textures":[],"materials":)json") + materials +
@@ -644,25 +765,82 @@ void test_schema_version() {
   expect_error([&] { (void)load_scene(path); }, "schema_version",
                "missing schema version rejection");
 
-  for (const std::uint32_t version : {1u, 2u, 3u, 5u}) {
+  for (const std::uint32_t version : {1u, 2u, 3u, 4u, 6u}) {
     write_text(path, "{\"schema_version\":" + std::to_string(version) +
                          "," + body);
     expect_error([&] { (void)load_scene(path); }, "schema_version",
-                 "non-v4 schema rejection");
+                 "non-v5 schema rejection");
   }
 
-  write_text(path, "{\"schema_version\":\"4\"," + body);
-  expect_error([&] { (void)load_scene(path); }, "expected the integer 4",
+  write_text(path, "{\"schema_version\":\"5\"," + body);
+  expect_error([&] { (void)load_scene(path); }, "expected the integer 5",
                "non-integer schema version rejection");
+}
+
+void test_environment_scene_parser() {
+  TemporaryDirectory directory;
+  const auto path = directory.path / "environment.json";
+  const std::string tail = R"json(
+    "camera":{"look_from":[0,1,4],"look_at":[0,0,0],"up":[0,1,0],"vfov":40},
+    "render":{"width":16,"height":8,"spp":1,"max_depth":2,"seed":9},
+    "textures":[],
+    "materials":[{"name":"mat","type":"lambertian"}],
+    "objects":[{"name":"ball","type":"sphere","center":[0,0,0],
+                 "radius":1,"material":"mat"}],
+    "lights":[]
+  })json";
+  const auto document = [&](const std::string& integrator,
+                            const std::string& background) {
+    return std::string("{\"schema_version\":5,") + integrator +
+           "\"background\":" + background + "," + tail;
+  };
+  const std::string environment =
+      R"json({"type":"environment","path":"studio.hdr","intensity":2.5,"rotation_degrees":-45,"exposure":1})json";
+  write_text(path, document(
+                       R"json("integrator":{"direct_light_sampling":"uniform"},)json",
+                       environment));
+  const Scene scene = load_scene(path, SceneLoadOptions{false});
+  check(scene.background.type == BackgroundType::Environment,
+        "environment background type");
+  check(scene.background.environment_path.filename() == "studio.hdr",
+        "environment path resolution");
+  near(scene.background.environment_intensity, 2.5f, 1.0e-6f,
+       "environment intensity");
+  near(scene.background.environment_rotation_degrees, -45.0f, 1.0e-6f,
+       "environment rotation");
+  check(scene.integrator.direct_light_sampling == DirectLightSampling::Uniform,
+        "uniform direct-light sampling parse");
+  expect_error([&] { (void)load_scene(path); }, "asset not found",
+               "missing environment asset rejection");
+
+  write_text(path, document("", environment));
+  const Scene default_scene = load_scene(path, SceneLoadOptions{false});
+  check(default_scene.integrator.direct_light_sampling ==
+            DirectLightSampling::Importance,
+        "default direct-light importance sampling");
+
+  write_text(path, document(
+                       R"json("integrator":{"direct_light_sampling":"power"},)json",
+                       environment));
+  expect_error([&] { (void)load_scene(path, SceneLoadOptions{false}); },
+               "expected 'uniform' or 'importance'",
+               "invalid direct-light sampling rejection");
+
+  write_text(path, document(
+                       "",
+                       R"json({"type":"environment","path":"studio.hdr","intensity":-1})json"));
+  expect_error([&] { (void)load_scene(path, SceneLoadOptions{false}); },
+               "must be non-negative", "negative environment intensity rejection");
 }
 
 void test_scene_parser() {
   const auto path = temporary(".json");
   std::ofstream output(path);
   output << R"json({
-    "schema_version": 4,
+    "schema_version": 5,
     "camera": {"look_from":[0,1,4],"look_at":[0,0,0],"up":[0,1,0],"vfov":40},
     "background": {"type":"constant","color":[0.1,0.2,0.3],"exposure":1},
+    "integrator": {"direct_light_sampling":"uniform"},
     "render": {"width":64,"height":32,"spp":2,"max_depth":4,"seed":7},
     "textures": [{"name":"white","type":"constant","color":[0.8,0.8,0.8]}],
     "materials": [{"name":"mat","type":"lambertian","texture":"white"},
@@ -682,6 +860,8 @@ void test_scene_parser() {
   check(scene.lights.size() == 1, "light parsing");
   check(scene.lights[0].object_id == 1, "explicit light-object binding");
   near(scene.background.exposure, 1.0f, 1.0e-6f, "background exposure");
+  check(scene.integrator.direct_light_sampling == DirectLightSampling::Uniform,
+        "scene integrator mode");
 }
 
 void check_ember_forge_contract(const Scene& scene,
@@ -715,9 +895,11 @@ int main(int argc, char** argv) {
   try {
     test_vectors();
     test_png();
+    test_hdr_and_sampling_distributions();
     test_obj_loader();
     test_transform_order();
     test_schema_version();
+    test_environment_scene_parser();
     test_scene_parser();
     test_meshes();
     test_flame_lights();

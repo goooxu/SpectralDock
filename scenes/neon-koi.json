@@ -1,5 +1,5 @@
 {
-  "schema_version": 4,
+  "schema_version": 5,
   "camera": {
     "look_from": [0.0, 3.1, 10.8],
     "look_at": [0.0, 2.0, -2.3],
@@ -42,4 +42,3 @@
     {"name": "soft_top", "type": "disk", "position": [0.0, 5.3, 0.0], "normal": [0.0, -1.0, -0.1], "radius": 1.8, "emission": [1.0, 1.1, 1.5]}
   ]
 }
-

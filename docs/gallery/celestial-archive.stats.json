@@ -6,8 +6,8 @@
     "compute_capability": "12.0"
   },
   "versions": {
-    "driver": "610.47.04",
-    "cuda_driver_api": 13030,
+    "driver": "615.36",
+    "cuda_driver_api": 13040,
     "cuda_runtime": 13030,
     "optix": 90100
   },
@@ -17,17 +17,18 @@
     "spp": 512,
     "max_depth": 12,
     "seed": 303,
-    "denoised": true
+    "denoised": true,
+    "direct_light_sampling": "importance"
   },
   "timings_ms": {
-    "bvh_build": 2.6786880493164063,
-    "render": 606.9308471679688,
-    "denoise": 14.530176162719727,
-    "total": 1345.68231
+    "bvh_build": 3.9915199279785156,
+    "render": 979.28759765625,
+    "denoise": 12.007264137268066,
+    "total": 4836.177409
   },
   "memory": {
-    "peak_device_bytes": 1388642304,
-    "peak_tracked_device_bytes": 519831092
+    "peak_device_bytes": 1877278720,
+    "peak_tracked_device_bytes": 530931332
   },
   "geometry": {
     "objects": 9,
@@ -37,7 +38,24 @@
     "gas_count": 9
   },
   "performance": {
-    "traced_rays": 3143769772,
-    "rays_per_second": 5179782485.384135
+    "traced_rays": 3306899136,
+    "rays_per_second": 3376841638.6712875
+  },
+  "volume": {
+    "volume_density_evaluations": 0,
+    "volume_real_collisions": 0,
+    "volume_light_samples": 0,
+    "volume_majorant_violations": 0,
+    "volume_tracking_overflows": 0
+  },
+  "water": {
+    "water_height_evaluations": 0,
+    "water_tile_tests": 0,
+    "water_roots_reported": 0,
+    "water_shadow_transmissions": 0,
+    "water_medium_segments": 0,
+    "water_solver_overflows": 0,
+    "water_medium_errors": 0,
+    "water_shadow_boundary_overflows": 0
   }
 }

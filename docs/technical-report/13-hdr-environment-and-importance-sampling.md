@@ -1,0 +1,311 @@
+# 13　HDR 环境与重要性采样
+
+Radiance Pavilion 把场景放在一张 2048×1024 的程序化 HDR 影棚中，JSON 的 `lights` 为空。高动态范围面板既出现在镜面反射和相机 miss 中，也从无限远方向照亮漫反射与粗糙金属表面。要让这种照明既正确又低方差，工程上必须同时解决四件事：解码线性辐亮度、在球面与二维图像间一致映射、按亮度和立体角构造 PDF，以及让 NEE 与 BSDF miss 共享同一个 PDF 做 MIS。
+
+同一套 `direct_light_sampling` 还控制有限灯选择。`importance` 是正式默认策略，`uniform` 保留为数学正确性和方差对照；两者应收敛到相同均值，只允许收敛速度不同。
+
+## 1. RGBE 保存的不是显示颜色
+
+Radiance RGBE 为每个像素保存三个 8 bit 尾数 $R,G,B$ 和一个共享指数 $E$。当 $E=0$ 时像素为黑；否则解码为
+
+$$
+\mathbf L=(R,G,B)\,2^{E-136}.
+$$
+
+这里的 $\mathbf L$ 是线性 Rec.709 RGB 相对辐亮度，可以远大于 1。减去 136 包含 128 的指数偏置和 8 bit 尾数的 $1/256$ 缩放。它不会在读取时执行 sRGB 解码、曝光或色调映射；曝光只在最终显示管线中执行。
+
+<!-- source-snippet id="hdr-rgbe-linear-decode" path="src/sampling.cpp" anchor="std::ldexp" -->
+```cpp
+Vec3 decode_rgbe(const std::uint8_t* rgbe) {
+  if (rgbe[3] == 0) return Vec3{};
+  const float scale = std::ldexp(1.0f, static_cast<int>(rgbe[3]) - 136);
+  return {static_cast<float>(rgbe[0]) * scale,
+          static_cast<float>(rgbe[1]) * scale,
+          static_cast<float>(rgbe[2]) * scale};
+}
+```
+
+加载器只接受 `FORMAT=32-bit_rle_rgbe` 和 `-Y H +X W`。它支持现代逐通道 RLE 与原始 RGBE scanline，并拒绝错误签名、重复或缺失格式、非法 packet、截断数据和分辨率不匹配。宽、高和像素总数分别限制为 8192、4096 和 $2^{25}$，使文件大小在分配前已有确定上界。首版不读取 OpenEXR，也不把线性 beauty 写成 HDR 文件。
+
+## 2. 从世界方向到纬经纹素
+
+令单位世界方向为 $\boldsymbol\omega=(x,y,z)$。先把它绕 `+Y` 轴逆向旋转环境 yaw，得到贴图局部方向 $\boldsymbol\omega'$；这样正的 `rotation_degrees` 等价于把整个环境按右手方向旋转到世界中。设备端再计算
+
+$$
+u=\mathrm{fract}\left(\frac{\mathrm{atan2}(z',x')}{2\pi}+\frac12\right),
+\qquad
+v=\frac{\arccos(\mathrm{clamp}(y',-1,1))}{\pi}.
+$$
+
+因此第 0 行是北极 `+Y`，U 在接缝处环绕，V 在南北极截断。查背景、镜面反射、环境 PDF 和环境采样都调用同一映射，避免“看见的位置”和“被采样的位置”错开。
+
+<!-- source-snippet id="environment-direction-to-uv" path="src/device_programs.cu" anchor="atan2f" -->
+```cpp
+static __forceinline__ __device__ float2 environment_uv(float3 direction) {
+  const float3 local = rotate_environment_to_local(normalize3(direction));
+  float u = atan2f(local.z, local.x) / (2.0f * kPi) + 0.5f;
+  u -= floorf(u);
+  const float v = acosf(fminf(fmaxf(local.y, -1.0f), 1.0f)) / kPi;
+  return f2(u, fminf(fmaxf(v, 0.0f), 1.0f));
+}
+```
+
+反向采样时令 $\theta=\pi v$、$\phi=2\pi(u-1/2)$，贴图局部方向为
+
+$$
+\boldsymbol\omega'(u,v)=
+(\sin\theta\cos\phi,\ \cos\theta,\ \sin\theta\sin\phi),
+$$
+
+然后把 yaw 正向旋转回世界。两个变换互为逆，因此旋转只改变方向，不改变概率密度或辐亮度值。
+
+## 3. 为什么不能只按像素亮度抽样
+
+纬经图每个像素覆盖相同的 $(u,v)$ 面积，却不覆盖相同立体角。靠近极点的行在球面上更窄；若只按亮度抽像素，极区会被错误地过度采样。
+
+宽为 $W$、高为 $H$ 时，第 $j$ 行从 $\theta_j=\pi j/H$ 延伸到 $\theta_{j+1}$。一个 texel 的精确立体角是
+
+$$
+\boxed{
+\Omega_j=\frac{2\pi}{W}
+\left(\cos\theta_j-\cos\theta_{j+1}\right)
+}.
+$$
+
+把同一行的 $W$ 项相加得到球带立体角，再对全部行求和恰好是 $4\pi$。实现使用边界余弦之差，而不是行中心的近似 $\sin\theta$。
+
+<!-- source-snippet id="environment-texel-solid-angle" path="src/sampling.cpp" anchor="const double solid_angle =" -->
+```cpp
+  for (std::uint32_t y = 0; y < image.height; ++y) {
+    const double theta0 = static_cast<double>(kPi) * y / image.height;
+    const double theta1 = static_cast<double>(kPi) * (y + 1u) / image.height;
+    const double solid_angle =
+        (2.0 * static_cast<double>(kPi) / image.width) *
+        (std::cos(theta0) - std::cos(theta1));
+    for (std::uint32_t x = 0; x < image.width; ++x) {
+      const std::size_t pixel = static_cast<std::size_t>(y) * image.width + x;
+      const Vec3 rgb{image.pixels[pixel * 3], image.pixels[pixel * 3 + 1],
+                     image.pixels[pixel * 3 + 2]};
+      if (!finite(rgb) || rgb.x < 0.0f || rgb.y < 0.0f || rgb.z < 0.0f)
+        throw std::invalid_argument(
+            "environment image contains a non-finite or negative sample");
+      importance[pixel] = luminance(rgb) * solid_angle;
+      sphere_mass[pixel] = solid_angle / (4.0 * static_cast<double>(kPi));
+      importance_sum += static_cast<long double>(importance[pixel]);
+```
+
+亮度使用 Rec.709 系数
+
+$$
+Y=0.2126R+0.7152G+0.0722B.
+$$
+
+若 texel 索引为 $(i,j)$，亮度重要性质量与均匀球面质量分别为
+
+$$
+m_{ij}=Y_{ij}\Omega_j,
+\qquad
+s_{ij}=\frac{\Omega_j}{4\pi}.
+$$
+
+importance 模式使用
+
+$$
+P_{ij}=0.99\frac{m_{ij}}{\sum_{k,l}m_{kl}}+0.01s_{ij}.
+$$
+
+1% 均匀混合保证每个方向都有严格正概率，避免黑暗 texel 对 BSDF miss 的竞争 PDF 变成零。全黑环境没有可归一化的重要性质量，直接令 $P_{ij}=s_{ij}$；uniform 模式也使用这个均匀球面分布。
+
+## 4. 二维 CDF 与方向 PDF
+
+把 $P_{ij}$ 先对列求和得到行概率 $P_j$，再在选中的行内使用条件概率 $P_{i|j}=P_{ij}/P_j$。主机建立一个长度 $H+1$ 的行 CDF 和 $H$ 个长度 $W+1$ 的条件 CDF。设备用两个独立随机数先二分行、再二分列。
+
+为了在选中 texel 内保持立体角均匀，不能线性插值 $\theta$；应在线性区间内插值 $\cos\theta$，再恢复方向。选中 texel 后的方向密度为
+
+$$
+p_E(\boldsymbol\omega)=\frac{P_{ij}}{\Omega_j}
+=\frac{P_jP_{i|j}}{\Omega_j}.
+$$
+
+CDF 在 double 质量上构造目标位置，最终却上传 float。量化可能改变很小区间的宽度，因此实现强制每个 float 边界严格递增，再把相邻边界之差保存为权威概率。采样、环境方向 PDF 和 MIS 都使用这些实际区间，而不是原始 double 质量。
+
+设备反演环境二维 CDF 时把两次 PCG32 输出组合成 53 bit 的 $[0,1)$ double 随机数。只用普通 24 bit float，甚至只用一次 32 bit 输出，都可能无法落入高分辨率环境极区的微小条件区间；若采样永远到不了这些区间而 PDF 仍报告正值，MIS 就会产生真实偏差。有限灯的 1% 均匀混合与 4096 灯上限保证每个 $q_i$ 都远大于 float 的采样分辨率，因此灯索引继续使用单次 `rng.next()`；uniform 模式由此还保留旧有限灯 fixture 的随机数消费顺序。
+
+<!-- source-snippet id="sampling-realized-float-probabilities" path="src/sampling.cpp" anchor="result.boundaries[i + 1] - result.boundaries[i]" -->
+```cpp
+  for (std::size_t i = 0; i < count; ++i) {
+    result.probabilities[i] =
+        result.boundaries[i + 1] - result.boundaries[i];
+    if (!(result.probabilities[i] > 0.0f))
+      throw std::runtime_error("failed to construct a strictly increasing float CDF");
+  }
+  return result;
+}
+```
+
+## 5. 有限灯也要选择分布
+
+若有 $N$ 个有限灯，uniform 模式令 $q_i=1/N$。importance 模式先为每个灯计算非负功率代理 $w_i$：
+
+$$
+w_i=\pi A_iY(\mathbf L_{e,i})
+$$
+
+用于 rectangle、disk 和 sphere；其中 $A_i$ 分别是平行四边形面积、$\pi r^2$ 和 $4\pi r^2$。flame 是各向同性无散射发光体，使用
+
+$$
+w_i=4\pi V_i\,\sigma_{t,i}\,d_i\,
+Y\!\left(\frac{\mathbf L_{0,i}+\mathbf L_{1,i}}{2}\right),
+\qquad
+V_i=\pi r_{max,i}^2h_i.
+$$
+
+这些只是与发光规模相关的方差优化代理，不是校准后的物理瓦特值。最终选择概率为
+
+$$
+\boxed{
+q_i=0.99\frac{w_i}{\sum_k w_k}+\frac{0.01}{N}
+}.
+$$
+
+全零代理退化为均匀选择。场景最多有 4096 个显式灯，最终 $q_i$ 同样取自 float CDF 的实际区间。
+
+<!-- source-snippet id="finite-light-power-mixture" path="src/sampling.cpp" anchor="const double floor =" -->
+```cpp
+  const std::size_t count = lights.size();
+  std::vector<double> masses(count, 1.0 / static_cast<double>(count));
+  if (mode == DirectLightSampling::Importance) {
+    std::vector<double> proxies(count);
+    long double proxy_sum = 0.0L;
+    for (std::size_t i = 0; i < count; ++i) {
+      proxies[i] = finite_light_proxy(lights[i]);
+      if (!std::isfinite(proxies[i]) || proxies[i] < 0.0)
+        throw std::invalid_argument("finite light has an invalid power proxy");
+      proxy_sum += static_cast<long double>(proxies[i]);
+    }
+    const double floor = 0.01 / static_cast<double>(count);
+    if (proxy_sum > 0.0L && std::isfinite(proxy_sum)) {
+      for (std::size_t i = 0; i < count; ++i) {
+        masses[i] = 0.99 * static_cast<double>(
+                               static_cast<long double>(proxies[i]) / proxy_sum) +
+                    floor;
+      }
+    }
+  }
+```
+
+面积灯仍在选中灯面上均匀取点，所以方向 PDF 从第 5 章的 $1/(NA)$ 推广为
+
+$$
+p_L(\boldsymbol\omega)=
+\frac{q_i r^2}{A_i|\mathbf n_l\cdot(-\boldsymbol\omega)|}.
+$$
+
+flame 的体积 NEE 不应套用表面 emitter 的 power heuristic。它保留第 11 章的真实碰撞/显式体积采样互斥分区，只把旧的均匀选灯补偿推广为实际 $q_i$：
+
+<!-- source-snippet id="finite-flame-selection-pdf" path="src/device_programs.cu" anchor="light.selection_pdf * distance2" -->
+```cpp
+    const float maximum_radius =
+        fmaxf(light.radius_start, light.radius_end);
+    const float support_volume =
+        kPi * maximum_radius * maximum_radius * light.height;
+    const float3 emission_coefficient =
+        mul(flame_source(light, axial), sigma);
+    return mul(mul(mul(bsdf, emission_coefficient), surface_transmittance),
+               no_l * support_volume /
+                   (light.selection_pdf * distance2));
+```
+
+## 6. 环境 NEE、无穷远可见性与 MIS
+
+在一个 Lambert 或 GGX 表面上，环境 NEE 抽取方向 $\boldsymbol\omega_i$，估计
+
+$$
+\widehat{\mathbf L}_{E}=
+\frac{
+\mathbf T(\boldsymbol\omega_i)
+\odot\mathbf L_E(\boldsymbol\omega_i)
+\odot f_s(\boldsymbol\omega_i,\boldsymbol\omega_o)
+\max(0,\mathbf n\cdot\boldsymbol\omega_i)
+}{p_E(\boldsymbol\omega_i)}w_E.
+$$
+
+$\mathbf T$ 包含几何/alpha 可见性、flame 吸收，以及含水场景最多八个透明边界的直线 Fresnel/Beer 透射。环境位于无穷远，所以 shadow 查询使用无限 `tmax`；水面 shadow 仍不做 Snell 弯折，因此与第 12 章一样不是焦散求解。
+
+<!-- source-snippet id="environment-infinite-nee" path="src/device_programs.cu" anchor="kInfinity" -->
+```cpp
+  const float3 shadow_origin =
+      add(hit.position, mul(hit.normal, params.scene_epsilon * 2.0f));
+  float3 surface_transmittance = f3(1.0f, 1.0f, 1.0f);
+  if (params.water_surface_count == 0u) {
+    if (!trace_visible(shadow_origin, wi, kInfinity, -1, traced_rays)) {
+      return f3(0.0f, 0.0f, 0.0f);
+    }
+  } else {
+    surface_transmittance = trace_water_transmittance(
+        shadow_origin, wi, kInfinity, -1, media, traced_rays,
+        water_counters);
+    if (!(max_component(surface_transmittance) > 0.0f)) {
+      return f3(0.0f, 0.0f, 0.0f);
+    }
+  }
+  if (track_volume(shadow_origin, wi, kInfinity, rng,
+                   volume_counters).collided != 0) {
+    return f3(0.0f, 0.0f, 0.0f);
+  }
+  const float mis = direct_light_mis_weight(
+      light_pdf, bsdf_pdf, true, next_bsdf_ray_exists);
+  return mul(mul(mul(bsdf, environment_radiance(wi)),
+                     surface_transmittance),
+             no_l * mis / light_pdf);
+```
+
+同一条“表面到环境”路径也可能由 BSDF 先选方向、随后 miss 生成。因此非 delta 前驱使用 power heuristic：
+
+$$
+w_E=\frac{p_E^2}{p_E^2+p_B^2},
+\qquad
+w_B=\frac{p_B^2}{p_B^2+p_E^2}.
+$$
+
+NEE 使用 $w_E$，BSDF miss 使用同一方向上的 $p_E$ 和 $w_B$。相机直接 miss、delta 反射/折射后的 miss，以及末端没有下一条 BSDF 射线时，竞争策略不存在，保留完整权重 1。
+
+<!-- source-snippet id="environment-miss-mis" path="src/device_programs.cu" anchor="environment_direction_pdf" -->
+```cpp
+      if (hit.hit == 0) {
+        const float environment_pdf =
+            previous_delta == 0 ? environment_direction_pdf(ray_direction)
+                                : 0.0f;
+        const float miss_weight =
+            previous_delta != 0 || !(environment_pdf > 0.0f)
+                ? 1.0f
+                : power_heuristic(previous_pdf, environment_pdf);
+        radiance = add(
+            radiance,
+            mul(mul(throughput, background(ray_direction)), miss_weight));
+        break;
+      }
+```
+
+## 7. 两个 NEE 域不是一个混合大灯表
+
+环境与有限灯各自产生一个独立样本。若两者都存在，一个支持 NEE 的表面事件最多形成两个 connection：一个指向有限灯点，一个指向无限远环境方向。它们估计不同积分域，不需要在环境与有限灯之间再选一次类别，也不把各自 PDF 乘一个类别概率。
+
+“两个 connection”也不等于固定两条 OptiX 射线。没有对应域、材质为 delta、方向落到背面、PDF 无效或局部条件提前失败时不会追踪 shadow；含水透明 shadow 反而可能为多个边界执行多次有限查询。stats 中的 `traced_rays` 记录实际调用次数，而不是理论 connection 数。
+
+BSDF 的 cosine/GGX 方向重要性采样不受 JSON 开关影响。`direct_light_sampling` 只在以下两处切换：
+
+- HDR 环境使用亮度立体角分布或均匀球面分布；
+- 有限灯使用功率代理分布或均匀灯索引分布。
+
+stats 的 `render.direct_light_sampling` 保存实际模式，使 gallery、基准和回归结果能够复现。
+
+## 8. 验证边界
+
+Host 测试覆盖 RGBE 原始/RLE scanline、坏 packet、尺寸上限、CDF 单调归一、最终 float 区间概率、全黑退化和有限灯代理。程序化环境生成器还必须逐字节重建 tracked HDR 资产。
+
+GPU 定向测试检查环境唯一照明、`intensity=0` 精确黑场、旋转响应、固定 seed 确定性和 depth 1 环境 NEE；高 spp 的 uniform/importance 均值必须收敛，低 spp 下热点环境与强弱多灯的 ROI MSE 必须由 importance 明显降低。有限灯测试还用两盏不等功率且绑定可见 emitter 几何的面积灯，在 depth 2 同时触发 NEE 与 BSDF-hit 路径，验证两侧 MIS 都使用同一 $q_i$。环境 fixture 同时进入 memcheck、initcheck 和 racecheck。
+
+重要性采样不是“画面增强”开关：它不能改变正确极限，也不能修复错误 HDR、缺失遮挡、错误材质或截断偏差。亮度分布也不是对任意 BSDF 都最优；极光滑 GGX 仍可能主要依赖 BSDF 采样，球灯仍采整个球面而非可见立体角。它解决的是常见高动态环境和强弱多灯下的样本浪费，不是所有方差来源。
+
+[上一章：运行时解析水面](12-runtime-analytic-water.md) · [返回目录](README.md)
