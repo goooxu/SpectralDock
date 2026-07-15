@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 650" role="img" aria-labelledby="title desc">
-  <title id="title">直接光采样、BSDF 采样与 MIS</title>
-  <desc id="desc">上方两个面板展示从表面主动连接灯光和按 BSDF 方向命中灯光；下方曲线展示两个方向概率密度及 MIS 权重。</desc>
+  <title id="title">普通表面的直接光采样、BSDF 采样与 MIS</title>
+  <desc id="desc">上方两个面板展示普通表面的一份直接光样本和一份 BSDF 样本；下方展示双策略 power MIS。粗糙水面的三技术 balance 由正文另行推导。</desc>
   <defs>
     <marker id="cyan" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><path d="M0 0L9 3.5L0 7Z" fill="#22d3ee"/></marker>
     <marker id="yellow" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><path d="M0 0L9 3.5L0 7Z" fill="#fbbf24"/></marker>
@@ -32,7 +32,7 @@
   <text x="622" y="318" class="s">方向概率由材质散射瓣得到 pB</text>
 
   <rect x="24" y="374" width="1072" height="252" rx="14" fill="#102238" stroke="#284565"/>
-  <text x="48" y="412" class="h">同一方向测度上的 PDF 与 power heuristic</text>
+  <text x="48" y="412" class="h">普通双策略：同一方向测度上的 PDF 与 power heuristic</text>
   <line x1="88" y1="574" x2="666" y2="574" stroke="#94a3b8" stroke-width="2"/>
   <line x1="88" y1="574" x2="88" y2="446" stroke="#94a3b8" stroke-width="2"/>
   <path d="M88 568 C228 558 276 536 354 492 C414 458 474 470 666 566" fill="none" stroke="#22d3ee" stroke-width="4"/>

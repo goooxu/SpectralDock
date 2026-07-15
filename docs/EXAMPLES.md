@@ -48,7 +48,7 @@
 
 ![Moonlit Stepwell](gallery/moonlit-stepwell.png)
 
-月光阶井用 rectangle、disk、cylinder 和同一 mascot OBJ 搭建石阶、池底、墙体与立柱。中央 schema v5 water_surface 是四项确定性解析波浪的有限高度场：相机路径使用精确光滑介电 Fresnel/Snell、介质栈和 RGB Beer 吸收；显式月光跨水面时使用直线 Fresnel/Beer shadow 近似。场景固定 seed 808，以水中月盘反射、池底折射位移、深水蓝绿色选择性吸收和水下直接光展示运行时水传输；它不是流体模拟，也不包含泡沫、动画、专用焦散或 motion blur。正式图固定为 2048 spp、depth 16、无 Denoiser。
+月光阶井用 rectangle、disk、cylinder 和同一 mascot OBJ 搭建石阶、池底、墙体与立柱。中央 schema v5 water_surface 是四项确定性解析波浪的有限高度场，并在解析宏观法线上叠加 `roughness: 0.12` 的 GGX 微表面：反射与折射使用精确介电 Fresnel、Smith 遮蔽、可见法线采样和 MIS，有限灯、flame 与 HDR 环境都能在当前粗糙水面顶点执行 NEE；介质栈和 RGB Beer 吸收负责水下传播。为了不让水面这个视觉主体反而成为最慢收敛的部分，BSDF 以实际 PDF 补偿的方式把反射分支概率提高到至少 50%；有限灯在每个水面顶点分别取得一份全局功率样本和一份均匀索引样本，以二者的联合灯 PDF 与 BSDF 命中组成三技术 balance MIS，同时照顾月光和弱水下灯。选中水下单面 sphere 灯时还均匀采其可见立体角，避免背向球面样本；月盘本身是 disk，仍按灯面采样。场景固定 seed 808，以月盘粗糙反射、池底折射位移、深水蓝绿色选择性吸收和水下照明展示运行时水传输；它不是流体模拟，也不包含泡沫、动画、MNEE、光滑多界面焦散求解或 motion blur。正式图固定为 512 spp、depth 12，并启用 OptiX AI Denoiser；维护者的线性 PFM 收敛对照显式关闭降噪。
 
 ## Kinetic Foundry (PhysX)
 
@@ -69,7 +69,7 @@
 ./scripts/render-examples.sh --preset preview neon-koi reflector-laboratory
 ```
 
-上述命令只处理八个内置场景；Radiance Pavilion 的 final 使用场景内固定的 512 spp、depth 12 与 AI 降噪，Ember Forge 的 preview/final 分别固定为 256/2048 spp、depth 12、无降噪，Moonlit Stepwell 分别固定为 256/2048 spp、depth 16、无降噪。只渲染 HDR 环境示例可运行 `./scripts/render-examples.sh --preset preview radiance-pavilion`，只渲染火焰场景可运行 `./scripts/render-examples.sh --preset preview ember-forge`。按需生成并渲染 Kinetic Foundry：
+上述命令只处理八个内置场景；Radiance Pavilion 的 final 使用场景内固定的 512 spp、depth 12 与 AI 降噪，Ember Forge 的 preview/final 分别固定为 256/2048 spp、depth 12、无降噪，Moonlit Stepwell 分别固定为 128/512 spp、depth 12、AI 降噪。只渲染 HDR 环境示例可运行 `./scripts/render-examples.sh --preset preview radiance-pavilion`，只渲染火焰场景可运行 `./scripts/render-examples.sh --preset preview ember-forge`。按需生成并渲染 Kinetic Foundry：
 
 ```bash
 ./scripts/build-physx-image.sh

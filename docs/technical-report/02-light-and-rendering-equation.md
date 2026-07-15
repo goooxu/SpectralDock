@@ -181,38 +181,44 @@ $$
 
 ### 5.2 发光面项
 
-<!-- source-snippet id="raygen-emitter-accumulation" path="src/device_programs.cu" anchor="emitter_hit_mis_weight" -->
+<!-- source-snippet id="raygen-emitter-accumulation" path="src/device_programs.cu" anchor="use_water_finite_balance" -->
 ```cpp
-      if (material.type == spectraldock::kMaterialEmitter) {
-        float3 emitted = material.emission;
-        if (material.texture_index >= 0) {
-          const float4 texel = sample_texture(material.texture_index, hit.uv);
-          emitted = mul(emitted, f3(texel.x, texel.y, texel.z));
-        }
-        const bool emitter_is_bound_to_light = hit.light_index >= 0;
-        const float light_pdf = emitter_is_bound_to_light
-            ? light_direction_pdf(hit.light_index, ray_origin, hit.position)
-            : 0.0f;
-        const float weight = emitter_hit_mis_weight(
-            previous_pdf, light_pdf, previous_delta != 0,
-            emitter_is_bound_to_light);
+        const bool use_water_finite_balance =
+            emitter_is_bound_to_light &&
+            previous_light_mode == kFiniteLightWaterPowerSample &&
+            previous_delta == 0 &&
+            light_pdf > 0.0f;
+        const float weight = use_water_finite_balance
+            ? balance_heuristic(previous_pdf, light_pdf)
+            : emitter_hit_mis_weight(
+                  previous_pdf, light_pdf, previous_delta != 0,
+                  emitter_is_bound_to_light);
         radiance = add(radiance, mul(mul(throughput, emitted), weight));
         break;
-      }
 ```
 
-这里的 `emitted` 对应 $L_e$，纹理只调制它的 RGB；`throughput` 仍是 $\boldsymbol\beta$。`weight` 是命中光源时避免与显式灯光采样重复计数的 MIS 权重，所以最终加入的是 $\boldsymbol\beta\odot L_e w$。Emitter 是终端材质，累加后立即 `break`。
+这里的 `emitted` 对应 $L_e$，纹理只调制它的 RGB；`throughput` 仍是 $\boldsymbol\beta$。普通前驱使用 `emitter_hit_mis_weight` 与有限灯 NEE 分权。粗糙 water 的绑定有限灯使用三技术 balance：前一顶点的两份灯样本共享 $p_L=p_G+p_U$，BSDF 命中端点乘 $p_B/(p_L+p_B)$；两份 direct 项各乘 $p_L/(p_L+p_B)$ 后共同补齐同一积分。背面、球内无灯采样支持、未绑定 emitter、delta 前驱和相机直见退化为普通权重。Emitter 是终端材质，累加后立即 `break`。
 
 ### 5.3 直接光与下一次散射
 
 <!-- source-snippet id="raygen-direct-and-scatter" path="src/device_programs.cu" anchor="sample_environment_direct_light" -->
 ```cpp
-      const float3 wo = neg(ray_direction);
-      const bool next_bsdf_ray_exists = bounce + 1u < params.max_depth;
-      const float3 finite_direct =
+      float3 finite_direct =
           sample_finite_direct_light(hit, material, base_color, wo,
-                                     next_bsdf_ray_exists, rng, traced_rays,
+                                     next_bsdf_ray_exists, current_light_mode,
+                                     rng, traced_rays,
                                      volume_counters, media, water_counters);
+      if (current_light_mode == kFiniteLightWaterPowerSample) {
+        // Deterministic two-component stratification: take one qG sample and
+        // one qU sample. Their combined light density is qG + qU, so no 0.5
+        // factor belongs here; a bound endpoint completes balance with BSDF.
+        finite_direct = add(
+            finite_direct,
+            sample_finite_direct_light(
+                hit, material, base_color, wo, next_bsdf_ray_exists,
+                kFiniteLightWaterUniformSample, rng, traced_rays,
+                volume_counters, media, water_counters));
+      }
       const float3 environment_direct =
           sample_environment_direct_light(
               hit, material, base_color, wo, next_bsdf_ray_exists, rng,
@@ -220,14 +226,11 @@ $$
       radiance = add(
           radiance,
           mul(throughput, add(finite_direct, environment_direct)));
-      if (!next_bsdf_ray_exists) {
-        break;
-      }
 ```
 
-有限灯与 HDR 环境是两个独立 NEE 域，所以它们各自产生一个估计后相加；“最多两个 connection”不等于无条件发出两条 OptiX shadow ray，PDF、余弦或遮挡检查都可能提前返回。最后一个表面事件仍计算这两项，之后才停止。若还有深度，紧随其后的 `sample_bsdf` 产生下一方向并更新吞吐量、`previous_pdf` 与 delta 标记。
+有限灯与 HDR 环境是两个独立 NEE 域。普通表面在有限灯域取一个样本；粗糙 water 在该域确定性地各取一个全局功率样本和均匀索引样本，二者的选灯密度相加为 $q_G+q_U$，不乘 0.5。若绑定表面灯还可由下一条 BSDF 射线命中，direct 与 emitter-hit 再用 $p_L+p_B$ 的 balance 权重分配同一路径；否则两份灯样本独自覆盖有限灯域。环境域仍只取一个方向样本并与 BSDF miss 做 power MIS。因此普通顶点最多尝试两个 connection，粗糙 water 最多尝试三个；PDF、余弦或遮挡检查仍可提前返回。最后一个表面事件仍计算直接光，之后才停止。
 
-`wo` 对应 $\boldsymbol\omega_o$；`finite_direct` 和 `environment_direct` 分别是对渲染方程中有限灯域与无限远环境域的一次估计，二者相加后仍需乘当前 $\boldsymbol\beta$ 才能加入 `radiance`。随后 `sample_bsdf` 选出新的 $\boldsymbol\omega_i$：对 Lambert/GGX 连续分支，`weight` 包含 $f_s|\mathbf n\cdot\boldsymbol\omega_i|/p_B$；对 dielectric delta 分支，它是离散反射或折射事件的权重，透射时还包含 $(\eta_i/\eta_t)^2$。因此两类分支都只需一次乘法即可更新吞吐量。无下一跳、无效样本或零吞吐量都会尽早结束路径，避免无贡献追踪。
+`wo` 对应 $\boldsymbol\omega_o$；`finite_direct` 聚合有限灯域的估计（普通顶点一份样本，粗糙 water 为 $q_G/q_U$ 两份），`environment_direct` 是无限远环境域的一份估计，二者相加后仍需乘当前 $\boldsymbol\beta$ 才能加入 `radiance`。随后 `sample_bsdf` 选出新的 $\boldsymbol\omega_i$：对 Lambert/GGX 连续分支（包括粗糙 dielectric/water），`weight` 包含 $f_s|\mathbf n\cdot\boldsymbol\omega_i|/p_B$；只有 `roughness = 0` 的 dielectric/water 使用离散 delta 反射或折射事件权重，透射时还包含 $(\eta_i/\eta_t)^2$。因此两类分支都只需一次乘法即可更新吞吐量。无下一跳、无效样本或零吞吐量都会尽早结束路径，避免无贡献追踪。
 
 下一章先研究方程中的材质项 $f_s$，再讨论如何用随机样本估计整个积分。
 

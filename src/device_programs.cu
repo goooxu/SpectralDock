@@ -112,6 +112,16 @@ static __forceinline__ __device__ float power_heuristic(
   return aa / (aa + bb);
 }
 
+static __forceinline__ __device__ float balance_heuristic(
+    float pdf_a, float pdf_b) {
+  if (!(pdf_a > 0.0f)) return 0.0f;
+  if (!(pdf_b > 0.0f)) return 1.0f;
+  const float scale = pdf_a > pdf_b ? pdf_a : pdf_b;
+  const float a = pdf_a / scale;
+  const float b = pdf_b / scale;
+  return a / (a + b);
+}
+
 static __forceinline__ __device__ float direct_light_mis_weight(
     float light_pdf, float bsdf_pdf, bool light_can_be_hit,
     bool next_bsdf_ray_exists) {
@@ -216,6 +226,25 @@ struct Pcg32 {
            1.1102230246251565404236316680908203125e-16;
   }
 };
+
+static __forceinline__ __device__ void fork_rng(
+    Pcg32& rng, unsigned int tag) {
+  const unsigned int lo = static_cast<unsigned int>(rng.state);
+  const unsigned int hi = static_cast<unsigned int>(rng.state >> 32u);
+  const unsigned int stream_lo = static_cast<unsigned int>(rng.increment);
+  const unsigned int stream_hi =
+      static_cast<unsigned int>(rng.increment >> 32u);
+  const unsigned int mixed_lo = Pcg32::hash(lo ^ tag ^ stream_hi);
+  const unsigned int mixed_hi =
+      Pcg32::hash(hi ^ (tag * 0x9e3779b9u) ^ stream_lo);
+  rng.state = (static_cast<unsigned long long>(mixed_hi) << 32u) | mixed_lo;
+  rng.increment =
+      (((static_cast<unsigned long long>(Pcg32::hash(stream_hi ^ tag))
+         << 32u) |
+        Pcg32::hash(stream_lo ^ mixed_hi)) |
+       1ull);
+  rng.next_uint();
+}
 
 constexpr unsigned int kMaxFlames = 8u;
 constexpr unsigned int kMaxVolumeEvents = 2u * kMaxFlames;
@@ -491,6 +520,7 @@ struct SurfaceHit {
   int front_face;
   float distance;
   float3 position;
+  float3 geometric_normal;
   float3 normal;
   float2 uv;
 };
@@ -1196,47 +1226,213 @@ static __forceinline__ __device__ float dielectric_fresnel(
   return 0.5f * (rs * rs + rp * rp);
 }
 
+static __forceinline__ __device__ bool is_rough_dielectric(
+    const MaterialData& material) {
+  return (material.type == spectraldock::kMaterialDielectric ||
+          material.type == spectraldock::kMaterialWater) &&
+         material.roughness > 0.0f;
+}
+
+static __forceinline__ __device__ float rough_reflection_probability(
+    const MaterialData& material, float fresnel) {
+  // Moonlit water is reflection-dominated perceptually even when Fresnel is
+  // small. Oversample that branch, while evaluate_bsdf keeps the exact F in
+  // the BSDF value and uses this same probability only in the direction PDF.
+  if (fresnel >= 1.0f) return 1.0f;
+  return material.type == spectraldock::kMaterialWater
+      ? fmaxf(fresnel, 0.5f)
+      : fresnel;
+}
+
+static __forceinline__ __device__ bool supports_direct_lighting(
+    const MaterialData& material) {
+  return material.type == spectraldock::kMaterialLambertian ||
+         material.type == spectraldock::kMaterialMetal ||
+         is_rough_dielectric(material);
+}
+
+// Shading normals shape the lobe, but only the oriented geometric normal can
+// decide which physical medium a direction occupies. Reject a rough
+// dielectric direction when those two classifications disagree; otherwise a
+// reflected sample could mutate the medium stack (or a transmitted one could
+// stay on the incident side).
+static __forceinline__ __device__ bool rough_macro_sides_agree(
+    float3 shading_normal, float3 geometric_normal, float3 direction,
+    bool& transmitted) {
+  const float shading_side = dot3(shading_normal, direction);
+  const float geometric_side = dot3(geometric_normal, direction);
+  if (!(fabsf(shading_side) > 0.0f) ||
+      !(fabsf(geometric_side) > 0.0f) ||
+      (shading_side > 0.0f) != (geometric_side > 0.0f)) {
+    return false;
+  }
+  transmitted = geometric_side < 0.0f;
+  return true;
+}
+
+static __forceinline__ __device__ void dielectric_eta_pair(
+    const MaterialData& material, int front_face, int material_index,
+    const MediumState* media, WaterCounters& counters,
+    float& eta_i, float& eta_t) {
+  if (media != nullptr) {
+    eta_i = medium_ior(*media);
+    eta_t = front_face != 0
+        ? fmaxf(material.ior, 1.0e-3f)
+        : exit_ior(*media, material_index, counters);
+    return;
+  }
+  eta_i = front_face != 0 ? 1.0f : fmaxf(material.ior, 1.0e-3f);
+  eta_t = front_face != 0 ? fmaxf(material.ior, 1.0e-3f) : 1.0f;
+}
+
+// Heitz's isotropic GGX visible-normal sampler. Sampling the distribution of
+// normals visible from wo avoids the grazing-angle rejection spikes of an NDF
+// sampler and gives the reflection/transmission lobes one shared measure.
+static __forceinline__ __device__ float3 sample_ggx_vndf(
+    float3 n, float3 wo, float alpha, float u1, float u2) {
+  float3 tangent;
+  float3 bitangent;
+  make_basis(n, tangent, bitangent);
+  const float3 view =
+      f3(dot3(wo, tangent), dot3(wo, bitangent), dot3(wo, n));
+  const float3 stretched = normalize3(
+      f3(alpha * view.x, alpha * view.y, fmaxf(view.z, 0.0f)));
+  const float lensq = stretched.x * stretched.x +
+                      stretched.y * stretched.y;
+  const float3 t1 = lensq > 1.0e-20f
+      ? f3(-stretched.y * rsqrtf(lensq),
+           stretched.x * rsqrtf(lensq), 0.0f)
+      : f3(1.0f, 0.0f, 0.0f);
+  const float3 t2 = cross3(stretched, t1);
+  const float radius = sqrtf(u1);
+  const float phi = 2.0f * kPi * u2;
+  const float disk_x = radius * cosf(phi);
+  float disk_y = radius * sinf(phi);
+  const float blend = 0.5f * (1.0f + stretched.z);
+  disk_y = (1.0f - blend) *
+               sqrtf(fmaxf(0.0f, 1.0f - disk_x * disk_x)) +
+           blend * disk_y;
+  const float disk_z = sqrtf(fmaxf(
+      0.0f, 1.0f - disk_x * disk_x - disk_y * disk_y));
+  const float3 visible = add(
+      add(mul(t1, disk_x), mul(t2, disk_y)), mul(stretched, disk_z));
+  const float3 local_half = normalize3(
+      f3(alpha * visible.x, alpha * visible.y,
+         fmaxf(visible.z, 0.0f)));
+  return normalize3(add(add(mul(tangent, local_half.x),
+                            mul(bitangent, local_half.y)),
+                        mul(n, local_half.z)));
+}
+
+static __forceinline__ __device__ float ggx_visible_normal_pdf(
+    float3 n, float3 wo, float3 half_vector, float alpha) {
+  const float no_v = fmaxf(dot3(n, wo), 0.0f);
+  const float no_h = fmaxf(dot3(n, half_vector), 0.0f);
+  const float vo_h = fmaxf(dot3(wo, half_vector), 0.0f);
+  if (!(no_v > 0.0f) || !(no_h > 0.0f) || !(vo_h > 0.0f)) {
+    return 0.0f;
+  }
+  return ggx_distribution(no_h, alpha) * ggx_g1(no_v, alpha) * vo_h /
+         no_v;
+}
+
 static __forceinline__ __device__ void evaluate_bsdf(
     const MaterialData& material, float3 base_color, float3 n, float3 wo,
-    float3 wi, float3& value, float& pdf) {
+    float3 wi, float eta_i, float eta_t, float3& value, float& pdf) {
   value = f3(0.0f, 0.0f, 0.0f);
   pdf = 0.0f;
   const float no_l = dot3(n, wi);
   const float no_v = dot3(n, wo);
-  if (no_l <= 0.0f || no_v <= 0.0f) {
+  if (no_v <= 0.0f) {
     return;
   }
   if (material.type == spectraldock::kMaterialLambertian) {
+    if (no_l <= 0.0f) return;
     value = mul(base_color, kInvPi);
     pdf = no_l * kInvPi;
     return;
   }
-  if (material.type != spectraldock::kMaterialMetal) {
+  if (material.type == spectraldock::kMaterialMetal) {
+    if (no_l <= 0.0f) return;
+    const float3 half_vector = normalize3(add(wo, wi));
+    const float no_h = fmaxf(dot3(n, half_vector), 0.0f);
+    const float vo_h = fmaxf(dot3(wo, half_vector), 0.0f);
+    if (no_h <= 0.0f || vo_h <= 0.0f) {
+      return;
+    }
+    const float alpha =
+        fmaxf(material.roughness * material.roughness, 0.001f);
+    const float d = ggx_distribution(no_h, alpha);
+    const float g = ggx_g1(no_v, alpha) * ggx_g1(no_l, alpha);
+    const float3 dielectric_f0 = f3(0.04f, 0.04f, 0.04f);
+    const float3 f0 =
+        lerp3(dielectric_f0, base_color,
+              fminf(fmaxf(material.metallic, 0.0f), 1.0f));
+    const float3 fresnel = fresnel_schlick(vo_h, f0);
+    value = mul(fresnel, d * g / fmaxf(4.0f * no_v * no_l, 1.0e-20f));
+    pdf = d * no_h / fmaxf(4.0f * vo_h, 1.0e-20f);
     return;
   }
-  const float3 half_vector = normalize3(add(wo, wi));
-  const float no_h = fmaxf(dot3(n, half_vector), 0.0f);
-  const float vo_h = fmaxf(dot3(wo, half_vector), 0.0f);
-  if (no_h <= 0.0f || vo_h <= 0.0f) {
+  if (!is_rough_dielectric(material)) {
     return;
   }
+
   const float alpha =
       fmaxf(material.roughness * material.roughness, 0.001f);
+  const bool reflection = no_l > 0.0f;
+  float3 half_vector;
+  float eta_path = 1.0f;
+  if (reflection) {
+    half_vector = normalize3(add(wo, wi));
+  } else {
+    // etap is eta_t / eta_i. With both directions pointing away from the
+    // interface, h is proportional to wo + etap*wi (Walter et al. 2007).
+    eta_path = eta_t / fmaxf(eta_i, 1.0e-20f);
+    half_vector = normalize3(add(wo, mul(wi, eta_path)));
+  }
+  if (dot3(half_vector, n) < 0.0f) half_vector = neg(half_vector);
+  const float no_h = fmaxf(dot3(n, half_vector), 0.0f);
+  const float wo_h = dot3(wo, half_vector);
+  const float wi_h = dot3(wi, half_vector);
+  if (!(no_h > 0.0f) || !(wo_h > 0.0f)) return;
+  if ((reflection && !(wi_h > 0.0f)) ||
+      (!reflection && !(wi_h < 0.0f))) {
+    return;
+  }
   const float d = ggx_distribution(no_h, alpha);
-  const float g = ggx_g1(no_v, alpha) * ggx_g1(no_l, alpha);
-  const float3 dielectric_f0 = f3(0.04f, 0.04f, 0.04f);
-  const float3 f0 =
-      lerp3(dielectric_f0, base_color,
-            fminf(fmaxf(material.metallic, 0.0f), 1.0f));
-  const float3 fresnel = fresnel_schlick(vo_h, f0);
-  value = mul(fresnel, d * g / fmaxf(4.0f * no_v * no_l, 1.0e-20f));
-  pdf = d * no_h / fmaxf(4.0f * vo_h, 1.0e-20f);
+  const float g = ggx_g1(no_v, alpha) *
+                  ggx_g1(fabsf(no_l), alpha);
+  const float fresnel = dielectric_fresnel(wo_h, eta_i, eta_t);
+  const float reflection_probability =
+      rough_reflection_probability(material, fresnel);
+  const float half_pdf = ggx_visible_normal_pdf(
+      n, wo, half_vector, alpha);
+  if (reflection) {
+    value = mul(base_color,
+                fresnel * d * g /
+                    fmaxf(4.0f * no_v * no_l, 1.0e-20f));
+    pdf = reflection_probability * half_pdf /
+          fmaxf(4.0f * fabsf(wo_h), 1.0e-20f);
+    return;
+  }
+  const float denominator = wo_h + eta_path * wi_h;
+  const float denominator2 = denominator * denominator;
+  if (!(denominator2 > 1.0e-20f)) return;
+  // Radiance transport carries the eta_i^2/eta_t^2 factor. It appears in the
+  // sample weight through the solid-angle Jacobian below, matching the delta
+  // transmission convention used by this renderer.
+  value = mul(base_color,
+              (1.0f - fresnel) * d * g * fabsf(wi_h * wo_h) /
+                  fmaxf(no_v * fabsf(no_l) * denominator2, 1.0e-20f));
+  const float jacobian =
+      fabsf(eta_path * eta_path * wi_h / denominator2);
+  pdf = (1.0f - reflection_probability) * half_pdf * jacobian;
 }
 
 static __forceinline__ __device__ BsdfSample sample_bsdf(
-    const MaterialData& material, float3 base_color, float3 n, float3 wo,
-    int front_face, int material_index, Pcg32& rng, MediumState* media,
-    WaterCounters& water_counters) {
+    const MaterialData& material, float3 base_color, float3 n,
+    float3 geometric_n, float3 wo, int front_face, int material_index,
+    Pcg32& rng, MediumState* media, WaterCounters& water_counters) {
   BsdfSample sample = {};
   sample.weight = f3(0.0f, 0.0f, 0.0f);
   if (material.type == spectraldock::kMaterialLambertian) {
@@ -1267,7 +1463,8 @@ static __forceinline__ __device__ BsdfSample sample_bsdf(
         f3(sin_theta * cosf(phi), sin_theta * sinf(phi), cos_theta), n);
     sample.wi = normalize3(reflect3(neg(wo), half_vector));
     float3 value;
-    evaluate_bsdf(material, base_color, n, wo, sample.wi, value, sample.pdf);
+    evaluate_bsdf(material, base_color, n, wo, sample.wi,
+                  1.0f, 1.0f, value, sample.pdf);
     const float no_l = fmaxf(dot3(n, sample.wi), 0.0f);
     if (sample.pdf > 0.0f && no_l > 0.0f) {
       sample.weight = mul(value, no_l / sample.pdf);
@@ -1278,6 +1475,58 @@ static __forceinline__ __device__ BsdfSample sample_bsdf(
   }
   if (material.type == spectraldock::kMaterialDielectric ||
       material.type == spectraldock::kMaterialWater) {
+    if (is_rough_dielectric(material)) {
+      float eta_i = 1.0f;
+      float eta_t = 1.0f;
+      dielectric_eta_pair(material, front_face, material_index, media,
+                          water_counters, eta_i, eta_t);
+      const float alpha =
+          fmaxf(material.roughness * material.roughness, 0.001f);
+      const float3 half_vector = sample_ggx_vndf(
+          n, wo, alpha, rng.next(), rng.next());
+      const float wo_h = fmaxf(dot3(wo, half_vector), 0.0f);
+      if (!(wo_h > 0.0f)) return sample;
+      const float reflectance = dielectric_fresnel(
+          wo_h, eta_i, eta_t);
+      const float reflection_probability =
+          rough_reflection_probability(material, reflectance);
+      if (reflection_probability >= 1.0f ||
+          rng.next() < reflection_probability) {
+        sample.wi = normalize3(reflect3(neg(wo), half_vector));
+      } else {
+        const float eta = eta_i / eta_t;
+        const float3 perpendicular =
+            mul(add(neg(wo), mul(half_vector, wo_h)), eta);
+        const float parallel_length2 =
+            fmaxf(0.0f, 1.0f - length2(perpendicular));
+        sample.wi = normalize3(add(
+            perpendicular,
+            mul(half_vector, -sqrtf(parallel_length2))));
+        sample.transmitted = 1;
+      }
+      bool macro_transmitted = false;
+      if (!rough_macro_sides_agree(
+              n, geometric_n, sample.wi, macro_transmitted) ||
+          (sample.transmitted != 0) != macro_transmitted) {
+        return sample;
+      }
+      float3 value;
+      evaluate_bsdf(material, base_color, n, wo, sample.wi,
+                    eta_i, eta_t, value, sample.pdf);
+      const float no_l = fabsf(dot3(n, sample.wi));
+      if (sample.pdf > 0.0f && no_l > 0.0f) {
+        sample.weight = mul(value, no_l / sample.pdf);
+        sample.valid = max_component(sample.weight) > 0.0f ? 1 : 0;
+      }
+      sample.delta = 0;
+      if (sample.valid != 0 && sample.transmitted != 0 && media != nullptr &&
+          !update_medium_after_transmission(
+              *media, material_index, material, front_face,
+              water_counters)) {
+        sample.valid = 0;
+      }
+      return sample;
+    }
     // Keep the pre-water dielectric arithmetic and RNG sequence byte-for-byte
     // for scenes which do not opt into medium tracking.
     if (params.water_surface_count != 0u && media != nullptr) {
@@ -1341,70 +1590,135 @@ static __forceinline__ __device__ BsdfSample sample_bsdf(
   return sample;
 }
 
-static __forceinline__ __device__ float3 trace_water_transmittance(
-    float3 origin, float3 direction, float distance, int target_light,
-    MediumState media, unsigned long long& traced_rays,
-    WaterCounters& counters) {
-  float3 transmittance = f3(1.0f, 1.0f, 1.0f);
-  float remaining = distance;
-  constexpr unsigned int kMaximumTransparentBoundaries = 8u;
-  for (unsigned int boundary = 0u;
-       boundary <= kMaximumTransparentBoundaries; ++boundary) {
-    if (!(remaining > params.scene_epsilon)) return transmittance;
-    const SurfaceHit hit = trace_radiance(
-        origin, direction, traced_rays,
-        fmaxf(remaining - params.scene_epsilon, params.scene_epsilon));
-    if (hit.hit == 0) {
-      return mul(transmittance,
-                 medium_segment_transmittance(media, remaining, counters));
-    }
-    infer_base_water_incident_medium(hit, media);
-    transmittance = mul(
-        transmittance,
-        medium_segment_transmittance(media, hit.distance, counters));
-    if (hit.light_index >= 0 && hit.light_index == target_light) {
-      return transmittance;
-    }
-    if (hit.material_index < 0 || params.materials == nullptr ||
-        static_cast<unsigned int>(hit.material_index) >=
-            params.material_count) {
-      return f3(0.0f, 0.0f, 0.0f);
-    }
-    const MaterialData material = params.materials[hit.material_index];
-    if (material.type != spectraldock::kMaterialDielectric &&
-        material.type != spectraldock::kMaterialWater) {
-      return f3(0.0f, 0.0f, 0.0f);
-    }
-    // The extra query after eight accepted transmissions distinguishes a
-    // clear/opaque remainder from a ninth transparent boundary. This keeps
-    // the documented limit inclusive without silently accepting boundary 9.
-    if (boundary == kMaximumTransparentBoundaries) {
-      ++counters.shadow_boundary_overflows;
-      return f3(0.0f, 0.0f, 0.0f);
-    }
-    const float eta_i = medium_ior(media);
-    const float eta_t = hit.front_face != 0
-        ? fmaxf(material.ior, 1.0e-3f)
-        : exit_ior(media, hit.material_index, counters);
-    const float cos_i =
-        fminf(fmaxf(dot3(neg(direction), hit.normal), 0.0f), 1.0f);
-    const float fresnel = dielectric_fresnel(cos_i, eta_i, eta_t);
-    if (!(fresnel < 1.0f)) return f3(0.0f, 0.0f, 0.0f);
-    transmittance = mul(transmittance, 1.0f - fresnel);
+// A direct-light connection represents exactly one BSDF event at the current
+// vertex. Any later dielectric boundary is therefore an occluder; bending a
+// straight shadow ray through it would be a different (specular-manifold)
+// technique. For a rough transmission sampled at this vertex, however, the
+// segment starts in the transmitted medium, so update a copy of the stack and
+// apply Beer attenuation along that same-medium segment. The caller derives
+// transmitted_connection from the oriented geometric normal after verifying
+// that its macro-side classification agrees with the shading normal.
+static __forceinline__ __device__ float3 direct_segment_transmittance(
+    const SurfaceHit& hit, const MaterialData& material,
+    float3 shadow_origin, float3 shadow_direction, float shadow_distance,
+    int target_light, bool transmitted_connection, const MediumState& media,
+    unsigned long long& traced_rays, WaterCounters& counters) {
+  MediumState shadow_media = media;
+  if (params.water_surface_count != 0u &&
+      is_rough_dielectric(material) && transmitted_connection) {
     if (!update_medium_after_transmission(
-            media, hit.material_index, material, hit.front_face, counters)) {
+            shadow_media, hit.material_index, material, hit.front_face,
+            counters)) {
       return f3(0.0f, 0.0f, 0.0f);
     }
-    ++counters.shadow_transmissions;
-    const float advance = hit.distance + params.scene_epsilon * 2.0f;
-    origin = add(origin, mul(direction, advance));
-    remaining -= advance;
   }
-  return transmittance;
+  if (!trace_visible(shadow_origin, shadow_direction, shadow_distance,
+                     target_light, traced_rays)) {
+    return f3(0.0f, 0.0f, 0.0f);
+  }
+  return params.water_surface_count != 0u
+      ? medium_segment_transmittance(
+            shadow_media, shadow_distance, counters)
+      : f3(1.0f, 1.0f, 1.0f);
+}
+
+enum FiniteLightMode : unsigned int {
+  kFiniteLightPower = 0u,
+  kFiniteLightUniform = 1u,
+  kFiniteLightWaterPowerSample = 2u,
+  kFiniteLightWaterUniformSample = 3u,
+};
+
+static __forceinline__ __device__ bool is_water_finite_light_mode(
+    FiniteLightMode mode) {
+  return mode == kFiniteLightWaterPowerSample ||
+         mode == kFiniteLightWaterUniformSample;
+}
+
+static __forceinline__ __device__ FiniteLightMode finite_light_mode(
+    const MaterialData& material, const MediumState& media) {
+  if (material.type == spectraldock::kMaterialWater &&
+      material.roughness > 0.0f) {
+    return kFiniteLightWaterPowerSample;
+  }
+  return media.depth > 0 ? kFiniteLightUniform : kFiniteLightPower;
+}
+
+static __forceinline__ __device__ float finite_light_selection_pdf(
+    const LightData& light, FiniteLightMode mode) {
+  if (params.light_count == 0u) return 0.0f;
+  if (mode == kFiniteLightPower) return light.selection_pdf;
+  const float uniform = 1.0f / static_cast<float>(params.light_count);
+  if (mode == kFiniteLightUniform) return uniform;
+  // Rough water takes one power-CDF sample and one uniform-index sample.
+  // Both light estimators use the combined density qG + qU, with no extra 0.5
+  // scale. A reachable bound emitter adds pB through three-technique balance.
+  return light.selection_pdf + uniform;
+}
+
+static __forceinline__ __device__ float sphere_visible_solid_angle_pdf(
+    const LightData& light, float3 from,
+    float* one_minus_cos_out = nullptr) {
+  const float3 to_center = sub(light.p0, from);
+  const float distance2 = length2(to_center);
+  const float radius2 = light.radius * light.radius;
+  const float minimum_distance = light.radius + params.scene_epsilon;
+  if (!(light.radius > 0.0f) ||
+      !(distance2 > minimum_distance * minimum_distance)) {
+    return 0.0f;
+  }
+  const float sin2_theta_max =
+      fminf(fmaxf(radius2 / distance2, 0.0f), 1.0f);
+  const float cos_theta_max =
+      sqrtf(fmaxf(0.0f, 1.0f - sin2_theta_max));
+  // This stable form avoids losing the cone measure for a distant sphere.
+  const float one_minus_cos =
+      sin2_theta_max / fmaxf(1.0f + cos_theta_max, 1.0e-20f);
+  if (!(one_minus_cos > 0.0f) || !isfinite(one_minus_cos)) return 0.0f;
+  const float pdf = 1.0f / (2.0f * kPi * one_minus_cos);
+  if (!isfinite(pdf)) return 0.0f;
+  if (one_minus_cos_out != nullptr) {
+    *one_minus_cos_out = one_minus_cos;
+  }
+  return pdf;
+}
+
+static __forceinline__ __device__ bool sample_visible_sphere_direction(
+    const LightData& light, float3 from, float one_minus_cos,
+    float u0, float u1, float3& wi, float3& point, float3& normal) {
+  const float3 to_center = sub(light.p0, from);
+  const float center_distance = length3(to_center);
+  const float3 cone_axis = divv(to_center, center_distance);
+  const float v = u0 * one_minus_cos;
+  const float cos_theta = 1.0f - v;
+  const float sin_theta = sqrtf(fmaxf(0.0f, v * (2.0f - v)));
+  const float phi = 2.0f * kPi * u1;
+  wi = local_to_world(
+      f3(sin_theta * cosf(phi), sin_theta * sinf(phi), cos_theta),
+      cone_axis);
+
+  const float projection = dot3(to_center, wi);
+  const float perpendicular2 =
+      fmaxf(0.0f, length2(to_center) - projection * projection);
+  const float sqrt_discriminant =
+      sqrtf(fmaxf(0.0f, light.radius * light.radius - perpendicular2));
+  const float denominator = projection + sqrt_discriminant;
+  const float numerator =
+      (center_distance - light.radius) *
+      (center_distance + light.radius);
+  if (!(denominator > 0.0f) || !isfinite(denominator) ||
+      !(numerator > 0.0f) || !isfinite(numerator)) {
+    return false;
+  }
+  const float hit_distance = numerator / denominator;
+  if (!(hit_distance > 0.0f) || !isfinite(hit_distance)) return false;
+  point = add(from, mul(wi, hit_distance));
+  normal = normalize3(sub(point, light.p0));
+  return true;
 }
 
 static __forceinline__ __device__ float light_direction_pdf(
-    int light_index, float3 from, float3 point) {
+    int light_index, float3 from, float3 point, FiniteLightMode mode) {
   if (light_index < 0 ||
       static_cast<unsigned int>(light_index) >= params.light_count ||
       params.lights == nullptr || params.light_count == 0) {
@@ -1430,8 +1744,18 @@ static __forceinline__ __device__ float light_direction_pdf(
   if (cos_light <= 0.0f || area <= 0.0f) {
     return 0.0f;
   }
-  if (!(light.selection_pdf > 0.0f)) return 0.0f;
-  return light.selection_pdf * distance2 / (cos_light * area);
+  const float selection_pdf = finite_light_selection_pdf(light, mode);
+  if (!(selection_pdf > 0.0f)) return 0.0f;
+  if (is_water_finite_light_mode(mode) &&
+      light.type == spectraldock::kLightSphere &&
+      light.two_sided == 0) {
+    const float solid_angle_pdf =
+        sphere_visible_solid_angle_pdf(light, from);
+    if (solid_angle_pdf > 0.0f) {
+      return selection_pdf * solid_angle_pdf;
+    }
+  }
+  return selection_pdf * distance2 / (cos_light * area);
 }
 
 static __forceinline__ __device__ void sample_light_surface(
@@ -1495,20 +1819,51 @@ static __forceinline__ __device__ unsigned int sample_finite_light_index(
   return lower;
 }
 
+static __forceinline__ __device__ unsigned int sample_uniform_light_index(
+    float value) {
+  const unsigned int candidate =
+      static_cast<unsigned int>(value * params.light_count);
+  return candidate < params.light_count ? candidate
+                                        : params.light_count - 1u;
+}
+
+static __forceinline__ __device__ unsigned int sample_finite_light_index(
+    float value, FiniteLightMode mode) {
+  if (mode == kFiniteLightPower ||
+      mode == kFiniteLightWaterPowerSample) {
+    return sample_finite_light_index(value);
+  }
+  return sample_uniform_light_index(value);
+}
+
 static __forceinline__ __device__ float3 sample_finite_direct_light(
     const SurfaceHit& hit, const MaterialData& material, float3 base_color,
-    float3 wo, bool next_bsdf_ray_exists, Pcg32& rng,
+    float3 wo, bool next_bsdf_ray_exists, FiniteLightMode light_mode,
+    Pcg32& rng,
     unsigned long long& traced_rays, VolumeCounters& volume_counters,
     const MediumState& media, WaterCounters& water_counters) {
   if (params.lights == nullptr || params.light_count == 0 ||
-      (material.type != spectraldock::kMaterialLambertian &&
-       material.type != spectraldock::kMaterialMetal)) {
+      !supports_direct_lighting(material)) {
     return f3(0.0f, 0.0f, 0.0f);
   }
+  const bool count_rough_water =
+      material.type == spectraldock::kMaterialWater &&
+      material.roughness > 0.0f;
+  if (count_rough_water) ++water_counters.rough_nee_attempts;
+  float eta_i = 1.0f;
+  float eta_t = 1.0f;
+  if (is_rough_dielectric(material)) {
+    dielectric_eta_pair(
+        material, hit.front_face, hit.material_index,
+        params.water_surface_count != 0u ? &media : nullptr,
+        water_counters, eta_i, eta_t);
+  }
   const unsigned int light_index =
-      sample_finite_light_index(rng.next());
+      sample_finite_light_index(rng.next(), light_mode);
   const LightData light = params.lights[light_index];
-  if (!(light.selection_pdf > 0.0f)) {
+  const float selection_pdf =
+      finite_light_selection_pdf(light, light_mode);
+  if (!(selection_pdf > 0.0f)) {
     return f3(0.0f, 0.0f, 0.0f);
   }
   if (light.type == spectraldock::kLightFlame) {
@@ -1528,14 +1883,28 @@ static __forceinline__ __device__ float3 sample_finite_direct_light(
     }
     const float distance = sqrtf(distance2);
     const float3 wi = divv(displacement, distance);
-    const float no_l = dot3(hit.normal, wi);
+    const float signed_no_l = dot3(hit.normal, wi);
+    bool transmitted_connection = signed_no_l < 0.0f;
+    if (is_rough_dielectric(material) &&
+        !rough_macro_sides_agree(
+            hit.normal, hit.geometric_normal, wi,
+            transmitted_connection)) {
+      return f3(0.0f, 0.0f, 0.0f);
+    }
+    const float no_l = is_rough_dielectric(material)
+        ? fabsf(signed_no_l) : signed_no_l;
     if (no_l <= 0.0f) return f3(0.0f, 0.0f, 0.0f);
     float3 bsdf;
     float bsdf_pdf;
-    evaluate_bsdf(material, base_color, hit.normal, wo, wi, bsdf, bsdf_pdf);
+    evaluate_bsdf(material, base_color, hit.normal, wo, wi,
+                  eta_i, eta_t, bsdf, bsdf_pdf);
     if (!(bsdf_pdf > 0.0f)) return f3(0.0f, 0.0f, 0.0f);
+    const float3 offset_normal = is_rough_dielectric(material)
+        ? hit.geometric_normal : hit.normal;
+    const float side = transmitted_connection ? -1.0f : 1.0f;
     const float3 shadow_origin =
-        add(hit.position, mul(hit.normal, params.scene_epsilon * 2.0f));
+        add(hit.position,
+            mul(offset_normal, side * params.scene_epsilon * 2.0f));
     const float3 shadow_displacement = sub(light_point, shadow_origin);
     const float shadow_distance = length3(shadow_displacement);
     if (!(shadow_distance > params.scene_epsilon * 2.0f)) {
@@ -1543,19 +1912,12 @@ static __forceinline__ __device__ float3 sample_finite_direct_light(
     }
     const float3 shadow_direction =
         divv(shadow_displacement, shadow_distance);
-    float3 surface_transmittance = f3(1.0f, 1.0f, 1.0f);
-    if (params.water_surface_count == 0u) {
-      if (!trace_visible(shadow_origin, shadow_direction, shadow_distance,
-                         static_cast<int>(light_index), traced_rays)) {
-        return f3(0.0f, 0.0f, 0.0f);
-      }
-    } else {
-      surface_transmittance = trace_water_transmittance(
-          shadow_origin, shadow_direction, shadow_distance,
-          static_cast<int>(light_index), media, traced_rays, water_counters);
-      if (!(max_component(surface_transmittance) > 0.0f)) {
-        return f3(0.0f, 0.0f, 0.0f);
-      }
+    const float3 surface_transmittance = direct_segment_transmittance(
+        hit, material, shadow_origin, shadow_direction, shadow_distance,
+        static_cast<int>(light_index), transmitted_connection, media,
+        traced_rays, water_counters);
+    if (!(max_component(surface_transmittance) > 0.0f)) {
+      return f3(0.0f, 0.0f, 0.0f);
     }
     if (track_volume(shadow_origin, shadow_direction, shadow_distance, rng,
                      volume_counters).collided != 0) {
@@ -1567,22 +1929,58 @@ static __forceinline__ __device__ float3 sample_finite_direct_light(
         kPi * maximum_radius * maximum_radius * light.height;
     const float3 emission_coefficient =
         mul(flame_source(light, axial), sigma);
-    return mul(mul(mul(bsdf, emission_coefficient), surface_transmittance),
-               no_l * support_volume /
-                   (light.selection_pdf * distance2));
+    const float3 contribution =
+        mul(mul(mul(bsdf, emission_coefficient), surface_transmittance),
+            no_l * support_volume /
+                (selection_pdf * distance2));
+    if (count_rough_water && max_component(contribution) > 0.0f) {
+      ++water_counters.rough_nee_contributions;
+    }
+    return contribution;
   }
   float3 light_point;
   float3 light_normal;
-  sample_light_surface(light, rng.next(), rng.next(),
-                       light_point, light_normal);
+  float3 wi;
+  float one_minus_cos = 0.0f;
+  float sphere_solid_angle_pdf = 0.0f;
+  const bool sample_sphere_solid_angle =
+      is_water_finite_light_mode(light_mode) &&
+      light.type == spectraldock::kLightSphere && light.two_sided == 0 &&
+      (sphere_solid_angle_pdf = sphere_visible_solid_angle_pdf(
+           light, hit.position, &one_minus_cos)) > 0.0f;
+  if (sample_sphere_solid_angle) {
+    const float u0 = rng.next();
+    const float u1 = rng.next();
+    if (!sample_visible_sphere_direction(
+            light, hit.position, one_minus_cos, u0, u1,
+            wi, light_point, light_normal)) {
+      return f3(0.0f, 0.0f, 0.0f);
+    }
+  } else {
+    // Keep the legacy expression (including its RNG call path) byte-for-byte
+    // for every non-water mode, non-sphere light and near/inside sphere.
+    sample_light_surface(light, rng.next(), rng.next(),
+                         light_point, light_normal);
+  }
   const float3 displacement = sub(light_point, hit.position);
   const float distance2 = length2(displacement);
   if (distance2 <= params.scene_epsilon * params.scene_epsilon) {
     return f3(0.0f, 0.0f, 0.0f);
   }
   const float distance = sqrtf(distance2);
-  const float3 wi = divv(displacement, distance);
-  const float no_l = dot3(hit.normal, wi);
+  if (!sample_sphere_solid_angle) {
+    wi = divv(displacement, distance);
+  }
+  const float signed_no_l = dot3(hit.normal, wi);
+  bool transmitted_connection = signed_no_l < 0.0f;
+  if (is_rough_dielectric(material) &&
+      !rough_macro_sides_agree(
+          hit.normal, hit.geometric_normal, wi,
+          transmitted_connection)) {
+    return f3(0.0f, 0.0f, 0.0f);
+  }
+  const float no_l = is_rough_dielectric(material)
+      ? fabsf(signed_no_l) : signed_no_l;
   if (no_l <= 0.0f) {
     return f3(0.0f, 0.0f, 0.0f);
   }
@@ -1596,16 +1994,24 @@ static __forceinline__ __device__ float3 sample_finite_direct_light(
   if (cos_light <= 0.0f || area <= 0.0f) {
     return f3(0.0f, 0.0f, 0.0f);
   }
-  const float light_pdf =
-      light.selection_pdf * distance2 / (cos_light * area);
+  float light_pdf =
+      selection_pdf * distance2 / (cos_light * area);
+  if (sample_sphere_solid_angle) {
+    light_pdf = selection_pdf * sphere_solid_angle_pdf;
+  }
   float3 bsdf;
   float bsdf_pdf;
-  evaluate_bsdf(material, base_color, hit.normal, wo, wi, bsdf, bsdf_pdf);
+  evaluate_bsdf(material, base_color, hit.normal, wo, wi,
+                eta_i, eta_t, bsdf, bsdf_pdf);
   if (bsdf_pdf <= 0.0f) {
     return f3(0.0f, 0.0f, 0.0f);
   }
+  const float3 offset_normal = is_rough_dielectric(material)
+      ? hit.geometric_normal : hit.normal;
+  const float side = transmitted_connection ? -1.0f : 1.0f;
   const float3 shadow_origin =
-      add(hit.position, mul(hit.normal, params.scene_epsilon * 2.0f));
+      add(hit.position,
+          mul(offset_normal, side * params.scene_epsilon * 2.0f));
   const float3 shadow_displacement = sub(light_point, shadow_origin);
   const float shadow_distance = length3(shadow_displacement);
   if (shadow_distance <= params.scene_epsilon * 2.0f) {
@@ -1613,29 +2019,38 @@ static __forceinline__ __device__ float3 sample_finite_direct_light(
   }
   const float3 shadow_direction =
       divv(shadow_displacement, shadow_distance);
-  float3 surface_transmittance = f3(1.0f, 1.0f, 1.0f);
-  if (params.water_surface_count == 0u) {
-    if (!trace_visible(shadow_origin, shadow_direction, shadow_distance,
-                       static_cast<int>(light_index), traced_rays)) {
-      return f3(0.0f, 0.0f, 0.0f);
-    }
-  } else {
-    surface_transmittance = trace_water_transmittance(
-        shadow_origin, shadow_direction, shadow_distance,
-        static_cast<int>(light_index), media, traced_rays, water_counters);
-    if (!(max_component(surface_transmittance) > 0.0f)) {
-      return f3(0.0f, 0.0f, 0.0f);
-    }
+  const float3 surface_transmittance = direct_segment_transmittance(
+      hit, material, shadow_origin, shadow_direction, shadow_distance,
+      static_cast<int>(light_index), transmitted_connection, media,
+      traced_rays, water_counters);
+  if (!(max_component(surface_transmittance) > 0.0f)) {
+    return f3(0.0f, 0.0f, 0.0f);
   }
   if (track_volume(shadow_origin, shadow_direction, shadow_distance, rng,
                    volume_counters).collided != 0) {
     return f3(0.0f, 0.0f, 0.0f);
   }
-  const float mis = direct_light_mis_weight(
-      light_pdf, bsdf_pdf, light.geometry_index >= 0,
-      next_bsdf_ray_exists);
-  return mul(mul(mul(bsdf, light.emission), surface_transmittance),
-             no_l * mis / light_pdf);
+  // Rough water takes one qG and one qU sample. Their shared light density is
+  // pL=(qG+qU)c. When a bound surface emitter can also be reached by the next
+  // BSDF ray, all three deterministic techniques use balance weights over
+  // pL+pB. Flame and unbound lights have no BSDF endpoint competitor.
+  const bool water_bsdf_competes =
+      is_water_finite_light_mode(light_mode) &&
+      light.geometry_index >= 0 && next_bsdf_ray_exists;
+  const float mis = water_bsdf_competes
+      ? balance_heuristic(light_pdf, bsdf_pdf)
+      : direct_light_mis_weight(
+            light_pdf, bsdf_pdf,
+            !is_water_finite_light_mode(light_mode) &&
+                light.geometry_index >= 0,
+            next_bsdf_ray_exists);
+  const float3 contribution =
+      mul(mul(mul(bsdf, light.emission), surface_transmittance),
+          no_l * mis / light_pdf);
+  if (count_rough_water && max_component(contribution) > 0.0f) {
+    ++water_counters.rough_nee_contributions;
+  }
+  return contribution;
 }
 
 static __forceinline__ __device__ bool has_environment() {
@@ -1806,35 +2221,54 @@ static __forceinline__ __device__ float3 sample_environment_direct_light(
     unsigned long long& traced_rays, VolumeCounters& volume_counters,
     const MediumState& media, WaterCounters& water_counters) {
   if (!has_environment() || !(params.environment_intensity > 0.0f) ||
-      (material.type != spectraldock::kMaterialLambertian &&
-       material.type != spectraldock::kMaterialMetal)) {
+      !supports_direct_lighting(material)) {
     return f3(0.0f, 0.0f, 0.0f);
+  }
+  const bool count_rough_water =
+      material.type == spectraldock::kMaterialWater &&
+      material.roughness > 0.0f;
+  if (count_rough_water) ++water_counters.rough_nee_attempts;
+  float eta_i = 1.0f;
+  float eta_t = 1.0f;
+  if (is_rough_dielectric(material)) {
+    dielectric_eta_pair(
+        material, hit.front_face, hit.material_index,
+        params.water_surface_count != 0u ? &media : nullptr,
+        water_counters, eta_i, eta_t);
   }
   float light_pdf = 0.0f;
   const float3 wi =
       sample_environment_direction(rng.next_cdf(), rng.next_cdf(), light_pdf);
   if (!(light_pdf > 0.0f)) return f3(0.0f, 0.0f, 0.0f);
-  const float no_l = dot3(hit.normal, wi);
+  const float signed_no_l = dot3(hit.normal, wi);
+  bool transmitted_connection = signed_no_l < 0.0f;
+  if (is_rough_dielectric(material) &&
+      !rough_macro_sides_agree(
+          hit.normal, hit.geometric_normal, wi,
+          transmitted_connection)) {
+    return f3(0.0f, 0.0f, 0.0f);
+  }
+  const float no_l = is_rough_dielectric(material)
+      ? fabsf(signed_no_l) : signed_no_l;
   if (!(no_l > 0.0f)) return f3(0.0f, 0.0f, 0.0f);
   float3 bsdf;
   float bsdf_pdf;
-  evaluate_bsdf(material, base_color, hit.normal, wo, wi, bsdf, bsdf_pdf);
+  evaluate_bsdf(material, base_color, hit.normal, wo, wi,
+                eta_i, eta_t, bsdf, bsdf_pdf);
   if (!(bsdf_pdf > 0.0f)) return f3(0.0f, 0.0f, 0.0f);
 
+  const float3 offset_normal = is_rough_dielectric(material)
+      ? hit.geometric_normal : hit.normal;
+  const float side = transmitted_connection ? -1.0f : 1.0f;
   const float3 shadow_origin =
-      add(hit.position, mul(hit.normal, params.scene_epsilon * 2.0f));
-  float3 surface_transmittance = f3(1.0f, 1.0f, 1.0f);
-  if (params.water_surface_count == 0u) {
-    if (!trace_visible(shadow_origin, wi, kInfinity, -1, traced_rays)) {
-      return f3(0.0f, 0.0f, 0.0f);
-    }
-  } else {
-    surface_transmittance = trace_water_transmittance(
-        shadow_origin, wi, kInfinity, -1, media, traced_rays,
-        water_counters);
-    if (!(max_component(surface_transmittance) > 0.0f)) {
-      return f3(0.0f, 0.0f, 0.0f);
-    }
+      add(hit.position,
+          mul(offset_normal, side * params.scene_epsilon * 2.0f));
+  const float3 surface_transmittance = direct_segment_transmittance(
+      hit, material, shadow_origin, wi, kInfinity, -1,
+      transmitted_connection, media,
+      traced_rays, water_counters);
+  if (!(max_component(surface_transmittance) > 0.0f)) {
+    return f3(0.0f, 0.0f, 0.0f);
   }
   if (track_volume(shadow_origin, wi, kInfinity, rng,
                    volume_counters).collided != 0) {
@@ -1842,9 +2276,14 @@ static __forceinline__ __device__ float3 sample_environment_direct_light(
   }
   const float mis = direct_light_mis_weight(
       light_pdf, bsdf_pdf, true, next_bsdf_ray_exists);
-  return mul(mul(mul(bsdf, environment_radiance(wi)),
-                     surface_transmittance),
-             no_l * mis / light_pdf);
+  const float3 contribution =
+      mul(mul(mul(bsdf, environment_radiance(wi)),
+                  surface_transmittance),
+          no_l * mis / light_pdf);
+  if (count_rough_water && max_component(contribution) > 0.0f) {
+    ++water_counters.rough_nee_contributions;
+  }
+  return contribution;
 }
 
 static __forceinline__ __device__ float3 background(float3 direction) {
@@ -2002,10 +2441,31 @@ extern "C" __global__ void __raygen__pathtrace() {
     float3 radiance = f3(0.0f, 0.0f, 0.0f);
     float previous_pdf = 0.0f;
     int previous_delta = 1;
+    FiniteLightMode previous_light_mode = kFiniteLightPower;
     int guide_written = 0;
     MediumState media{};
+    int split_used = 0;
 
-    for (unsigned int bounce = 0; bounce < params.max_depth; ++bounce) {
+    // At most one extra state is needed: the first smooth-water event forks
+    // into deterministic Fresnel reflection and transmission, and both
+    // children carry split_used=1. Keeping a single pending state bounds work
+    // and storage to two path states per camera sample.
+    int pending_path = 0;
+    float3 pending_origin{};
+    float3 pending_direction{};
+    float3 pending_throughput{};
+    float pending_previous_pdf = 0.0f;
+    int pending_previous_delta = 1;
+    FiniteLightMode pending_previous_light_mode = kFiniteLightPower;
+    unsigned int pending_bounce = 0u;
+    MediumState pending_media{};
+    unsigned long long pending_rng_state = 0ull;
+    unsigned long long pending_rng_increment = 1ull;
+    unsigned int bounce_start = 0u;
+
+    for (;;) {
+      for (unsigned int bounce = bounce_start;
+           bounce < params.max_depth; ++bounce) {
       const SurfaceHit hit = trace_radiance(ray_origin, ray_direction, traced_rays);
       if (params.water_surface_count != 0u && hit.hit != 0) {
         infer_base_water_incident_medium(hit, media);
@@ -2068,21 +2528,47 @@ extern "C" __global__ void __raygen__pathtrace() {
         }
         const bool emitter_is_bound_to_light = hit.light_index >= 0;
         const float light_pdf = emitter_is_bound_to_light
-            ? light_direction_pdf(hit.light_index, ray_origin, hit.position)
+            ? light_direction_pdf(hit.light_index, ray_origin,
+                                  hit.position, previous_light_mode)
             : 0.0f;
-        const float weight = emitter_hit_mis_weight(
-            previous_pdf, light_pdf, previous_delta != 0,
-            emitter_is_bound_to_light);
+        // A rough-water predecessor uses deterministic qG, qU and BSDF
+        // techniques. If this endpoint lies in finite-light support, complete
+        // their balance heuristic with pB/(pG+pU+pB). Back faces, inside-sphere
+        // hits and unbound emitters retain their ordinary BSDF-hit weight.
+        const bool use_water_finite_balance =
+            emitter_is_bound_to_light &&
+            previous_light_mode == kFiniteLightWaterPowerSample &&
+            previous_delta == 0 &&
+            light_pdf > 0.0f;
+        const float weight = use_water_finite_balance
+            ? balance_heuristic(previous_pdf, light_pdf)
+            : emitter_hit_mis_weight(
+                  previous_pdf, light_pdf, previous_delta != 0,
+                  emitter_is_bound_to_light);
         radiance = add(radiance, mul(mul(throughput, emitted), weight));
         break;
       }
 
       const float3 wo = neg(ray_direction);
       const bool next_bsdf_ray_exists = bounce + 1u < params.max_depth;
-      const float3 finite_direct =
+      const FiniteLightMode current_light_mode =
+          finite_light_mode(material, media);
+      float3 finite_direct =
           sample_finite_direct_light(hit, material, base_color, wo,
-                                     next_bsdf_ray_exists, rng, traced_rays,
+                                     next_bsdf_ray_exists, current_light_mode,
+                                     rng, traced_rays,
                                      volume_counters, media, water_counters);
+      if (current_light_mode == kFiniteLightWaterPowerSample) {
+        // Deterministic two-component stratification: take one qG sample and
+        // one qU sample. Their combined light density is qG + qU, so no 0.5
+        // factor belongs here; a bound endpoint completes balance with BSDF.
+        finite_direct = add(
+            finite_direct,
+            sample_finite_direct_light(
+                hit, material, base_color, wo, next_bsdf_ray_exists,
+                kFiniteLightWaterUniformSample, rng, traced_rays,
+                volume_counters, media, water_counters));
+      }
       const float3 environment_direct =
           sample_environment_direct_light(
               hit, material, base_color, wo, next_bsdf_ray_exists, rng,
@@ -2094,8 +2580,84 @@ extern "C" __global__ void __raygen__pathtrace() {
         break;
       }
 
+      if (material.type == spectraldock::kMaterialWater &&
+          material.roughness <= 0.0f && split_used == 0) {
+        split_used = 1;
+        float eta_i = 1.0f;
+        float eta_t = 1.0f;
+        dielectric_eta_pair(material, hit.front_face, hit.material_index,
+                            &media, water_counters, eta_i, eta_t);
+        const float eta = eta_i / eta_t;
+        const float cos_theta =
+            fminf(fmaxf(dot3(wo, hit.normal), 0.0f), 1.0f);
+        float cos_transmitted = 0.0f;
+        const float reflectance = dielectric_fresnel(
+            cos_theta, eta_i, eta_t, &cos_transmitted);
+        const float3 reflected = normalize3(
+            reflect3(neg(wo), hit.normal));
+        if (!(reflectance < 1.0f)) {
+          throughput = clamp_nonnegative(mul(throughput, base_color));
+          if (!(max_component(throughput) > 0.0f)) break;
+          previous_pdf = 1.0f;
+          previous_delta = 1;
+          previous_light_mode = current_light_mode;
+          ray_origin = add(
+              hit.position,
+              mul(hit.normal, params.scene_epsilon * 2.0f));
+          ray_direction = reflected;
+          continue;
+        }
+
+        const float3 perpendicular =
+            mul(add(neg(wo), mul(hit.normal, cos_theta)), eta);
+        const float3 transmitted = normalize3(add(
+            perpendicular, mul(hit.normal, -cos_transmitted)));
+
+        Pcg32 reflected_rng = rng;
+        fork_rng(reflected_rng,
+                 0x7265666cu ^ bounce ^
+                     static_cast<unsigned int>(hit.material_index));
+        fork_rng(rng,
+                 0x7472616eu ^ bounce ^
+                     static_cast<unsigned int>(hit.material_index));
+        pending_path = 1;
+        pending_origin = add(
+            hit.position,
+            mul(hit.normal, params.scene_epsilon * 2.0f));
+        pending_direction = reflected;
+        pending_throughput = clamp_nonnegative(
+            mul(mul(throughput, base_color), reflectance));
+        pending_previous_pdf = 1.0f;
+        pending_previous_delta = 1;
+        pending_previous_light_mode = current_light_mode;
+        pending_bounce = bounce + 1u;
+        pending_media = media;
+        pending_rng_state = reflected_rng.state;
+        pending_rng_increment = reflected_rng.increment;
+        ++water_counters.delta_splits;
+
+        throughput = clamp_nonnegative(
+            mul(mul(throughput, base_color),
+                (1.0f - reflectance) * eta * eta));
+        previous_pdf = 1.0f;
+        previous_delta = 1;
+        previous_light_mode = current_light_mode;
+        ray_origin = add(
+            hit.position,
+            mul(hit.normal, -params.scene_epsilon * 2.0f));
+        ray_direction = transmitted;
+        if (!update_medium_after_transmission(
+                media, hit.material_index, material, hit.front_face,
+                water_counters) ||
+            !(max_component(throughput) > 0.0f)) {
+          break;
+        }
+        continue;
+      }
+
       const BsdfSample scatter =
-          sample_bsdf(material, base_color, hit.normal, wo,
+          sample_bsdf(material, base_color, hit.normal,
+                      hit.geometric_normal, wo,
                       hit.front_face, hit.material_index, rng,
                       params.water_surface_count != 0u ? &media : nullptr,
                       water_counters);
@@ -2108,6 +2670,7 @@ extern "C" __global__ void __raygen__pathtrace() {
       }
       previous_pdf = scatter.pdf;
       previous_delta = scatter.delta;
+      previous_light_mode = current_light_mode;
 
       if (bounce >= 4u) {
         const float survival =
@@ -2120,11 +2683,28 @@ extern "C" __global__ void __raygen__pathtrace() {
         }
         throughput = mul(throughput, continuation.throughput_scale);
       }
-      const float side = dot3(scatter.wi, hit.normal) >= 0.0f ? 1.0f : -1.0f;
+      const float3 offset_normal = is_rough_dielectric(material)
+          ? hit.geometric_normal : hit.normal;
+      const float side =
+          dot3(scatter.wi, offset_normal) >= 0.0f ? 1.0f : -1.0f;
       ray_origin =
-          add(hit.position, mul(hit.normal,
+          add(hit.position, mul(offset_normal,
                                 side * params.scene_epsilon * 2.0f));
       ray_direction = scatter.wi;
+      }
+      if (pending_path == 0) break;
+      pending_path = 0;
+      ray_origin = pending_origin;
+      ray_direction = pending_direction;
+      throughput = pending_throughput;
+      previous_pdf = pending_previous_pdf;
+      previous_delta = pending_previous_delta;
+      previous_light_mode = pending_previous_light_mode;
+      bounce_start = pending_bounce;
+      media = pending_media;
+      rng.state = pending_rng_state;
+      rng.increment = pending_rng_increment;
+      split_used = 1;
     }
     beauty_sum = add(beauty_sum, radiance);
   }
@@ -2194,6 +2774,7 @@ extern "C" __global__ void __closesthit__radiance() {
   hit->front_face = front_face ? 1 : 0;
   hit->distance = t;
   hit->position = world_point;
+  hit->geometric_normal = front_face ? world_outward : neg(world_outward);
   hit->normal = front_face ? world_shading : neg(world_shading);
   hit->uv = geometry_uv(*record, object_point);
 }

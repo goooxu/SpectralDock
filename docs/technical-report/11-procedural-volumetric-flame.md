@@ -133,7 +133,7 @@ $$
 
 ## 5. 从表面连接体积光
 
-对普通表面，先按第 13 章构造的实际概率 $q_i$ 选择一个显式灯；`uniform` 对照模式才令 $q_i=1/N$。若选中 flame，就在最大半径支撑圆柱中均匀取点，圆柱体积为
+对支持 NEE 的表面，先按第 13 章的顶点模式选择显式灯：普通空气顶点取一份全局功率样本，粗糙水面从全局功率与均匀索引各取一份确定性样本，介质内其他顶点取一份均匀样本。若其中一份选中 flame，就在最大半径支撑圆柱中均匀取点，圆柱体积为
 
 $$
 V=\pi R_{\max}^2h,
@@ -153,6 +153,13 @@ $$
 
 <!-- source-snippet id="volume-nee-estimator" path="src/device_programs.cu" anchor="const float support_volume =" -->
 ```cpp
+    const float3 surface_transmittance = direct_segment_transmittance(
+        hit, material, shadow_origin, shadow_direction, shadow_distance,
+        static_cast<int>(light_index), transmitted_connection, media,
+        traced_rays, water_counters);
+    if (!(max_component(surface_transmittance) > 0.0f)) {
+      return f3(0.0f, 0.0f, 0.0f);
+    }
     if (track_volume(shadow_origin, shadow_direction, shadow_distance, rng,
                      volume_counters).collided != 0) {
       return f3(0.0f, 0.0f, 0.0f);
@@ -163,9 +170,10 @@ $$
         kPi * maximum_radius * maximum_radius * light.height;
     const float3 emission_coefficient =
         mul(flame_source(light, axial), sigma);
-    return mul(mul(mul(bsdf, emission_coefficient), surface_transmittance),
-               no_l * support_volume /
-                   (light.selection_pdf * distance2));
+    const float3 contribution =
+        mul(mul(mul(bsdf, emission_coefficient), surface_transmittance),
+            no_l * support_volume /
+                (selection_pdf * distance2));
 ```
 
 连接段还先发出普通 OptiX shadow ray 检查表面遮挡。rectangle/disk/sphere 面积光的连接也增加同样的体积透射测试，所以火焰能衰减从其他灯到表面的光。面积光与 BSDF 的 MIS 结构保持不变，但灯方向 PDF 现在包含实际 $q_i$。

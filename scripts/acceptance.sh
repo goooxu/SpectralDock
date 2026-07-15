@@ -13,6 +13,8 @@ gpu_container python3 tests/check_flame_transport.py \
   build/Release/spectraldock tests/scenes/flame-smoke.json
 gpu_container python3 tests/check_water_transport.py \
   build/Release/spectraldock tests/scenes/water-smoke.json
+gpu_container python3 tests/check_rough_dielectric_nee.py \
+  build/Release/spectraldock tests/scenes/water-smoke.json
 gpu_container python3 tests/check_environment_importance.py \
   build/Release/spectraldock tests/scenes/environment-smoke.json
 gpu_container python3 tests/check_radiance_pavilion_importance.py \

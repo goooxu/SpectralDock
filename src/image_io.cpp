@@ -2,6 +2,9 @@
 
 #include <png.h>
 
+#include <cmath>
+#include <cstring>
+#include <fstream>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -92,6 +95,62 @@ void write_png_rgba8(const std::filesystem::path& path,
     throw std::runtime_error("cannot write PNG: expected " + std::to_string(required) +
                              " RGBA bytes, got " + std::to_string(pixels.size()));
   write_png_rgba8(path, width, height, pixels.data(), 0);
+}
+
+void write_pfm_rgb32f(const std::filesystem::path& path,
+                      std::uint32_t width,
+                      std::uint32_t height,
+                      const std::vector<float>& pixels) {
+  static_assert(sizeof(float) == sizeof(std::uint32_t),
+                "PFM output requires 32-bit float");
+  static_assert(std::numeric_limits<float>::is_iec559,
+                "PFM output requires IEEE-754 float");
+  if (width == 0 || height == 0)
+    throw std::runtime_error("PFM dimensions must be non-zero");
+  constexpr std::size_t channels = 3;
+  if (static_cast<std::size_t>(width) >
+      std::numeric_limits<std::size_t>::max() / channels /
+          static_cast<std::size_t>(height)) {
+    throw std::runtime_error("PFM dimensions overflow host address space");
+  }
+  const std::size_t required = static_cast<std::size_t>(width) *
+                               static_cast<std::size_t>(height) * channels;
+  if (required > std::numeric_limits<std::size_t>::max() / sizeof(float))
+    throw std::runtime_error("PFM dimensions overflow host address space");
+  if (pixels.size() != required) {
+    throw std::runtime_error("cannot write PFM: expected " +
+                             std::to_string(required) + " RGB floats, got " +
+                             std::to_string(pixels.size()));
+  }
+  for (const float value : pixels) {
+    if (!std::isfinite(value))
+      throw std::runtime_error("cannot write PFM: samples must be finite");
+  }
+
+  std::ofstream output(path, std::ios::binary);
+  if (!output)
+    throw std::runtime_error("cannot open PFM for writing: " + path.string());
+  output << "PF\n" << width << ' ' << height << "\n-1.0\n";
+
+  const std::size_t row_values = static_cast<std::size_t>(width) * channels;
+  std::vector<std::uint8_t> row(row_values * sizeof(float));
+  for (std::uint32_t source_y = height; source_y-- > 0;) {
+    const float* source = pixels.data() +
+                          static_cast<std::size_t>(source_y) * row_values;
+    for (std::size_t i = 0; i < row_values; ++i) {
+      std::uint32_t bits = 0;
+      std::memcpy(&bits, source + i, sizeof(bits));
+      const std::size_t offset = i * sizeof(bits);
+      row[offset + 0] = static_cast<std::uint8_t>(bits);
+      row[offset + 1] = static_cast<std::uint8_t>(bits >> 8u);
+      row[offset + 2] = static_cast<std::uint8_t>(bits >> 16u);
+      row[offset + 3] = static_cast<std::uint8_t>(bits >> 24u);
+    }
+    output.write(reinterpret_cast<const char*>(row.data()),
+                 static_cast<std::streamsize>(row.size()));
+  }
+  if (!output)
+    throw std::runtime_error("cannot write PFM: " + path.string());
 }
 
 }  // namespace spectraldock

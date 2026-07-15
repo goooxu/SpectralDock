@@ -1370,12 +1370,18 @@ RenderResult render_optix(const Scene& scene,
   }
   std::vector<std::uint8_t> rgba(
       checked_product(pixel_count, 4, "RGBA output"));
+  std::vector<float4> linear_pixels(
+      settings.capture_linear ? pixel_count : 0u);
   std::vector<unsigned long long> ray_counts(pixel_count);
   std::vector<VolumeCounters> volume_counts(
       flame_count == 0u ? 0u : pixel_count);
   std::vector<WaterCounters> water_counts(
       water_surface_count == 0u ? 0u : pixel_count);
   output.download(rgba.data(), rgba.size(), stream);
+  if (!linear_pixels.empty()) {
+    beauty.download(linear_pixels.data(),
+                    linear_pixels.size() * sizeof(float4), stream);
+  }
   ray_count.download(ray_counts.data(),
                      ray_counts.size() * sizeof(unsigned long long), stream);
   volume_count.download(volume_counts.data(),
@@ -1396,15 +1402,19 @@ RenderResult render_optix(const Scene& scene,
     volume_totals.tracking_overflows += count.tracking_overflows;
   }
   WaterCounters water_totals{};
+  std::uint64_t water_rough_nee_attempts = 0;
+  std::uint64_t water_rough_nee_contributions = 0;
+  std::uint64_t water_delta_splits = 0;
   for (const WaterCounters& count : water_counts) {
     water_totals.height_evaluations += count.height_evaluations;
     water_totals.tile_tests += count.tile_tests;
     water_totals.roots_reported += count.roots_reported;
-    water_totals.shadow_transmissions += count.shadow_transmissions;
     water_totals.medium_segments += count.medium_segments;
     water_totals.solver_overflows += count.solver_overflows;
     water_totals.medium_errors += count.medium_errors;
-    water_totals.shadow_boundary_overflows += count.shadow_boundary_overflows;
+    water_rough_nee_attempts += count.rough_nee_attempts;
+    water_rough_nee_contributions += count.rough_nee_contributions;
+    water_delta_splits += count.delta_splits;
   }
   if (volume_totals.majorant_violations != 0ull ||
       volume_totals.tracking_overflows != 0ull) {
@@ -1415,14 +1425,11 @@ RenderResult render_optix(const Scene& scene,
         std::to_string(volume_totals.tracking_overflows));
   }
   if (water_totals.solver_overflows != 0ull ||
-      water_totals.medium_errors != 0ull ||
-      water_totals.shadow_boundary_overflows != 0ull) {
+      water_totals.medium_errors != 0ull) {
     throw std::runtime_error(
         "water transport safety check failed: solver overflows=" +
         std::to_string(water_totals.solver_overflows) +
-        ", medium errors=" + std::to_string(water_totals.medium_errors) +
-        ", shadow boundary overflows=" +
-        std::to_string(water_totals.shadow_boundary_overflows));
+        ", medium errors=" + std::to_string(water_totals.medium_errors));
   }
   tracker.sample();
 
@@ -1430,6 +1437,15 @@ RenderResult render_optix(const Scene& scene,
   result.width = settings.width;
   result.height = settings.height;
   result.rgba = std::move(rgba);
+  if (!linear_pixels.empty()) {
+    result.linear_rgb.resize(
+        checked_product(pixel_count, 3, "linear RGB output"));
+    for (std::size_t i = 0; i < pixel_count; ++i) {
+      result.linear_rgb[i * 3u + 0u] = linear_pixels[i].x;
+      result.linear_rgb[i * 3u + 1u] = linear_pixels[i].y;
+      result.linear_rgb[i * 3u + 2u] = linear_pixels[i].z;
+    }
+  }
   result.stats.width = settings.width;
   result.stats.height = settings.height;
   result.stats.spp = settings.spp;
@@ -1456,12 +1472,13 @@ RenderResult render_optix(const Scene& scene,
   result.stats.water_height_evaluations = water_totals.height_evaluations;
   result.stats.water_tile_tests = water_totals.tile_tests;
   result.stats.water_roots_reported = water_totals.roots_reported;
-  result.stats.water_shadow_transmissions = water_totals.shadow_transmissions;
   result.stats.water_medium_segments = water_totals.medium_segments;
   result.stats.water_solver_overflows = water_totals.solver_overflows;
   result.stats.water_medium_errors = water_totals.medium_errors;
-  result.stats.water_shadow_boundary_overflows =
-      water_totals.shadow_boundary_overflows;
+  result.stats.water_rough_nee_attempts = water_rough_nee_attempts;
+  result.stats.water_rough_nee_contributions =
+      water_rough_nee_contributions;
+  result.stats.water_delta_splits = water_delta_splits;
   result.stats.rays_per_second =
       render_ms > 0.0 ? traced_rays / (render_ms * 1.0e-3) : 0.0;
   result.stats.objects = scene.objects.size();

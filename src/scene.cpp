@@ -448,10 +448,11 @@ Scene load_scene(const std::filesystem::path& input_path, const SceneLoadOptions
       fail(where + ".type", "unsupported type '" + type + "'");
     }
     if (material.type == MaterialType::Water) {
-      for (const char* key : {"texture", "base_color", "emission", "roughness"}) {
+      for (const char* key : {"texture", "base_color", "emission"}) {
         if (value.contains(key))
           fail(where + "." + key, "is not supported by water materials");
       }
+      material.roughness = optional_number(value, "roughness", 0.0f, where);
       material.ior = optional_number(value, "ior", 1.333f, where);
       material.absorption =
           optional_vec3(value, "absorption", {0.35f, 0.08f, 0.025f}, where);
@@ -462,7 +463,10 @@ Scene load_scene(const std::filesystem::path& input_path, const SceneLoadOptions
       material.texture_id = optional_reference(value, "texture", texture_ids, where);
       material.base_color = optional_vec3(value, "base_color", material.base_color, where);
       material.emission = optional_vec3(value, "emission", material.emission, where);
-      material.roughness = optional_number(value, "roughness", material.roughness, where);
+      const float default_roughness =
+          material.type == MaterialType::Dielectric ? 0.0f : 0.5f;
+      material.roughness =
+          optional_number(value, "roughness", default_roughness, where);
       material.ior = optional_number(value, "ior", material.ior, where);
     }
     nonnegative(material.base_color, where + ".base_color");

@@ -1,6 +1,6 @@
 # 05　直接光照、NEE 与 MIS
 
-仅按 BSDF 随机游走在数学上可行，但一盏小灯或 HDR 环境中的高亮区域在表面半球中只占很小方向范围。随机射线可能经过成千上万次尝试也找不到它，画面便出现高方差亮点。SpectralDock 在 Lambert 和 metal 表面主动连接一个有限灯样本，并在存在 HDR 环境时另取一个环境样本；这叫 Next Event Estimation（NEE）。
+仅按 BSDF 随机游走在数学上可行，但一盏小灯或 HDR 环境中的高亮区域在表面半球中只占很小方向范围。随机射线可能经过成千上万次尝试也找不到它，画面便出现高方差亮点。SpectralDock 在 Lambert、metal 和非零粗糙度的 dielectric 表面主动连接一个有限灯样本，粗糙 water 则在有限灯域确定性地取两个样本；存在 HDR 环境时还另取一个环境样本。这叫 Next Event Estimation（NEE）。
 
 ## 1. 在灯面上取一个随机点
 
@@ -10,7 +10,7 @@ $$
 p_A(\mathbf y)=\frac{q_i}{A_i}.
 $$
 
-矩形灯按两条边的均匀坐标取点；圆盘灯用 $r=\sqrt\xi$ 均匀采面积；球灯均匀采整个球面。
+矩形灯按两条边的均匀坐标取点；圆盘灯用 $r=\sqrt\xi$ 均匀采面积；常规球灯路径均匀采整个球面。
 
 渲染方程却是对着色点 $\mathbf x$ 周围的方向积分，所以必须把面积 PDF 换成方向 PDF。令
 
@@ -38,38 +38,77 @@ p_L(\boldsymbol\omega_i)=
 }
 $$
 
-这正是第 2 章立体角关系的倒数变换。PDF 中必须保留实际选灯概率 $q_i$；漏掉它会让改变采样分布也改变收敛能量。
+这正是第 2 章立体角关系的倒数变换。PDF 中必须保留对应估计器的灯索引密度；漏掉它就会让改变采样分布也改变收敛能量。普通单样本顶点使用实际 $q_i$。粗糙 water 使用两个提议 $q_G(i)$ 与 $q_U(i)=1/N$，两份样本共用 balance 密度 $m_i=q_G(i)+q_U(i)$。顶点模式的完整构造见[第 13 章第 5 节](13-hdr-environment-and-importance-sampling.md#5-有限灯也要选择分布)。
 
 例如 $q_i=0.5$、$A_i=4$、$r=3$、灯面余弦为 0.5 时，$p_A=1/8$，而 $dA/d\omega=18$，所以 $p_\omega=2.25\ \mathrm{sr}^{-1}$。距离越远，同一面积覆盖的方向范围越小，单位立体角的概率密度反而越大。
 
-`light_direction_pdf` 逐项实现了这个换元：`distance2` 是 $r^2$，`cos_light` 是灯面余弦，`area` 对应 $A_i$，`selection_pdf` 是从最终 float CDF 反推的 $q_i$。两面灯先对余弦取绝对值；单面灯背面或退化面积直接返回零。
+粗糙 water 顶点的两份有限灯样本对**单面 sphere 灯**再做一层方差优化。令球心为 $\mathbf c$、半径为 $R$、$d=\|\mathbf c-\mathbf x\|$。当水面交点位于球外且 $d>R+\varepsilon$ 时，可见球盖对应一个半角 $\theta_{\max}$ 的圆锥：
 
-<!-- source-snippet id="light-area-to-solid-angle-pdf" path="src/device_programs.cu" anchor="return light.selection_pdf" -->
+$$
+\sin^2\theta_{\max}=\frac{R^2}{d^2},\qquad
+\cos\theta_{\max}=\sqrt{1-\frac{R^2}{d^2}},\qquad
+\Omega=2\pi(1-\cos\theta_{\max}).
+$$
+
+在这个圆锥内均匀采方向，并与球求最近正交点，因而每个样本都落在从 $\mathbf x$ 可见的球盖上。包含选灯概率的方向 PDF 直接是
+
+$$
+\boxed{p_L(\boldsymbol\omega_i)=
+\frac{m_i}{2\pi(1-\cos\theta_{\max})}},\qquad
+m_i=q_G(i)+q_U(i).
+$$
+
+这不是把球灯变亮，只是不再把样本浪费在背向顶点的球面上。距离很大时，实现用 $1-\cos\theta_{\max}=\sin^2\theta_{\max}/(1+\cos\theta_{\max})$ 避免相近数相减：
+
+<!-- source-snippet id="water-sphere-visible-solid-angle-pdf" path="src/device_programs.cu" anchor="const float one_minus_cos =" -->
 ```cpp
-  const float3 displacement = sub(point, from);
-  const float distance2 = length2(displacement);
-  const float3 wi = normalize3(displacement);
-  const float3 light_normal = light.type == spectraldock::kLightSphere
-      ? normalize3(sub(point, light.p0))
-      : normalize3(light.normal);
-  float cos_light = dot3(light_normal, neg(wi));
-  if (light.two_sided != 0) {
-    cos_light = fabsf(cos_light);
+  const float sin2_theta_max =
+      fminf(fmaxf(radius2 / distance2, 0.0f), 1.0f);
+  const float cos_theta_max =
+      sqrtf(fmaxf(0.0f, 1.0f - sin2_theta_max));
+  // This stable form avoids losing the cone measure for a distant sphere.
+  const float one_minus_cos =
+      sin2_theta_max / fmaxf(1.0f + cos_theta_max, 1.0e-20f);
+  if (!(one_minus_cos > 0.0f) || !isfinite(one_minus_cos)) return 0.0f;
+  const float pdf = 1.0f / (2.0f * kPi * one_minus_cos);
+  if (!isfinite(pdf)) return 0.0f;
+  if (one_minus_cos_out != nullptr) {
+    *one_minus_cos_out = one_minus_cos;
   }
+  return pdf;
+}
+```
+
+若顶点在球内或距球面不超过 $\varepsilon$，可见圆锥参数不适用，代码回退到整球面面积采样和前述 Jacobian。rectangle、disk、两面 sphere，以及非 water 的所有顶点也保持面积采样。
+
+`light_direction_pdf` 逐项实现了这个换元：`distance2` 是 $r^2$，`cos_light` 是灯面余弦，`area` 对应 $A_i$，`selection_pdf` 对普通顶点是 $q_i$，对两种 water 样本模式都是 $m_i=q_G(i)+q_U(i)$。两面灯先对余弦取绝对值；单面灯背面或退化面积直接返回零。
+
+<!-- source-snippet id="light-area-to-solid-angle-pdf" path="src/device_programs.cu" anchor="finite_light_selection_pdf" -->
+```cpp
   const float area =
       light.area > 0.0f ? light.area
                         : length3(cross3(light.edge_u, light.edge_v));
   if (cos_light <= 0.0f || area <= 0.0f) {
     return 0.0f;
   }
-  if (!(light.selection_pdf > 0.0f)) return 0.0f;
-  return light.selection_pdf * distance2 / (cos_light * area);
+  const float selection_pdf = finite_light_selection_pdf(light, mode);
+  if (!(selection_pdf > 0.0f)) return 0.0f;
+  if (is_water_finite_light_mode(mode) &&
+      light.type == spectraldock::kLightSphere &&
+      light.two_sided == 0) {
+    const float solid_angle_pdf =
+        sphere_visible_solid_angle_pdf(light, from);
+    if (solid_angle_pdf > 0.0f) {
+      return selection_pdf * solid_angle_pdf;
+    }
+  }
+  return selection_pdf * distance2 / (cos_light * area);
 }
 ```
 
-当前场景接口中的显式灯都是单面：rectangle/disk 只从法线正面发光，sphere 只向外发光。设备结构预留了 `two_sided` 分支，但加载器未暴露它。球灯在整个球面均匀取点，背向着色点的样本会被余弦条件拒绝；这是正确但不够高效的选择。
+当前场景接口中的显式灯都是单面：rectangle/disk 只从法线正面发光，sphere 只向外发光。设备结构预留了 `two_sided` 分支，但加载器未暴露它。非 water 顶点与 water 的球内/近球回退路径仍均匀采整个球面；球外粗糙 water 的两份样本都使用可见立体角。Moonlit Stepwell 的月灯是 disk，不使用这个球灯特例；它主要服务场景中的水下 sphere 灯。
 
-## 2. 二值阴影与跨水面透射
+## 2. 二值可见性与当前介电事件
 
 从 $\mathbf x$ 到 $\mathbf y$ 发一条有限长度阴影射线。若中间没有其他几何体，记可见性 $V(\mathbf x,\mathbf y)=1$；被遮挡则为 0。
 
@@ -81,49 +120,49 @@ $$
 V(\mathbf x,\mathbf y)
 \,\mathbf L_e(\mathbf y\rightarrow\mathbf x)
 \odot f_s(\mathbf x,\boldsymbol\omega_i,\boldsymbol\omega_o)
-\,\max(0,\mathbf n\cdot\boldsymbol\omega_i)
+\,c_s(\mathbf n,\boldsymbol\omega_i)\,w_L
 }{p_L(\boldsymbol\omega_i)}.
 $$
+
+对 Lambert/metal，$c_s=\max(0,\mathbf n\cdot\boldsymbol\omega_i)$；粗糙介电质允许透射到法线另一侧，所以 $c_s=|\mathbf n\cdot\boldsymbol\omega_i|$。BSDF 自身再按方向符号选择反射或透射公式。
 
 一个公式同时解释了几个常见现象：
 
 - 遮挡让 $V=0$，形成阴影；
 - 面积灯上不同点可能部分可见，形成软阴影；
 - $r^2$ 出现在 PDF 分母的倒数中，自然产生距离平方衰减；
-- 每次只选一盏有限灯，但 $q_i$ 已包含在 PDF 并被权重补偿。
+- 普通顶点只选一盏有限灯；粗糙 water 各取一份 $q_G$ 与 $q_U$ 样本，并在分母中用 $q_G+q_U$ 补偿。
 
-无 `water_surface` 的兼容路径不计算第二个表面的完整材质，只需要判断“是否被挡”，因此把介电质也视作阴影遮挡物；alpha cutoff 可以让被裁掉的纹素不遮挡。含水路径则把二值 $V$ 推广为 RGB 直线透射率：反复取得透明边界的完整命中，每段乘 Beer 吸收、每个界面乘 $1-F$，普通不透明交点仍把贡献归零。它不按 Snell 弯折到灯的连接，因此不是焦散求解；详见[第 12 章第 6 节](12-runtime-analytic-water.md#6-跨水面直接光的工程近似)。
+可见性始终是二值的：从当前顶点完成一次 BSDF 散射后，连接线上任何后续有效表面——包括 dielectric 或 water——都把 $V$ 置零；alpha cutoff 裁掉的纹素仍不遮挡。粗糙介电 NEE 可以在**当前界面**连接反射侧或透射侧的灯：透射连接把起点偏移到另一侧，并在介质栈副本中切换一次当前边界，再沿同介质段乘 RGB Beer 衰减。它不会让一条未弯折 shadow ray 穿过下一层透明界面。完整介质语义见[第 12 章第 6 节](12-runtime-analytic-water.md#6-粗糙水面的-nee只连接当前散射事件)。
 
-直接光函数的末尾把公式各项接在一起：先从表面沿法线偏移起点，再向灯点发有限阴影射线；不可见时贡献为零。可见时 `direct_light_mis_weight` 给出 $w_L$，返回值依次相乘 $f_s$、$L_e$、$\cos\theta$、$w_L$，最后除以 $p_L$。
+直接光函数的末尾把公式各项接在一起：先从表面沿法线偏移起点，再向灯点发有限阴影射线；不可见时贡献为零。可见时返回值依次相乘 $f_s$、$L_e$、$\cos\theta$ 与策略权重，最后除以 $p_L$。普通有限灯与 BSDF-hit 使用 power heuristic；粗糙 water 的两份灯样本与 BSDF-hit 使用第 4 节的三技术 balance。
 
-<!-- source-snippet id="direct-light-visibility-and-estimator" path="src/device_programs.cu" anchor="surface_transmittance" -->
+<!-- source-snippet id="direct-light-visibility-and-estimator" path="src/device_programs.cu" anchor="const float3 contribution =" -->
 ```cpp
-  float3 surface_transmittance = f3(1.0f, 1.0f, 1.0f);
-  if (params.water_surface_count == 0u) {
-    if (!trace_visible(shadow_origin, shadow_direction, shadow_distance,
-                       static_cast<int>(light_index), traced_rays)) {
-      return f3(0.0f, 0.0f, 0.0f);
-    }
-  } else {
-    surface_transmittance = trace_water_transmittance(
-        shadow_origin, shadow_direction, shadow_distance,
-        static_cast<int>(light_index), media, traced_rays, water_counters);
-    if (!(max_component(surface_transmittance) > 0.0f)) {
-      return f3(0.0f, 0.0f, 0.0f);
-    }
+  // Rough water takes one qG and one qU sample. Their shared light density is
+  // pL=(qG+qU)c. When a bound surface emitter can also be reached by the next
+  // BSDF ray, all three deterministic techniques use balance weights over
+  // pL+pB. Flame and unbound lights have no BSDF endpoint competitor.
+  const bool water_bsdf_competes =
+      is_water_finite_light_mode(light_mode) &&
+      light.geometry_index >= 0 && next_bsdf_ray_exists;
+  const float mis = water_bsdf_competes
+      ? balance_heuristic(light_pdf, bsdf_pdf)
+      : direct_light_mis_weight(
+            light_pdf, bsdf_pdf,
+            !is_water_finite_light_mode(light_mode) &&
+                light.geometry_index >= 0,
+            next_bsdf_ray_exists);
+  const float3 contribution =
+      mul(mul(mul(bsdf, light.emission), surface_transmittance),
+          no_l * mis / light_pdf);
+  if (count_rough_water && max_component(contribution) > 0.0f) {
+    ++water_counters.rough_nee_contributions;
   }
-  if (track_volume(shadow_origin, shadow_direction, shadow_distance, rng,
-                   volume_counters).collided != 0) {
-    return f3(0.0f, 0.0f, 0.0f);
-  }
-  const float mis = direct_light_mis_weight(
-      light_pdf, bsdf_pdf, light.geometry_index >= 0,
-      next_bsdf_ray_exists);
-  return mul(mul(mul(bsdf, light.emission), surface_transmittance),
-             no_l * mis / light_pdf);
+  return contribution;
 ```
 
-无水分支的 `trace_visible` 把 `tmax` 设在灯点之前，并同时启用“首个命中即终止”和“禁用 closest-hit”，所以只返回二值表面可见性。含水分支的 `trace_water_transmittance` 改用有限距离 radiance 查询取得 `SurfaceHit`，最多穿过八个透明边界；两条分支之后的 `track_volume` 再估计火焰吸收。水体近似见第 12 章，完整 flame 体积推导见第 11 章。
+`direct_segment_transmittance` 先执行二值 `trace_visible`，只有当前散射是粗糙介电透射时才在栈副本中切换一次并计算 Beer；后续 `track_volume` 再估计 flame 吸收。`surface_transmittance` 因而不再代表“穿过任意透明边界”，只代表当前事件之后的同介质传播。粗糙水面细节见第 12 章，完整 flame 体积推导见第 11 章。
 
 <!-- source-snippet id="shadow-ray-visibility-query" path="src/device_programs.cu" anchor="OPTIX_RAY_FLAG_TERMINATE_ON_FIRST_HIT" -->
 ```cpp
@@ -144,7 +183,7 @@ static __forceinline__ __device__ bool trace_visible(
 }
 ```
 
-## 3. 为什么需要两种采样策略
+## 3. 为什么需要多种采样策略
 
 NEE 擅长寻找小而亮的灯，BSDF 采样擅长寻找尖锐材质瓣：
 
@@ -152,20 +191,20 @@ NEE 擅长寻找小而亮的灯，BSDF 采样擅长寻找尖锐材质瓣：
 - 很光滑的 GGX 表面：BSDF 采样容易找到高光方向；
 - 完美介电反射/折射：只有 delta 方向有贡献，普通面积灯方向采样无法匹配它。
 
-同一条“当前表面到灯”的路径，可能由两种策略生成：
+对普通表面的有限灯和所有环境照明，同一条“当前表面到光源”的路径可能由两种策略生成：
 
 1. NEE 先选灯面点并连接过去；
 2. BSDF 先选方向，后续射线恰好命中那个灯面。
 
-若简单把两份完整估计相加，同一路径会被重复计算。Multiple Importance Sampling（MIS）用权重把贡献在两种策略间分配。
+若简单把完整估计相加，同一路径会被重复计算。Multiple Importance Sampling（MIS）用权重把贡献在策略间分配。普通表面比较一份 NEE 与一份 BSDF 样本；粗糙 water 的有限灯比较功率选灯、均匀选灯和 BSDF 三种技术。
 
 ![NEE、BSDF 采样与 MIS 权重](figures/path-nee-mis.svg)
 
-*图 4：上方是两种方式生成同一类光路；下方示意两种 PDF 在不同方向上各有优势。*
+*图 4：普通表面的单份 NEE 与 BSDF 双策略示意；粗糙 water 的有限灯 G/U/B 三技术 balance 见第 4.1 节。*
 
 ## 4. Power heuristic
 
-设灯光方向 PDF 为 $p_L$，BSDF 方向 PDF 为 $p_B$。当前实现每种策略各用一个样本，采用指数为 2 的 power heuristic：
+设灯光方向 PDF 为 $p_L$，BSDF 方向 PDF 为 $p_B$。普通有限灯与 HDR 环境的 NEE/BSDF 策略各用一个样本，采用指数为 2 的 power heuristic：
 
 $$
 w_L=\frac{p_L^2}{p_L^2+p_B^2},
@@ -192,9 +231,10 @@ static __forceinline__ __device__ float power_heuristic(
 }
 ```
 
-- 有限灯与环境 NEE 项各自乘对应的 $w_L$；
-- BSDF 路径稍后命中绑定几何的 emitter 时乘 $w_B$；
+- 普通有限灯与环境 NEE 项各自乘对应的 $w_L$；
+- 普通 BSDF 路径稍后命中绑定几何的 emitter 时乘 $w_B$；
 - 两个 PDF 都以当前着色点的**方向测度**表示，才能放进同一公式。
+- 粗糙 water 的有限灯使用下一小节的三技术 balance；环境项仍照常使用上述 power MIS。
 
 例如 $p_L=0.8$、$p_B=0.2$ 时
 
@@ -206,6 +246,54 @@ $$
 
 这并不是说 94.1% 的光来自灯光采样，而是说在该方向上，灯光策略的估计通常更可靠。
 
+### 4.1 粗糙 water 的三技术 balance
+
+对第 $i$ 盏灯，令功率索引、均匀索引与给定灯后的条件方向密度分别为 $q_G(i)$、$q_U(i)$ 和 $c_i(\boldsymbol\omega)$。两份灯技术的密度为
+
+$$
+p_G=q_G(i)c_i(\boldsymbol\omega),\qquad
+p_U=q_U(i)c_i(\boldsymbol\omega),\qquad
+p_L=p_G+p_U.
+$$
+
+每个粗糙 water 顶点确定性地从 $G$、$U$ 各取一个样本。若灯绑定到可命中的表面，而且当前深度确实允许下一条 BSDF 射线，则把完整 BSDF 方向密度 $p_B$ 作为第三种技术。两份 direct 样本各自使用
+
+$$
+w_L=\frac{p_L}{p_L+p_B},
+\qquad
+\frac{f}{p_L}w_L=\frac{f}{p_G+p_U+p_B},
+$$
+
+而 BSDF continuation 命中同一 emitter 时，路径吞吐量已经含有 $f/p_B$，只需再乘
+
+$$
+w_B=\frac{p_B}{p_L+p_B}.
+$$
+
+因此三份样本的期望系数为
+
+$$
+\frac{p_G}{p_G+p_U+p_B}+
+\frac{p_U}{p_G+p_U+p_B}+
+\frac{p_B}{p_G+p_U+p_B}=1.
+$$
+
+这里必须使用 balance heuristic，而不能把两份灯样本再次当成一个 power-heuristic 样本。若不存在下一条 BSDF 射线、灯没有绑定几何，或 flame 没有可命中的表面端点，则 $p_B$ 不属于可用策略，灯权重退化为 1。单面灯背面、球内无可见锥支持等方向令 $p_L=0$，BSDF-hit 权重自然退化为 1。HDR environment 仍在独立域使用上一节的 power heuristic。
+
+<!-- source-snippet id="water-three-technique-balance" path="src/device_programs.cu" anchor="water_bsdf_competes" -->
+```cpp
+  const bool water_bsdf_competes =
+      is_water_finite_light_mode(light_mode) &&
+      light.geometry_index >= 0 && next_bsdf_ray_exists;
+  const float mis = water_bsdf_competes
+      ? balance_heuristic(light_pdf, bsdf_pdf)
+      : direct_light_mis_weight(
+            light_pdf, bsdf_pdf,
+            !is_water_finite_light_mode(light_mode) &&
+                light.geometry_index >= 0,
+            next_bsdf_ray_exists);
+```
+
 ## 5. Delta 与不能被另一策略生成的路径
 
 MIS 只应比较两种策略都可能生成的路径：
@@ -214,6 +302,7 @@ MIS 只应比较两种策略都可能生成的路径：
 - 没有可命中几何的解析面积灯只能由 NEE 得到，NEE 权重为 1；
 - 发光几何没有绑定到显式灯时，`light_direction_pdf` 为 0，路径命中贡献也保持完整权重；
 - 在最后一个 `max_depth` 表面事件，没有下一条 BSDF 射线参与竞争，即使灯绑定了几何，NEE 权重也为 1。
+- 粗糙 water 的绑定表面灯只有在下一条 BSDF 策略真实存在时才纳入三技术 balance；最后一层、背面、球内无支持、未绑定灯和 flame 都删除不存在的竞争密度。
 
 两个设备局部策略函数把这些边界写成布尔条件。NEE 只有在灯可被后继射线命中且下一条 BSDF 射线确实存在时才竞争；emitter-hit 则在前驱为 delta 或 emitter 未绑定显式灯时保留完整贡献。
 
@@ -236,6 +325,22 @@ static __forceinline__ __device__ float emitter_hit_mis_weight(
 }
 ```
 
+水面 emitter 端补上三技术 balance 的 BSDF 权重；支持外命中仍走普通策略：
+
+<!-- source-snippet id="water-finite-emitter-balance" path="src/device_programs.cu" anchor="use_water_finite_balance" -->
+```cpp
+        const bool use_water_finite_balance =
+            emitter_is_bound_to_light &&
+            previous_light_mode == kFiniteLightWaterPowerSample &&
+            previous_delta == 0 &&
+            light_pdf > 0.0f;
+        const float weight = use_water_finite_balance
+            ? balance_heuristic(previous_pdf, light_pdf)
+            : emitter_hit_mis_weight(
+                  previous_pdf, light_pdf, previous_delta != 0,
+                  emitter_is_bound_to_light);
+```
+
 ## 6. 统一的 RR/MIS PDF 约定与末端深度
 
 SpectralDock 采用“RR 独立于 MIS”的约定。局部方向采样得到的 $p_B$ 原样保存到 `previous_pdf`，不乘俄罗斯轮盘生存率 $s$。轮盘只对路径吞吐量进行期望补偿：
@@ -246,13 +351,13 @@ $$
 p_{\mathrm{prev}}=p_B.
 $$
 
-这样，NEE 在当前顶点计算 $w_L$，以及幸存 BSDF 路径稍后命中 emitter 时计算 $w_B$，始终使用相同的原始 $p_L,p_B$，互补关系不随 RR 改变。
+这样，普通有限灯或环境 NEE 在当前顶点计算 $w_L$，以及幸存 BSDF 路径稍后命中 emitter 或 miss 时计算 $w_B$，始终使用相同的原始 $p_L,p_B$，互补关系不随 RR 改变。水面的三技术 balance 同样使用 RR 前的局部 $p_B$，不把生存率混入策略密度；轮盘死亡样本的 $1/s$ 期望补偿仍保持整体无偏。
 
 末端深度按“策略是否真实存在”处理：最后一个允许的表面事件仍执行完整 NEE，但因为不会追踪下一条 BSDF 射线，直接光权重为 1；累积直接光后立即结束，不再消耗 BSDF 或 RR 随机数。相机直接命中、delta 前驱、未绑定灯和末端 NEE 都由设备局部策略函数返回完整权重。
 
 ## 7. 当前直接光采样的边界
 
-[`sample_finite_direct_light`](../../src/device_programs.cu) 与 [`sample_environment_direct_light`](../../src/device_programs.cu) 只在 Lambert 和 metal 表面执行。介电质是 delta BSDF，通过继续路径寻找灯光。
+[`sample_finite_direct_light`](../../src/device_programs.cu) 与 [`sample_environment_direct_light`](../../src/device_programs.cu) 在 Lambert、metal 和 `roughness > 0` 的 dielectric/water 表面执行。`roughness = 0` 的介电质仍是 delta BSDF，通过继续路径寻找灯光；首个光滑 water 命中另有一次有界 Fresnel 分裂，但不是普通 NEE。
 
 有限灯 NEE 支持 rectangle、disk、sphere 面积灯和程序化 flame，HDR environment 则通过独立的无限远 NEE 域采样。以下光源仍不被主动采样：
 
@@ -260,7 +365,7 @@ $$
 - mesh emitter；
 - 任何绑定纹理的 emitter。
 
-它们仍可由 BSDF 路径命中或 miss 得到，因此不是必然缺失，但小而亮时可能有很高方差。v5 默认按亮度与面积/体积代理选择有限灯，并按亮度乘 texel 立体角选择 HDR 环境方向；`uniform` 只作为正确性与方差对照。完整构造见[第 13 章](13-hdr-environment-and-importance-sampling.md)。
+它们仍可由 BSDF 路径命中或 miss 得到，因此不是必然缺失，但小而亮时可能有很高方差。v5 在普通空气顶点默认按亮度与面积/体积代理选择一个有限灯，粗糙水面为了同时照顾强月光与弱水下灯，确定性地各取一个全局分布样本和均匀索引样本，介质内的普通顶点则只用均匀选灯。HDR 环境方向仍按亮度乘 texel 立体角选择，不受有限灯顶点模式影响。完整构造见[第 13 章](13-hdr-environment-and-importance-sampling.md)。
 
 ## 8. 对应实现
 
@@ -269,13 +374,14 @@ $$
 - `sample_light_surface`：矩形、圆盘和球面的面积采样；
 - `light_direction_pdf`：面积 PDF 到方向 PDF 的换元；
 - `trace_visible`：有限距离阴影射线；
-- `sample_finite_direct_light`：有限灯 NEE、BSDF 评估和 $w_L$；
+- `direct_segment_transmittance`：当前粗糙透射事件的介质栈副本与 Beer 段，并阻断后续透明边界；
+- `sample_finite_direct_light`：有限灯 NEE、BSDF 评估，以及普通顶点的 power 权重或水面的 balance 权重；
 - `sample_environment_direct_light`：无限远环境 NEE、透射和 $w_L$；
 - raygen 调用点：把两个独立 NEE 域的估计相加；
-- `power_heuristic`：数值稳定的平方权重；
+- `power_heuristic`、`balance_heuristic`：数值稳定的普通双策略权重与水面三技术权重；
 - `resolve_continuation`：RR 存活、吞吐量补偿和原始 BSDF PDF；
-- `direct_light_mis_weight`、`emitter_hit_mis_weight`：只有竞争策略真实存在时才使用 MIS；
-- `__raygen__pathtrace` 的 emitter 分支：使用上一次 `previous_pdf` 计算 $w_B$。
+- `direct_light_mis_weight`、`emitter_hit_mis_weight`：普通域只在竞争策略真实存在时使用 MIS；
+- `__raygen__pathtrace` 的 emitter 分支：使用上一次 `previous_pdf` 计算普通 $w_B$，或补齐水面三技术 balance 的 BSDF 端点权重。
 
 下一章转向另一个基础问题：GPU 怎样快速回答数百万次“最近命中了哪个表面？”
 

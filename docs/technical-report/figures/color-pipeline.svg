@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 590" role="img" aria-labelledby="title desc">
   <title id="title">SpectralDock 颜色处理管线</title>
-  <desc id="desc">sRGB 纹理解码或线性输入进入路径积分，经样本平均、可选降噪、曝光、色调映射、sRGB 编码和八位 PNG。</desc>
+  <desc id="desc">sRGB 纹理解码或线性输入进入路径积分，经样本平均后可直接导出原始线性 PFM，展示分支则经过可选降噪、曝光、色调映射、sRGB 编码和八位 PNG。</desc>
   <defs>
     <marker id="arr" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0 0L10 4L0 8Z" fill="#93c5fd"/></marker>
     <style>.h{font:700 21px system-ui,sans-serif;fill:#f8fafc}.t{font:15px system-ui,sans-serif;fill:#dbeafe}.s{font:13px system-ui,sans-serif;fill:#93c5fd}.b{fill:#102b46;stroke:#60a5fa;stroke-width:2}.line{stroke:#93c5fd;stroke-width:2.5;marker-end:url(#arr)}</style>
@@ -11,6 +11,8 @@
   <rect x="246" y="82" width="190" height="76" rx="12" class="b"/><text x="285" y="112" class="t">线性 RGB 路径积分</text><text x="274" y="138" class="s">BSDF、光照、throughput</text>
   <rect x="480" y="82" width="154" height="76" rx="12" class="b"/><text x="510" y="112" class="t">spp 平均</text><text x="502" y="138" class="s">浮点 HDR beauty</text>
   <line x1="202" y1="120" x2="246" y2="120" class="line"/><line x1="436" y1="120" x2="480" y2="120" class="line"/>
+  <rect x="704" y="82" width="190" height="76" rx="12" fill="#164e63" stroke="#22d3ee" stroke-width="2"/><text x="739" y="112" class="t">可选线性 PFM</text><text x="724" y="138" class="s">raw、float32、bottom-up</text>
+  <line x1="634" y1="120" x2="704" y2="120" class="line"/>
   <rect x="34" y="174" width="168" height="54" rx="12" class="b"/><text x="48" y="196" class="t">线性纹理 / 常量 / 背景</text><text x="64" y="218" class="s">无需 sRGB 解码</text>
   <path d="M202 201 L224 201 L224 145 L246 145" fill="none" class="line"/>
 
@@ -28,9 +30,10 @@
   <text x="500" y="402" class="s">denoise = false，直接进入曝光</text>
 
   <rect x="34" y="416" width="1114" height="128" rx="14" fill="#0b1728" stroke="#284565"/>
-  <text x="58" y="450" class="h">三个经常混淆的操作</text>
+  <text x="58" y="450" class="h">四个经常混淆的操作</text>
   <text x="58" y="486" class="t">降噪：根据邻域和 guide 估计较低噪声的 HDR 图像，不是增加样本。</text>
   <text x="58" y="514" class="t">色调映射：把大于 1 的 HDR 亮度平滑压到显示范围，不是 sRGB gamma。</text>
   <text x="652" y="486" class="t">sRGB 编码：为显示保存非线性码值，不是物理光照计算。</text>
   <text x="652" y="514" class="t">量化：丢弃精度以得到 8 bit 文件；之前应一直保留浮点线性值。</text>
+  <text x="58" y="538" class="s">PFM 导出：保留原始样本均值供测量，不经过降噪或显示变换。</text>
 </svg>

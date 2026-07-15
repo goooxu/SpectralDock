@@ -1,6 +1,6 @@
 # 12　运行时解析水面：波面求交、介电传输与 Beer 吸收
 
-Moonlit Stepwell 的水不是平面贴图，也不是预先烘焙的网格。它是 schema v5 在运行时求值的有限解析高度场：OptiX 用保守 tile AABB 找出候选区域，自定义 intersection 程序求射线与波面的根，路径积分器再处理 Fresnel 反射、Snell 折射和水下吸收。
+Moonlit Stepwell 的水不是平面贴图，也不是预先烘焙的网格。它是 schema v5 在运行时求值的有限解析高度场：OptiX 用保守 tile AABB 找出候选区域，自定义 intersection 程序求射线与波面的根，路径积分器再处理粗糙 GGX 介电反射/透射、NEE/MIS、Fresnel/Snell、介质栈和水下吸收。
 
 这里的“水体”有严格边界：`water_surface` 只是有限顶界面，不自带侧壁或底部。v0.1 加载器强制相机 aperture 位于水和玻璃外；场景还必须用不透明池壁与池底封住水下区域。它不是流体模拟，也没有时间演化、泡沫、飞溅、专用焦散或 motion blur。
 
@@ -99,7 +99,7 @@ static __forceinline__ __device__ bool refine_suspicious_water_bracket(
 
 求根容量或残差检查失败不会被当成“没有交点”：设备增加 solver overflow，主机拒绝保存图片。预览还必须人工检查水面没有 tile seam、针孔或介质泄漏。
 
-## 3. 精确光滑介电 Fresnel 与 Snell
+## 3. 精确介电 Fresnel 与 Snell
 
 设入射、透射折射率为 $\eta_i,\eta_t$，入射角余弦为 $c_i$。Snell 定律给出
 
@@ -139,8 +139,7 @@ static __forceinline__ __device__ float dielectric_fresnel(
 }
 ```
 
-路径按概率 $F$ 反射，否则按 Snell 向量式折射。折射分支的吞吐量乘
-$(\eta_i/\eta_t)^2$；这是从相机反向追踪辐亮度时的测度换元，不是额外吸收。水面和普通光滑 dielectric 共用这一精确分支；未使用 `water_surface` 的旧场景仍走原分支，保持原 RNG 序列。
+光滑含水路径按概率 $F$ 反射，否则按 Snell 向量式折射；首个光滑水面命中则按第 7 节同时构造两个加权分支。折射吞吐量包含 $(\eta_i/\eta_t)^2$，这是从相机反向追踪辐亮度时的测度换元，不是额外吸收。粗糙介电路径把同一个精确 $F$ 用于 GGX 反射/透射的值与混合 PDF，并用微表面法线代替宏观法线计算入射角；完整 BTDF、Jacobian 和 VNDF 推导见[第 3 章第 4 节](03-materials-and-bsdf.md#4-介电质从-delta-界面到粗糙微表面)。未使用 `water_surface` 的光滑旧场景仍走兼容分支，保持原 RNG 序列。
 
 ## 4. 介质栈与严格嵌套
 
@@ -234,60 +233,219 @@ static __forceinline__ __device__ float3 medium_segment_transmittance(
 
 相机路径在每个表面段、体积碰撞段或背景段之前把该透射率乘进 throughput。介质栈顶决定当前吸收系数，所以进入无吸收玻璃球时暂时停止水吸收，离开后再恢复。
 
-## 6. 跨水面直接光的工程近似
+## 6. 粗糙水面的 NEE：只连接当前散射事件
 
-若完全按 Snell 弯折 shadow ray，从着色点到面积灯不再是一条已知直线，而会变成两点边值和焦散连接问题。v0.1 采用受控近似：连接仍是直线，最多穿过 8 个透明边界；每段乘 Beer 衰减，每个边界乘 $1-F$，普通不透明交点仍阻断光。
+Moonlit Stepwell 将水材质设为 `roughness: 0.12`。宏观波面仍决定交点和几何法线；GGX 微表面只决定该点的反射/透射方向分布。因为这个 BSDF 是连续分布，有限灯、程序化 flame 和 HDR 环境都能在当前水面顶点执行 NEE。其中有限表面灯使用两份灯样本与一份 BSDF 样本组成三技术 balance，环境 NEE 仍与后来的 BSDF miss 用 power MIS 配对。
 
-<!-- source-snippet id="water-straight-shadow-boundaries" path="src/device_programs.cu" anchor="++counters.shadow_transmissions" -->
+两个水面专用的采样优化直接针对“水面是主角，却最慢收敛”的问题：
+
+- GGX 微表面的物理反射率仍是精确 Fresnel $F$，但当 $F<1$ 时以 $s_R=\max(F,0.5)$ 选反射分支，用 $F/s_R$ 的路径权重回补；透射分支同理用 $(1-F)/(1-s_R)$ 回补。这使低 Fresnel 概率下的月盘反射也至少获得一半 BSDF 样本，但不改变期望值。
+- 有限灯的全局功率分布记为 $q_G(i)$，均匀索引分布为 $q_U(i)=1/N$。每个粗糙水面顶点**确定性地各取一份** $q_G$ 样本和 $q_U$ 样本；两份使用联合灯索引密度 $q_G(i)+q_U(i)$，不乘 0.5。这同时给强月光与弱水下灯独立的采样机会；介质内的其他顶点仍只用 $q_U$ 取一份样本。
+- 两份水面有限灯样本若各自选中单面 sphere，球外顶点都在其可见立体角内均匀采方向；球内或近球顶点回退到面积采样。Moonlit 的月灯是 disk，仍按面积采样；这一特例主要降低水下 sphere 灯的方差。
+
+第一项的 BSDF/PDF 推导见[第 3 章第 4.1 节](03-materials-and-bsdf.md#41-粗糙介电反射与透射)，第二项的顶点选灯模式和源码见[第 13 章第 5 节](13-hdr-environment-and-importance-sampling.md#5-有限灯也要选择分布)，第三项的圆锥立体角与 PDF 推导见[第 5 章第 1 节](05-direct-lighting-and-mis.md#1-在灯面上取一个随机点)。
+
+对灯方向 $\boldsymbol\omega_i$，反射位于法线同侧，透射位于法线异侧。直接光估计统一写成
+
+$$
+\widehat L_d=
+\frac{f_s(\boldsymbol\omega_i,\boldsymbol\omega_o)
+|\mathbf n\cdot\boldsymbol\omega_i|\,
+L_e\,\mathbf T\,V}{p_L(\boldsymbol\omega_i)}w_L.
+$$
+
+这里的 $f_s,p_B$ 是第 3 章推导的 GGX 介电反射或透射值；透射 PDF 已含实际分支采样概率 $1-s_R$ 和半程向量 Jacobian，而物理 BTDF 仍含 $1-F$。令条件方向密度为 $c_i$，则 $p_G=q_G(i)c_i$、$p_U=q_U(i)c_i$、$p_L=p_G+p_U$。对于有下一条 BSDF 射线可竞争的绑定表面灯，两份 direct 样本各自使用 $w_L=p_L/(p_L+p_B)$，BSDF emitter-hit 使用 $w_B=p_B/(p_L+p_B)$，所以三项期望系数满足
+
+$$
+\frac{p_G}{p_G+p_U+p_B}+
+\frac{p_U}{p_G+p_U+p_B}+
+\frac{p_B}{p_G+p_U+p_B}=1.
+$$
+
+没有 BSDF 端点竞争者时令 $p_B=0$，两份灯样本仍以 $(q_G+q_U)/(q_G+q_U)=1$ 覆盖有限灯积分，因而始终不需要 0.5 补偿。$\mathbf T$ 只表示当前顶点之后、同一介质连接段上的 Beer 衰减。若灯位于透射侧，代码先在介质栈**副本**中执行本次边界切换，再用副本计算该段衰减；相机路径自己的栈不会被一次 NEE 试探修改。
+
+这种三技术构造使用 balance heuristic，而不是把联合灯密度再套入普通双策略 power heuristic。只有绑定表面灯、存在下一条 BSDF 射线且该方向有灯采样支持时才启用；最后深度、未绑定 emitter、单面灯背面、球内无支持命中、flame、delta 前驱与相机直见都删除不存在的竞争密度。HDR 环境继续使用独立的 NEE/BSDF-miss power MIS。
+
+<!-- source-snippet id="water-finite-emitter-balance-path" path="src/device_programs.cu" anchor="use_water_finite_balance" -->
 ```cpp
-    const float eta_i = medium_ior(media);
-    const float eta_t = hit.front_face != 0
-        ? fmaxf(material.ior, 1.0e-3f)
-        : exit_ior(media, hit.material_index, counters);
-    const float cos_i =
-        fminf(fmaxf(dot3(neg(direction), hit.normal), 0.0f), 1.0f);
-    const float fresnel = dielectric_fresnel(cos_i, eta_i, eta_t);
-    if (!(fresnel < 1.0f)) return f3(0.0f, 0.0f, 0.0f);
-    transmittance = mul(transmittance, 1.0f - fresnel);
-    if (!update_medium_after_transmission(
-            media, hit.material_index, material, hit.front_face, counters)) {
-      return f3(0.0f, 0.0f, 0.0f);
-    }
-    ++counters.shadow_transmissions;
-    const float advance = hit.distance + params.scene_epsilon * 2.0f;
-    origin = add(origin, mul(direction, advance));
-    remaining -= advance;
+        const bool use_water_finite_balance =
+            emitter_is_bound_to_light &&
+            previous_light_mode == kFiniteLightWaterPowerSample &&
+            previous_delta == 0 &&
+            light_pdf > 0.0f;
+        const float weight = use_water_finite_balance
+            ? balance_heuristic(previous_pdf, light_pdf)
+            : emitter_hit_mis_weight(
+                  previous_pdf, light_pdf, previous_delta != 0,
+                  emitter_is_bound_to_light);
+        radiance = add(radiance, mul(mul(throughput, emitted), weight));
 ```
 
-这能让水上月光照亮池底，并保留遮挡和选择性吸收，但不会产生正确的折射焦散。报告和 gallery 都不能把它描述成完整水面双向连接算法。
+<!-- source-snippet id="water-direct-single-event" path="src/device_programs.cu" anchor="direct_segment_transmittance" -->
+```cpp
+static __forceinline__ __device__ float3 direct_segment_transmittance(
+    const SurfaceHit& hit, const MaterialData& material,
+    float3 shadow_origin, float3 shadow_direction, float shadow_distance,
+    int target_light, bool transmitted_connection, const MediumState& media,
+    unsigned long long& traced_rays, WaterCounters& counters) {
+  MediumState shadow_media = media;
+  if (params.water_surface_count != 0u &&
+      is_rough_dielectric(material) && transmitted_connection) {
+    if (!update_medium_after_transmission(
+            shadow_media, hit.material_index, material, hit.front_face,
+            counters)) {
+      return f3(0.0f, 0.0f, 0.0f);
+    }
+  }
+  if (!trace_visible(shadow_origin, shadow_direction, shadow_distance,
+                     target_light, traced_rays)) {
+    return f3(0.0f, 0.0f, 0.0f);
+  }
+  return params.water_surface_count != 0u
+      ? medium_segment_transmittance(
+            shadow_media, shadow_distance, counters)
+      : f3(1.0f, 1.0f, 1.0f);
+}
+```
 
-## 7. 安全统计、验证与限制
+`transmitted_connection` 最终由定向几何法线判定。着色法线可以扰动 GGX 波瓣，但不能把一个物理上的反射方向误当作透射，也不能反向修改介质栈。因此实现要求着色法线与几何法线对方向的侧别一致，并用几何法线完成最终分类：
 
-stats 分开记录 height evaluations、tile tests、roots reported、shadow transmissions 和 medium segments。solver overflows、medium errors 或 shadow-boundary overflows 任一非零都会让主机拒绝输出。
+<!-- source-snippet id="water-geometric-side-consistency" path="src/device_programs.cu" anchor="rough_macro_sides_agree" -->
+```cpp
+// Shading normals shape the lobe, but only the oriented geometric normal can
+// decide which physical medium a direction occupies. Reject a rough
+// dielectric direction when those two classifications disagree; otherwise a
+// reflected sample could mutate the medium stack (or a transmitted one could
+// stay on the incident side).
+static __forceinline__ __device__ bool rough_macro_sides_agree(
+    float3 shading_normal, float3 geometric_normal, float3 direction,
+    bool& transmitted) {
+  const float shading_side = dot3(shading_normal, direction);
+  const float geometric_side = dot3(geometric_normal, direction);
+  if (!(fabsf(shading_side) > 0.0f) ||
+      !(fabsf(geometric_side) > 0.0f) ||
+      (shading_side > 0.0f) != (geometric_side > 0.0f)) {
+    return false;
+  }
+  transmitted = geometric_side < 0.0f;
+  return true;
+}
+```
+
+shadow origin 也用几何法线偏移到正确一侧，避免透射连接从错误介质侧立即自交：
+
+<!-- source-snippet id="water-signed-direct-offset" path="src/device_programs.cu" anchor="const float3 offset_normal" -->
+```cpp
+  const float3 offset_normal = is_rough_dielectric(material)
+      ? hit.geometric_normal : hit.normal;
+  const float side = transmitted_connection ? -1.0f : 1.0f;
+  const float3 shadow_origin =
+      add(hit.position,
+          mul(offset_normal, side * params.scene_epsilon * 2.0f));
+  const float3 shadow_displacement = sub(light_point, shadow_origin);
+  const float shadow_distance = length3(shadow_displacement);
+  if (shadow_distance <= params.scene_epsilon * 2.0f) {
+    return f3(0.0f, 0.0f, 0.0f);
+  }
+  const float3 shadow_direction =
+      divv(shadow_displacement, shadow_distance);
+  const float3 surface_transmittance = direct_segment_transmittance(
+      hit, material, shadow_origin, shadow_direction, shadow_distance,
+      static_cast<int>(light_index), transmitted_connection, media,
+      traced_rays, water_counters);
+```
+
+最重要的语义是 `trace_visible`：从当前水面散射一次后，连接线上遇到的**下一层透明边界也算遮挡**。旧实现把 shadow ray 沿直线穿过后续水/玻璃边界，再乘 $1-F$，却没有按 Snell 改变方向；那条路径既不是一条真实折线路径，也不是单顶点 NEE 的合法样本，现已删除。现在相机若要从漫反射面经过水面到灯，必须先由 BSDF 路径实际到达水面，再在这个水面顶点连接灯。该规则消除了直线跨界偏差，同时明确放弃自动求解多界面镜面连接。
+
+## 7. 光滑水面的单次有界 Fresnel 分裂
+
+`roughness: 0` 是严格 delta BSDF，普通灯面或环境方向采样命中其唯一反射/折射方向的概率为零，因此它不执行 NEE。为了不让最重要的首个光滑水面事件仍以 $F$ 与 $1-F$ 随机二选一，每个相机样本第一次命中光滑 `water_surface` 时确定性地产生至多两个子路径：
+
+$$
+\boldsymbol\beta_r=\boldsymbol\beta\odot\mathbf c\,F,
+\qquad
+\boldsymbol\beta_t=\boldsymbol\beta\odot\mathbf c\,(1-F)
+\left(\frac{\eta_i}{\eta_t}\right)^2.
+$$
+
+$\mathbf c$ 是界面 `base_color`。全反射时 $F=1$，只继续反射，不创建空的透射状态。正常情形下透射分支立刻更新自己的介质栈；反射分支保留原栈。两边的 RNG 从同一父状态确定性 fork，避免分支执行顺序让后续随机数意外相同。
+
+<!-- source-snippet id="water-bounded-split-state" path="src/device_programs.cu" anchor="At most one extra state is needed" -->
+```cpp
+    // At most one extra state is needed: the first smooth-water event forks
+    // into deterministic Fresnel reflection and transmission, and both
+    // children carry split_used=1. Keeping a single pending state bounds work
+    // and storage to two path states per camera sample.
+    int pending_path = 0;
+    float3 pending_origin{};
+    float3 pending_direction{};
+    float3 pending_throughput{};
+    float pending_previous_pdf = 0.0f;
+    int pending_previous_delta = 1;
+    FiniteLightMode pending_previous_light_mode = kFiniteLightPower;
+    unsigned int pending_bounce = 0u;
+    MediumState pending_media{};
+    unsigned long long pending_rng_state = 0ull;
+    unsigned long long pending_rng_increment = 1ull;
+    unsigned int bounce_start = 0u;
+```
+
+只有一个 pending slot，且两个孩子都携带 `split_used = 1`，所以每样本同时最多两个路径状态；后续光滑水面或光滑玻璃恢复普通 Fresnel 随机采样，不会指数分叉。pending 状态还保存前驱选灯模式，保证恢复分支后命中 emitter 时 MIS 重建正确 PDF。
+
+<!-- source-snippet id="water-bounded-split-weights" path="src/device_programs.cu" anchor="++water_counters.delta_splits" -->
+```cpp
+        pending_path = 1;
+        pending_origin = add(
+            hit.position,
+            mul(hit.normal, params.scene_epsilon * 2.0f));
+        pending_direction = reflected;
+        pending_throughput = clamp_nonnegative(
+            mul(mul(throughput, base_color), reflectance));
+        pending_previous_pdf = 1.0f;
+        pending_previous_delta = 1;
+        pending_previous_light_mode = current_light_mode;
+        pending_bounce = bounce + 1u;
+        pending_media = media;
+        pending_rng_state = reflected_rng.state;
+        pending_rng_increment = reflected_rng.increment;
+        ++water_counters.delta_splits;
+
+        throughput = clamp_nonnegative(
+            mul(mul(throughput, base_color),
+                (1.0f - reflectance) * eta * eta));
+        previous_pdf = 1.0f;
+        previous_delta = 1;
+        previous_light_mode = current_light_mode;
+```
+
+这个分裂只降低首个光滑水面二选一的方差。它不会寻找“漫反射点—多个光滑界面—灯”的约束路径，也不是 Manifold NEE（MNEE）、双向路径追踪或光子映射；光滑多界面焦散仍在范围外。
+
+## 8. 安全统计、验证与限制
+
+stats 分开记录 height evaluations、tile tests、roots reported、medium segments、rough NEE attempts/contributions 和 delta splits。solver overflows 或 medium errors 任一非零都会让主机拒绝输出。
 
 <!-- source-snippet id="water-host-safety-gate" path="src/optix_renderer.cpp" anchor="water transport safety check failed" -->
 ```cpp
   if (water_totals.solver_overflows != 0ull ||
-      water_totals.medium_errors != 0ull ||
-      water_totals.shadow_boundary_overflows != 0ull) {
+      water_totals.medium_errors != 0ull) {
     throw std::runtime_error(
         "water transport safety check failed: solver overflows=" +
         std::to_string(water_totals.solver_overflows) +
-        ", medium errors=" + std::to_string(water_totals.medium_errors) +
-        ", shadow boundary overflows=" +
-        std::to_string(water_totals.shadow_boundary_overflows));
+        ", medium errors=" + std::to_string(water_totals.medium_errors));
   }
 ```
 
-定向 GPU fixture 检查固定 seed、镜面反射、折射位移、深浅路径和 RGB Beer 色移、水上灯照亮水下漫反射面、不透明遮挡、浸没玻璃 sphere 的严格介质栈，以及全部安全计数。Moonlit Stepwell 正式配置使用 2048 spp、depth 16 并关闭 Denoiser，使 tile seam、漏交、异常介质边界和高亮噪点不会被降噪掩盖。
+定向 GPU fixture 检查固定 seed、粗糙反射/透射、全反射、两侧法线语义、深浅路径 RGB Beer、浸没玻璃的介质栈、depth-1 粗糙 NEE、透明中间边界阻断，以及后续真实水面顶点恢复贡献。绑定 emitter 在 depth 2 已能用 NEE 完成末端连接，未绑定的 BSDF-only 路径需要 depth 3 才能命中同一 emitter；因此对照按**等散射阶数**比较 bound depth 2 / unbound depth 3，其高 spp 线性 PFM 均值必须在 2% 内，三组低 spp seed 的 NEE ROI MSE 至多是 BSDF-only 的 50%。光滑 fixture 检查单次 split、全反射、能量权重与确定性。Moonlit Stepwell 的维护者 time-to-error 固定同一 `roughness: 0.12` 积分对象，用一份独立 seed 的粗糙 NEE 8192 spp 线性参考，对比三组 NEE 1024 spp 与只删除显式灯绑定、保留 emitter 几何的 BSDF-only 2048 spp；候选平均渲染时间须在 15% 内，反射和水下 ROI 的归一化 MSE 都必须更低。本次 RTX 5090 记录为 2444.827 ms 对 2687.225 ms，反射 NMSE 为 0.00894643 对 0.00942178，水下 NMSE 为 0.138436 对 0.200359。该对照改变的是采样策略而不是场景辐射度，且仅供维护者手工执行，不进入默认 acceptance，也不是跨 GPU 性能承诺。
+
+正式 Moonlit Stepwell 使用 `roughness: 0.12`、512 spp、depth 12，并为 gallery PNG 启用 OptiX AI Denoiser。所有能量、无偏性和 time-to-error 比较都通过 `--linear-output` 保存 tone map 前的原始 PFM，并显式使用 `--no-denoise`；因此降噪不参与上述数值结论。tile seam、漏交和构图还需人工检查，统计安全门与 Compute Sanitizer 则检查数值和内存错误。
 
 当前模型仍有以下边界：
 
 - 波浪是确定性静态正弦叠加，不是 CFD、浅水方程或海洋频谱动画；
 - `water_surface` 只是有限顶界面，依赖场景的不透明池壁/底部封闭；
 - 加载器强制相机 aperture 从水与玻璃外开始；普通 dielectric 只支持同材质双面、无 alpha 的闭合 sphere，水层加嵌套玻璃合计最多四层；
-- 路径折射精确，但直接光 shadow 不按 Snell 弯折，因此没有物理正确焦散；
-- RGB Beer 吸收不是波长采样，也没有体散射、悬浮物或泡沫。
+- 粗糙界面有单顶点 NEE/MIS，光滑首水面有一次有界 split；两者都不求解光滑多界面焦散或 MNEE；
+- GGX 介电是单次微表面散射，不补偿多次散射能量；RGB Beer 吸收不是波长采样，也没有体散射、悬浮物或泡沫。
 
 输入字段和约束见[场景格式](../SCENE_FORMAT.md)，展示构图见 [Moonlit Stepwell](../EXAMPLES.md#moonlit-stepwell)。
 

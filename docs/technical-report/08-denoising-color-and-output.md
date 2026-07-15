@@ -6,7 +6,8 @@
 sRGB 图像纹理解码
   → 在线性 RGB 中计算路径贡献
   → spp 平均
-  → 可选 OptiX HDR 降噪
+  ├→ 可选原始线性 RGB PFM（不降噪、不曝光）
+  └→ 可选 OptiX HDR 降噪
   → 2^EV 曝光
   → 逐通道 ACES 风格拟合曲线
   → 精确分段 sRGB 编码
@@ -149,7 +150,29 @@ denoised ──┘                                           ↓ D2H + stream sy
 
 `render_optix` 本身不写 PNG；它返回主机端 `RenderResult`。命令行入口随后调用 `write_png_rgba8`，由 libpng 把这份 RGBA8 数组编码到磁盘。因此 Denoiser 是 OptiX 可选阶段，颜色变换是纯 CUDA 计算，D2H 之后的 PNG 编码则是 CPU 工作。
 
-## 5. EV 曝光
+## 5. 原始线性 PFM 分支
+
+PNG 是始终存在的展示输出；`--linear-output FILE.pfm` 是额外的测量输出。它直接从 raygen 已按 spp 平均的原始 `beauty` 下载 RGB，不读取 `final_beauty`，所以即使同时启用 Denoiser，PFM 也仍保存**降噪前**数值。曝光、ACES 风格曲线、sRGB 编码和 8 bit 量化同样不作用于 PFM。这样均值、方差、MSE 和能量对照不会被非线性显示变换改变。
+
+PFM 头为 `PF`，负 scale `-1.0` 声明 little-endian float32，像素行按格式要求从底到顶保存。它不携带完整色彩空间元数据、层、压缩或任意通道，因此这里把它当作小型确定性实验接口，而不是 OpenEXR 的替代品。
+
+<!-- source-snippet id="output-linear-pfm" path="src/image_io.cpp" anchor="std::ofstream output" -->
+```cpp
+  std::ofstream output(path, std::ios::binary);
+  if (!output)
+    throw std::runtime_error("cannot open PFM for writing: " + path.string());
+  output << "PF\n" << width << ' ' << height << "\n-1.0\n";
+
+  const std::size_t row_values = static_cast<std::size_t>(width) * channels;
+  std::vector<std::uint8_t> row(row_values * sizeof(float));
+  for (std::uint32_t source_y = height; source_y-- > 0;) {
+    const float* source = pixels.data() +
+                          static_cast<std::size_t>(source_y) * row_values;
+```
+
+`source_y` 从 `height - 1` 递减到 0，把主机中 top-to-bottom 的 `linear_rgb` 转成 PFM 的 bottom-to-top 行序；后续循环把每个 IEEE-754 float 的四个字节显式写成小端顺序，因此不依赖主机本身的端序。
+
+## 6. EV 曝光
 
 对原始或降噪后的线性值 $c$，先乘
 
@@ -161,7 +184,7 @@ $$
 
 若输入通道不是有限数，后处理将其替换为 0；负值也在色调曲线入口钳到 0。
 
-## 6. ACES 风格拟合曲线
+## 7. ACES 风格拟合曲线
 
 线性 HDR 可能远大于 1，直接截断会让高光全部变成纯白。SpectralDock 逐通道使用
 
@@ -189,7 +212,7 @@ static __forceinline__ __device__ float aces_fitted(float value) {
 
 `aces_fitted` 逐项实现本节的有理拟合曲线；入口和出口的两次钳制分别处理负值与显示范围上限。
 
-## 7. sRGB 输出编码
+## 8. sRGB 输出编码
 
 色调映射后的线性显示值 $T\in[0,1]$ 再编码为 sRGB：
 
@@ -226,7 +249,7 @@ static __forceinline__ __device__ unsigned char to_byte(float value) {
 
 `linear_to_srgb` 的阈值和两个分支与公式一致；`to_byte` 中的 `floorf(value * 255 + 0.5)` 实现四舍五入，外层钳制保证结果落在 8 bit 范围。
 
-RGB 三个通道写入 `uchar4`，alpha 固定为 255。主机把 RGBA8 缓冲区写成 PNG；最终 PNG 不再保留色调映射前的 HDR 数值。
+RGB 三个通道写入 `uchar4`，alpha 固定为 255。主机把 RGBA8 缓冲区写成 PNG；最终 PNG 不再保留色调映射前的 HDR 数值，需要定量分析时应显式请求上一节的 PFM。
 
 <!-- source-snippet id="output-postprocess-kernel" path="src/postprocess.cu" anchor="const float multiplier = exp2f(exposure);" -->
 ```cpp
@@ -253,7 +276,7 @@ __global__ void postprocess_kernel(const float4* linear_beauty,
 
 这里可以读出完整数据流：`exp2f(exposure)` 实现 $2^{EV}$，非有限输入先归零，RGB 依次经过 `aces_fitted`、`linear_to_srgb`、`to_byte`，最后与常量 alpha 255 一起写入 `uchar4`。显示变换都发生在已平均（并可能已降噪）的 `linear_beauty` 上。
 
-## 8. 一个数值例子
+## 9. 一个数值例子
 
 假设一个线性通道值为 $c=2$，曝光 EV = −1：
 
@@ -270,7 +293,7 @@ __global__ void postprocess_kernel(const float4* linear_beauty,
 
 这个例子也说明“线性值 2”并非溢出。HDR 阶段允许保存它，直到最后决定如何显示。
 
-## 9. 对应实现
+## 10. 对应实现
 
 - 输入纹理解码：[`sample_texture`、`srgb_channel_to_linear`](../../src/device_programs.cu)
 - spp 平均和首命中 guide：[`__raygen__pathtrace`](../../src/device_programs.cu)
@@ -278,6 +301,7 @@ __global__ void postprocess_kernel(const float4* linear_beauty,
 - raw/denoised 选择、CUDA 后处理与 D2H：[`render_optix`](../../src/optix_renderer.cpp)
 - 曝光、拟合曲线、sRGB 和量化：[`src/postprocess.cu`](../../src/postprocess.cu)
 - 主机 PNG 编码：[`write_png_rgba8`](../../src/image_io.cpp)
+- 原始线性 PFM：[`write_pfm_rgb32f`](../../src/image_io.cpp)
 
 下一章将把“噪声、偏差、模型限制、性能计时和软件测试”分开，说明怎样判断渲染结果是否可信。
 

@@ -5,10 +5,12 @@
 
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -99,6 +101,60 @@ void test_png() {
   std::filesystem::remove(path);
   check(actual.width == 2 && actual.height == 2, "PNG dimensions");
   check(actual.pixels == expected, "PNG lossless RGBA round trip");
+}
+
+void test_pfm() {
+  const auto path = temporary(".pfm");
+  const std::vector<float> top_to_bottom = {
+      1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f,
+      7.0f, 8.0f, 9.0f, 10.0f, 11.0f, 12.0f};
+  write_pfm_rgb32f(path, 2, 2, top_to_bottom);
+
+  std::ifstream input(path, std::ios::binary);
+  check(static_cast<bool>(input), "PFM output opens");
+  std::string line;
+  std::getline(input, line);
+  check(line == "PF", "PFM RGB magic");
+  std::getline(input, line);
+  check(line == "2 2", "PFM dimensions");
+  std::getline(input, line);
+  check(line == "-1.0", "PFM little-endian scale");
+  const auto read_little_endian_float = [&] {
+    unsigned char bytes[4]{};
+    input.read(reinterpret_cast<char*>(bytes), sizeof(bytes));
+    check(input.gcount() == static_cast<std::streamsize>(sizeof(bytes)),
+          "PFM float payload length");
+    const std::uint32_t bits =
+        static_cast<std::uint32_t>(bytes[0]) |
+        (static_cast<std::uint32_t>(bytes[1]) << 8u) |
+        (static_cast<std::uint32_t>(bytes[2]) << 16u) |
+        (static_cast<std::uint32_t>(bytes[3]) << 24u);
+    float value = 0.0f;
+    std::memcpy(&value, &bits, sizeof(value));
+    return value;
+  };
+  const std::vector<float> bottom_to_top = {
+      7.0f, 8.0f, 9.0f, 10.0f, 11.0f, 12.0f,
+      1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
+  for (const float expected : bottom_to_top)
+    near(read_little_endian_float(), expected, 0.0f,
+         "PFM bottom-up RGB payload");
+  check(input.get() == std::char_traits<char>::eof(),
+        "PFM has no trailing payload");
+  input.close();
+  std::filesystem::remove(path);
+
+  expect_error([&] { write_pfm_rgb32f(path, 0, 1, {}); }, "non-zero",
+               "PFM zero dimension rejection");
+  expect_error([&] { write_pfm_rgb32f(path, 1, 1, {1.0f, 2.0f}); },
+               "expected 3 RGB floats", "PFM channel count rejection");
+  expect_error(
+      [&] {
+        write_pfm_rgb32f(
+            path, 1, 1,
+            {1.0f, std::numeric_limits<float>::infinity(), 3.0f});
+      },
+      "samples must be finite", "PFM non-finite sample rejection");
 }
 
 void test_hdr_and_sampling_distributions() {
@@ -550,6 +606,7 @@ void test_water_surfaces() {
        "water default absorption green");
   near(material.absorption.z, 0.025f, 1.0e-6f,
        "water default absorption blue");
+  near(material.roughness, 0.0f, 0.0f, "water default roughness");
   check(scene.objects.front().type == GeometryType::WaterSurface,
         "water_surface geometry type");
   const auto& surface =
@@ -564,6 +621,14 @@ void test_water_surfaces() {
   near(surface.waves[1].phase_radians, 7.0f - 2.0f * kPi, 1.0e-6f,
        "water positive phase wrapping");
 
+  write_text(scene_path,
+             document("[" + replace(valid_material, "\"water\"}",
+                                      "\"water\",\"roughness\":0.12}") +
+                          "]",
+                      "[" + valid_surface + "]"));
+  near(load_scene(scene_path).materials.front().roughness, 0.12f, 1.0e-6f,
+       "water explicit roughness");
+
   reject("[" + replace(valid_material, "\"water\"}",
                        "\"water\",\"texture\":\"x\"}") + "]",
          "[" + valid_surface + "]", "not supported by water",
@@ -576,6 +641,14 @@ void test_water_surfaces() {
                        "\"water\",\"absorption\":[-1,0,0]}") + "]",
          "[" + valid_surface + "]", "finite and non-negative",
          "water absorption range");
+  reject("[" + replace(valid_material, "\"water\"}",
+                       "\"water\",\"roughness\":-0.1}") + "]",
+         "[" + valid_surface + "]", "must be in [0, 1]",
+         "water negative roughness rejection");
+  reject("[" + replace(valid_material, "\"water\"}",
+                       "\"water\",\"roughness\":1.1}") + "]",
+         "[" + valid_surface + "]", "must be in [0, 1]",
+         "water roughness upper bound");
   reject("[" + valid_material + "]",
          "[" + replace(valid_surface, "\"water_surface\"",
                        "\"water_surface\",\"alpha_cutoff\":0.5") + "]",
@@ -656,8 +729,11 @@ void test_water_surfaces() {
   write_text(scene_path,
              document("[" + valid_material + "," + glass_material + "]",
                       "[" + valid_surface + "," + glass_sphere + "]"));
-  check(load_scene(scene_path).objects.size() == 2,
+  const Scene glass_scene = load_scene(scene_path);
+  check(glass_scene.objects.size() == 2,
         "closed dielectric sphere is accepted in a water scene");
+  near(glass_scene.materials[1].roughness, 0.0f, 0.0f,
+       "dielectric default roughness");
   const std::string split_glass_sphere =
       R"json({"name":"split_glass","type":"sphere","center":[0,1,0],"radius":0.25,"front_material":"glass","back_material":null})json";
   reject("[" + valid_material + "," + glass_material + "]",
@@ -844,7 +920,9 @@ void test_scene_parser() {
     "render": {"width":64,"height":32,"spp":2,"max_depth":4,"seed":7},
     "textures": [{"name":"white","type":"constant","color":[0.8,0.8,0.8]}],
     "materials": [{"name":"mat","type":"lambertian","texture":"white"},
-                  {"name":"emit","type":"emitter","emission":[4,5,6]}],
+                  {"name":"emit","type":"emitter","emission":[4,5,6]},
+                  {"name":"metal_default","type":"metal"},
+                  {"name":"glass_default","type":"dielectric"}],
     "objects": [{"name":"ball","type":"sphere","center":[0,0,0],"radius":1,"material":"mat"},
                 {"name":"panel","type":"rectangle","p1":[-1,2,-1],"p2":[1,2,-1],"p3":[1,2,1],"material":"emit"}],
     "lights": [{"name":"key","type":"rectangle","object":"panel","position":[-1,2,-1],"edge_u":[2,0,0],"edge_v":[0,0,2],"emission":[4,5,6]}]
@@ -853,8 +931,12 @@ void test_scene_parser() {
   const Scene scene = load_scene(path);
   std::filesystem::remove(path);
   check(scene.render.width == 64 && scene.render.height == 32 && scene.render.seed == 7, "render defaults");
-  check(scene.textures.size() == 1 && scene.materials.size() == 2 && scene.objects.size() == 2,
+  check(scene.textures.size() == 1 && scene.materials.size() == 4 && scene.objects.size() == 2,
         "scene arrays");
+  near(scene.materials[2].roughness, 0.5f, 0.0f,
+       "metal default roughness");
+  near(scene.materials[3].roughness, 0.0f, 0.0f,
+       "dielectric default roughness outside water scenes");
   check(scene.objects[0].front_material == 0 && scene.objects[0].back_material == 0,
         "material name resolution");
   check(scene.lights.size() == 1, "light parsing");
@@ -895,6 +977,7 @@ int main(int argc, char** argv) {
   try {
     test_vectors();
     test_png();
+    test_pfm();
     test_hdr_and_sampling_distributions();
     test_obj_loader();
     test_transform_order();

@@ -13,7 +13,7 @@ usage() {
     'preview: 960x540, 64 spp, depth 8, AI denoising' \
     'final:   1920x1080, 512 spp, depth 12, AI denoising' \
     'ember-forge:       256/2048 spp, depth 12, no denoising' \
-    'moonlit-stepwell:   256/2048 spp, depth 16, no denoising' \
+    'moonlit-stepwell:   128/512 spp, depth 12, AI denoising' \
     'Warning: --preset final writes version-controlled files in docs/gallery.'
 }
 
@@ -109,12 +109,12 @@ for requested in "${scenes[@]}"; do
     fi
   fi
   if [[ "${stem}" == "moonlit-stepwell" ]]; then
-    scene_depth=16
-    denoise_option="--no-denoise"
+    scene_depth=12
+    denoise_option="--denoise"
     if [[ "${preset}" == "preview" ]]; then
-      scene_spp=256
+      scene_spp=128
     else
-      scene_spp=2048
+      scene_spp=512
     fi
   fi
   echo "rendering ${stem} (${preset}, ${scene_spp} spp) -> ${output_path}"

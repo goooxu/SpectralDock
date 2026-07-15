@@ -20,10 +20,10 @@
   "render": {
     "width": 1920,
     "height": 1080,
-    "spp": 2048,
-    "max_depth": 16,
+    "spp": 512,
+    "max_depth": 12,
     "seed": 808,
-    "denoise": false
+    "denoise": true
   },
   "textures": [],
   "materials": [
@@ -32,7 +32,7 @@
     {"name": "pool_mosaic", "type": "lambertian", "base_color": [0.045, 0.14, 0.17]},
     {"name": "aged_bronze", "type": "metal", "base_color": [0.42, 0.24, 0.09], "roughness": 0.28},
     {"name": "moon_ceramic", "type": "lambertian", "base_color": [0.64, 0.61, 0.52]},
-    {"name": "moon_water", "type": "water", "ior": 1.333, "absorption": [0.42, 0.10, 0.035]},
+    {"name": "moon_water", "type": "water", "roughness": 0.12, "ior": 1.333, "absorption": [0.42, 0.10, 0.035]},
     {"name": "moon_emitter", "type": "emitter", "emission": [28.0, 34.0, 50.0]},
     {"name": "sconce_emitter", "type": "emitter", "emission": [9.0, 2.8, 0.7]},
     {"name": "submerged_emitter", "type": "emitter", "emission": [0.28, 1.05, 1.9]}

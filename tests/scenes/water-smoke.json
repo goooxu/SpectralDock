@@ -12,7 +12,7 @@
   "render": {"width": 96, "height": 72, "spp": 256, "max_depth": 8, "seed": 83, "denoise": false},
   "textures": [],
   "materials": [
-    {"name": "water", "type": "water", "ior": 1.333, "absorption": [0.70, 0.20, 0.05]},
+    {"name": "water", "type": "water", "roughness": 0.12, "ior": 1.333, "absorption": [0.70, 0.20, 0.05]},
     {"name": "receiver", "type": "lambertian", "base_color": [0.74, 0.74, 0.74]},
     {"name": "dark", "type": "lambertian", "base_color": [0.018, 0.020, 0.024]},
     {"name": "immersed_glass", "type": "dielectric", "base_color": [0.98, 0.99, 1.0], "ior": 1.52},

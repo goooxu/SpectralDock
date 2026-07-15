@@ -36,6 +36,7 @@ REQUIRED_OPTIX_FLOW_SNIPPETS = {
     "optix-state-teardown",
     "optix-two-dimensional-launch",
     "output-denoiser-guide-wiring",
+    "output-linear-pfm",
     "output-postprocess-kernel",
     "shadow-ray-visibility-query",
 }
@@ -77,14 +78,23 @@ REQUIRED_VOLUME_SNIPPETS = {
     "volume-three-octave-fbm",
 }
 REQUIRED_WATER_SNIPPETS = {
+    "rough-dielectric-btdf-jacobian",
+    "rough-dielectric-vndf-pdf",
+    "rough-water-reflection-oversampling",
     "water-analytic-height-gradient",
     "water-beer-segment",
+    "water-bounded-split-state",
+    "water-bounded-split-weights",
+    "water-direct-single-event",
     "water-double-root-refinement",
     "water-exact-fresnel",
+    "water-finite-emitter-balance-path",
+    "water-geometric-side-consistency",
     "water-host-safety-gate",
     "water-medium-stack-update",
+    "water-signed-direct-offset",
     "water-solid-sphere-intersection",
-    "water-straight-shadow-boundaries",
+    "water-three-technique-balance",
 }
 REQUIRED_ENVIRONMENT_SNIPPETS = {
     "environment-direction-to-uv",
@@ -92,7 +102,11 @@ REQUIRED_ENVIRONMENT_SNIPPETS = {
     "environment-miss-mis",
     "environment-texel-solid-angle",
     "finite-flame-selection-pdf",
+    "finite-light-vertex-mode",
     "finite-light-power-mixture",
+    "finite-light-water-balance-density",
+    "finite-light-water-sphere-sampling",
+    "finite-light-water-two-sample",
     "hdr-rgbe-linear-decode",
     "sampling-realized-float-probabilities",
 }
@@ -275,7 +289,10 @@ def test_technical_report_source_snippets_match_the_repository():
         "不透明池壁",
         "背面剔除",
         "正退出根",
-        "2048 spp",
+        "roughness: 0.12",
+        "512 spp",
+        "MNEE",
+        "PFM",
     ):
         assert boundary in water_chapter
 

@@ -1,6 +1,6 @@
 # RTX 5090 单机运行记录
 
-以下数据是同一台 NVIDIA GeForce RTX 5090（CC 12.0）上的可复查运行记录，不是跨 GPU 基准，也不用于给出性能承诺。全部场景使用 driver 615.36、CUDA Driver API 13040、CUDA runtime 13030、OptiX 90100 和 `importance` 直接光采样。六个常规表面场景以 1920×1080、512 spp、depth 12 和 AI denoise 渲染；Ember Forge 固定为 2048 spp、depth 12、无降噪，Moonlit Stepwell 固定为 2048 spp、depth 16、无降噪。由于场景、采样数和算法工作量不同，各行适合解释阶段耗时、显存与计数器，不构成受控的横向性能比较。原始数据来自 `docs/gallery/*.stats.json`。
+以下数据是同一台 NVIDIA GeForce RTX 5090（CC 12.0）上的可复查运行记录，不是跨 GPU 基准，也不用于给出性能承诺。全部场景使用 driver 615.36、CUDA Driver API 13040、CUDA runtime 13030、OptiX 90100 和 `importance` 直接光采样。除 Ember Forge 外，七个内置场景以 1920×1080、512 spp、depth 12 和 AI denoise 渲染；Ember Forge 固定为 2048 spp、depth 12、无降噪。由于场景、采样数和算法工作量不同，各行适合解释阶段耗时、显存与计数器，不构成受控的横向性能比较。原始数据来自 `docs/gallery/*.stats.json`。
 
 ## 内置场景记录
 
@@ -12,7 +12,7 @@
 | reflector-laboratory | 3.595 | 848.571 | 13.380 | 4,649.451 | 2,858,115,041 | 3.368 | 1,774.3 | 494.3 |
 | benchmark-harbor | 240.535 | 362.303 | 14.979 | 4,431.763 | 1,582,396,661 | 4.368 | 1,776.3 | 496.2 |
 | ember-forge | 18.021 | 15,751.946 | 0.000 | 19,655.473 | 23,399,632,667 | 1.486 | 1,468.3 | 190.6 |
-| moonlit-stepwell | 10.468 | 16,414.631 | 0.000 | 20,277.932 | 16,591,435,204 | 1.011 | 1,516.3 | 238.0 |
+| moonlit-stepwell | 10.642 | 6,159.013 | 12.158 | 10,571.269 | 4,226,251,047 | 0.686 | 1,902.3 | 621.0 |
 | radiance-pavilion | 8.307 | 762.571 | 12.128 | 4,737.143 | 2,407,120,944 | 3.157 | 1,816.3 | 534.4 |
 
 `Path trace` 对应统计 JSON 的 `timings_ms.render`，只计一次 `optixLaunch`。`Total` 在 `render_optix()` 完成参数与像素数检查后开始，到返回前结束，包含 CUDA/OptiX 初始化、纹理解码与上传、BVH、追踪、可选降噪、后处理、设备到主机回传和设备信息查询；不含此前的场景/OBJ 解析、之后的 PNG/stats 写盘及函数局部 RAII 资源析构，因此不等于前三项简单相加。显存按 1 MiB = 1,048,576 bytes 换算。
@@ -33,7 +33,9 @@
 Harbor 的 16 个胶囊吉祥物共享一份 mascot GAS，另有 1,024 个 sphere GAS；`mesh_triangles` 不按实例数重复计数。
 Ember Forge 的三段 flame 不注册为几何，因此不增加 object、instance、GAS 或 SBT 数量；87 个几何对象来自砖砌锻炉、烟罩、铁砧、胶囊铁匠与锤子、工具墙、风箱、淬火桶、钢材和工坊结构。其密度求值、真实碰撞和体积选灯次数由独立 volume stats 记录。该场景的正式运行执行 26,880,900,322 次密度求值、719,613,737 次真实体积碰撞和 15,188,592,750 次 flame NEE 选灯；majorant violation 与 tracking overflow 均为 0。场景使用纯黑 constant background，不含 emitter、面积灯或隐藏补光，全部可见照明只来自三段 flame。体积求值是 raygen 中的纯 CUDA 工作，不计入 `traced_rays`，所以该场景的 rays/s 不应与纯表面场景直接比较。
 
-Moonlit Stepwell 的 water_surface 注册为一个共享波面参数的 custom-primitive GAS；最短波长决定 tile 数和 GAS primitive 数，但不把解析曲面三角化。本次正式运行记录 60,926,005,748 次 height evaluation、6,291,528,775 次 tile test、1,582,598,299 个 reported root、448,068,253 次 shadow transmission 和 2,127,949,731 个 medium segment，solver overflow、medium error 与 shadow-boundary overflow 均为 0。其路径追踪耗时和 rays/s 因包含 OptiX 自定义 intersection 中的 CUDA 数值求根、介质栈与 Beer 计算，不应直接与纯表面场景比较。
+Moonlit Stepwell 的 water_surface 注册为一个共享波面参数的 custom-primitive GAS；最短波长决定 tile 数和 GAS primitive 数，但不把解析曲面三角化。本次正式运行记录 13,179,520,982 次 height evaluation、1,704,266,814 次 tile test、276,339,417 个 reported root、238,141,315 个 medium segment、398,546,826 次粗糙水面 NEE 尝试和 233,686,645 份非零直接光贡献；delta split、solver overflow 与 medium error 均为 0。它在每个粗糙水面顶点各取一个功率选灯样本和均匀索引样本，并与 BSDF emitter-hit 使用三技术 balance；球外单面 sphere 灯还按可见立体角取样。其路径追踪耗时和 rays/s 因包含 OptiX 自定义 intersection 中的 CUDA 数值求根、额外 shadow connection、介质栈与 Beer 计算，不应直接与纯表面场景比较。正式 PNG 启用 Denoiser；下面的线性误差对照显式关闭降噪。
+
+维护级 Moonlit time-to-error 在 320×180 上使用一份独立 seed 的 8192 spp 粗糙 NEE PFM 作为参考，并对三个候选 seed 求平均。NEE 1024 spp 与仅删除显式灯绑定、保留 emitter 几何的 BSDF-only 2048 spp 平均 path-trace 时间分别为 2,444.827 ms 与 2,687.225 ms；反射 ROI 的归一化 MSE 分别为 0.00894643 与 0.00942178，水下 ROI 为 0.138436 与 0.200359。它说明本机同次运行中的 time-to-error 改善，不是跨 GPU 性能门槛。
 
 Radiance Pavilion 不放置有限面积灯或 emissive 几何，唯一照明来自 2048×1024 Radiance RGBE 日落海岸环境贴图。中央 mascot 与陶土风向标、青铜日晷、铬制抛物面日光镜和玻璃双透镜观测仪这四件户外观测装置同时展示漫反射、粗糙金属、光滑金属和介电材质，用于观察环境亮区的重要性采样、镜面反射与折射；HDR 纹理和两级 CDF 的设备内存计入显存统计。
 
@@ -71,7 +73,7 @@ HDR 环境 fixture 检查 RGBE 加载、固定 seed 确定性、强度缩放、y
 
 flame fixture 额外检查固定 seed RGBA 确定性、外部漫反射面的体积 NEE、表面遮挡、面积光穿过体积后的吸收、介电 delta 路径以及 volume counters；同一 fixture 进入三种 Compute Sanitizer 检查。它不建立跨 GPU 像素 golden，也不设置自动性能阈值。
 
-water fixture 检查固定 seed、解析波面、镜面反射、折射位移、深浅路径的 RGB Beer 吸收、浸没玻璃 sphere 的介质栈、水上灯跨界照亮水下漫反射面、不透明遮挡和 water counters；同一 fixture 进入三种 Compute Sanitizer 检查。tile seam 还在 Moonlit Stepwell 预览中人工检查；它不建立跨 GPU 像素 golden 或自动性能阈值。
+water fixture 检查固定 seed、解析波面、粗糙/光滑反射与折射、GGX 介电两侧语义、三技术 NEE/MIS、可见球锥、深浅路径的 RGB Beer 吸收、浸没玻璃 sphere 的介质栈、透明边界阻断、不透明遮挡和 water counters；同一 fixture 进入三种 Compute Sanitizer 检查。tile seam 还在 Moonlit Stepwell 预览中人工检查；它不建立跨 GPU 像素 golden。耗时较高的同模型 time-to-error 脚本只供维护者手工运行，不进入默认 acceptance。
 
 PNG、stats 和本页耗时表作为图形学实验的一次运行记录保留，不属于自动 golden 或性能回归门禁。
 

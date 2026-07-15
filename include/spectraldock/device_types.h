@@ -183,12 +183,17 @@ struct WaterCounters {
   unsigned long long height_evaluations = 0;
   unsigned long long tile_tests = 0;
   unsigned long long roots_reported = 0;
-  unsigned long long shadow_transmissions = 0;
   unsigned long long medium_segments = 0;
   unsigned long long solver_overflows = 0;
   unsigned long long medium_errors = 0;
-  unsigned long long shadow_boundary_overflows = 0;
+  std::uint32_t rough_nee_attempts = 0;
+  std::uint32_t rough_nee_contributions = 0;
+  std::uint32_t delta_splits = 0;
+  std::uint32_t reserved = 0;
 };
+
+static_assert(sizeof(WaterCounters) == 64,
+              "WaterCounters is part of the host/device launch ABI");
 
 // Camera basis uses w pointing backwards (look-from minus look-at), with u to
 // the right and v up. tan_half_fov is the vertical half-angle tangent.

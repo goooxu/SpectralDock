@@ -270,5 +270,11 @@ void write_png_rgba8(const std::filesystem::path& path,
                      std::uint32_t width,
                      std::uint32_t height,
                      const std::vector<std::uint8_t>& pixels);
+// Writes linear RGB samples as a portable little-endian PFM image. Input rows
+// are top-to-bottom; PFM stores them bottom-to-top.
+void write_pfm_rgb32f(const std::filesystem::path& path,
+                      std::uint32_t width,
+                      std::uint32_t height,
+                      const std::vector<float>& pixels);
 
 }  // namespace spectraldock

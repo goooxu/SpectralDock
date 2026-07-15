@@ -1,6 +1,6 @@
 # 03　材质与 BSDF：表面怎样改变光
 
-渲染方程中的 $f_s$ 决定光到达表面后去向哪里。本章依次解释 SpectralDock 的四类材质：Lambert 漫反射、GGX 金属、光滑介电质和发光表面。
+渲染方程中的 $f_s$ 决定光到达表面后去向哪里。本章依次解释 SpectralDock 的四类材质：Lambert 漫反射、GGX 金属、光滑/粗糙介电质和发光表面。
 
 ## 1. BSDF 是方向之间的“路由规则”
 
@@ -18,7 +18,7 @@ $$
 
 ![Lambert、两种粗糙度的 GGX 和介电质散射方向](figures/material-scattering.svg)
 
-*图 3：黄色箭头是入射方向，青色箭头是可能的出射方向，轮廓表示 BSDF 的相对集中程度。介电质的反射和折射是离散 delta 方向。*
+*图 3：黄色箭头是入射方向，青色箭头是可能的出射方向，轮廓表示 BSDF 的相对集中程度。图中的介电箭头画的是 `roughness = 0` 的离散 delta 情形；非零粗糙度会把反射与折射都展开成连续 GGX 瓣。*
 
 ## 2. Lambert 漫反射
 
@@ -177,23 +177,25 @@ $$
 
 <!-- source-snippet id="ggx-brdf-direction-pdf" path="src/device_programs.cu" anchor="half_vector" -->
 ```cpp
-  const float3 half_vector = normalize3(add(wo, wi));
-  const float no_h = fmaxf(dot3(n, half_vector), 0.0f);
-  const float vo_h = fmaxf(dot3(wo, half_vector), 0.0f);
-  if (no_h <= 0.0f || vo_h <= 0.0f) {
+    const float3 half_vector = normalize3(add(wo, wi));
+    const float no_h = fmaxf(dot3(n, half_vector), 0.0f);
+    const float vo_h = fmaxf(dot3(wo, half_vector), 0.0f);
+    if (no_h <= 0.0f || vo_h <= 0.0f) {
+      return;
+    }
+    const float alpha =
+        fmaxf(material.roughness * material.roughness, 0.001f);
+    const float d = ggx_distribution(no_h, alpha);
+    const float g = ggx_g1(no_v, alpha) * ggx_g1(no_l, alpha);
+    const float3 dielectric_f0 = f3(0.04f, 0.04f, 0.04f);
+    const float3 f0 =
+        lerp3(dielectric_f0, base_color,
+              fminf(fmaxf(material.metallic, 0.0f), 1.0f));
+    const float3 fresnel = fresnel_schlick(vo_h, f0);
+    value = mul(fresnel, d * g / fmaxf(4.0f * no_v * no_l, 1.0e-20f));
+    pdf = d * no_h / fmaxf(4.0f * vo_h, 1.0e-20f);
     return;
   }
-  const float alpha =
-      fmaxf(material.roughness * material.roughness, 0.001f);
-  const float d = ggx_distribution(no_h, alpha);
-  const float g = ggx_g1(no_v, alpha) * ggx_g1(no_l, alpha);
-  const float3 dielectric_f0 = f3(0.04f, 0.04f, 0.04f);
-  const float3 f0 =
-      lerp3(dielectric_f0, base_color,
-            fminf(fmaxf(material.metallic, 0.0f), 1.0f));
-  const float3 fresnel = fresnel_schlick(vo_h, f0);
-  value = mul(fresnel, d * g / fmaxf(4.0f * no_v * no_l, 1.0e-20f));
-  pdf = d * no_h / fmaxf(4.0f * vo_h, 1.0e-20f);
 ```
 
 `wo`、`wi`、`n` 分别对应 $\boldsymbol\omega_o$、$\boldsymbol\omega_i$、$\mathbf n$，而 `no_v`、`no_l` 是 BRDF 分母中的两个余弦。`value` 实现 $\mathbf F D G/(4n_on_i)$，`pdf` 实现 $D(\mathbf h)(\mathbf n\cdot\mathbf h)/(4|\boldsymbol\omega_o\cdot\mathbf h|)$；在已通过正半球检查的分支中 `vo_h` 为正，因而无需再次取绝对值。粗糙度下限与极小分母共同保护近 delta 情况下的数值稳定性。
@@ -210,11 +212,11 @@ $$
 
 这不是可见法线分布采样（VNDF）。在掠射角，普通 NDF 采样更可能生成被拒绝的方向，结果仍能正确估计当前模型，但方差可能更高。
 
-## 4. 光滑介电质：反射还是折射
+## 4. 介电质：从 delta 界面到粗糙微表面
 
 玻璃、水和空气这类非导体常由折射率 $\eta$ 描述。光从介质 $i$ 进入介质 $t$ 时满足 Snell 定律：
 
-实现有两条明确分支：无 `water_surface` 的兼容路径保留原有的空气外部介质与 Schlick 近似，以维持既有随机数序列和 golden；含水路径维护介质栈，并使用非偏振介电 Fresnel 精确式。后者的推导和源码见[第 12 章](12-runtime-analytic-water.md#3-精确光滑介电-fresnel-与-snell)。本节下面的 Schlick 公式与源码摘录专指无水兼容路径。
+`roughness = 0` 时界面是离散反射/折射；非零时，宏观法线之上存在 GGX 微表面法线分布。无 `water_surface` 的光滑兼容路径仍保留原有的空气外部介质与 Schlick 近似，以维持既有随机数序列和 golden；含水光滑路径以及全部粗糙介电路径使用非偏振精确 Fresnel。含水介质栈与有界首水面分裂见[第 12 章](12-runtime-analytic-water.md)。
 
 $$
 \eta_i\sin\theta_i=\eta_t\sin\theta_t.
@@ -240,13 +242,132 @@ $$
 \left(\frac{\eta_i}{\eta_t}\right)^2\sin^2\theta_i>1,
 $$
 
-折射方向不存在，发生全反射。否则无水兼容路径以概率 $R$ 选择反射，以概率 $1-R$ 选择折射。含水路径用精确 Fresnel 得到相同含义的分支概率。两者的分支概率都抵消对应 Fresnel 系数，所以路径权重不再显式乘 $R$ 或 $1-R$。折射分支额外乘
+折射方向不存在，发生全反射。否则无水光滑兼容路径以概率 $R$ 选择反射，以概率 $1-R$ 选择折射；含水的光滑随机分支用精确 Fresnel 得到相同含义的概率。对这些光滑事件，分支概率抵消对应 Fresnel 系数，所以路径权重不再显式乘 $R$ 或 $1-R$。折射分支额外乘
 
 $$
 \left(\frac{\eta_i}{\eta_t}\right)^2,
 $$
 
 这是辐亮度传输穿过折射界面时的测度变换。进入较高折射率介质时它小于 1，离开时大于 1；理想的一进一出会互相抵消。
+
+### 4.1 粗糙介电反射与透射
+
+对非零 `roughness`，仍取
+
+$$
+\alpha=\max(\mathrm{roughness}^2,0.001),
+$$
+
+但它不再表示“几乎 delta”的替代物，而是明确的连续 GGX 分布。反射半程向量仍为
+
+$$
+\mathbf h_r=\mathrm{normalize}(\boldsymbol\omega_o+\boldsymbol\omega_i).
+$$
+
+透射两方向位于宏观法线两侧。令 $\eta_p=\eta_t/\eta_i$，Walter 等人的方向约定给出
+
+$$
+\mathbf h_t=\mathrm{normalize}
+(\boldsymbol\omega_o+\eta_p\boldsymbol\omega_i),
+$$
+
+并把 $\mathbf h_t$ 翻到宏观法线同侧。记
+$n_o=|\mathbf n\cdot\boldsymbol\omega_o|$、
+$n_i=|\mathbf n\cdot\boldsymbol\omega_i|$、
+$o_h=\boldsymbol\omega_o\cdot\mathbf h$、
+$i_h=\boldsymbol\omega_i\cdot\mathbf h$。反射 BRDF 与透射 BTDF 为
+
+$$
+f_r=\frac{F D G}{4n_o n_i},
+$$
+
+$$
+f_t=(1-F)DG\,
+\frac{|i_h o_h|}
+{n_o n_i(o_h+\eta_p i_h)^2}.
+$$
+
+$F$ 是用 $o_h$ 和界面两侧 IOR 求得的精确非偏振 Fresnel；$G=G_1(n_o)G_1(n_i)$。若微表面方向发生全反射，$F=1$，透射瓣和透射选择概率同时归零。`base_color` 最后逐通道乘到 $f_r$ 或 $f_t$。
+
+微表面法线不是按完整 NDF，而是按 Heitz 的各向同性 GGX 可见法线分布（VNDF）抽样。给定观察方向，其半程向量 PDF 为
+
+$$
+p_h(\mathbf h)=
+\frac{D(\mathbf h)G_1(n_o)|o_h|}{n_o}.
+$$
+
+设 $s_R$ 是在抽到微表面法线后选反射分支的采样概率，$s_T=1-s_R$。普通粗糙 dielectric 保持 $s_R=F$。对粗糙 water，当 $F<1$ 时改用
+
+$$
+s_R=\max(F,0.5),
+$$
+
+全反射 $F=1$ 时仍令 $s_R=1$。这会在垂直入射附近过采样感知上很重要、但 Fresnel 概率很小的水面反射。物理 BSDF 中仍是精确的 $F$ 和 $1-F$；只有抽样 PDF 使用 $s_R,s_T$，因此不改变收敛目标。反射与透射方向 PDF 分别是
+
+$$
+p_r(\boldsymbol\omega_i)=
+s_R\,\frac{p_h(\mathbf h_r)}{4|o_h|},
+$$
+
+$$
+p_t(\boldsymbol\omega_i)=
+s_T\,p_h(\mathbf h_t)
+\left|\frac{\eta_p^2 i_h}
+{(o_h+\eta_p i_h)^2}\right|.
+$$
+
+最后一项是从半程向量到透射方向的 Jacobian。路径权重仍统一计算为 $f_s n_i/p_B$；因此水面反射样本自动含 $F/s_R$，透射样本含 $(1-F)/s_T$。另外，$p_t$ 的 Jacobian 含 $\eta_p^2$，相除后自然得到辐亮度传输所需的 $(\eta_i/\eta_t)^2$，无需再手工乘第二次。`evaluate_bsdf` 在 NEE/MIS 中返回同一个 $s_R,s_T$ PDF，使灯光采样与 BSDF 采样保持同一测度。
+
+<!-- source-snippet id="rough-water-reflection-oversampling" path="src/device_programs.cu" anchor="rough_reflection_probability" -->
+```cpp
+static __forceinline__ __device__ float rough_reflection_probability(
+    const MaterialData& material, float fresnel) {
+  // Moonlit water is reflection-dominated perceptually even when Fresnel is
+  // small. Oversample that branch, while evaluate_bsdf keeps the exact F in
+  // the BSDF value and uses this same probability only in the direction PDF.
+  if (fresnel >= 1.0f) return 1.0f;
+  return material.type == spectraldock::kMaterialWater
+      ? fmaxf(fresnel, 0.5f)
+      : fresnel;
+}
+```
+
+<!-- source-snippet id="rough-dielectric-btdf-jacobian" path="src/device_programs.cu" anchor="const float jacobian =" -->
+```cpp
+  const float denominator = wo_h + eta_path * wi_h;
+  const float denominator2 = denominator * denominator;
+  if (!(denominator2 > 1.0e-20f)) return;
+  // Radiance transport carries the eta_i^2/eta_t^2 factor. It appears in the
+  // sample weight through the solid-angle Jacobian below, matching the delta
+  // transmission convention used by this renderer.
+  value = mul(base_color,
+              (1.0f - fresnel) * d * g * fabsf(wi_h * wo_h) /
+                  fmaxf(no_v * fabsf(no_l) * denominator2, 1.0e-20f));
+  const float jacobian =
+      fabsf(eta_path * eta_path * wi_h / denominator2);
+  pdf = (1.0f - reflection_probability) * half_pdf * jacobian;
+```
+
+`eta_path` 就是 $\eta_p$，`denominator` 是 $o_h+\eta_p i_h$；`value` 仍使用物理的 $1-F$，`pdf` 则使用实际分支概率 $s_T=1-s_R$。实现保留绝对值和极小分母保护，避免掠射或接近退化半程向量时产生负 PDF、除零或非有限数。
+
+<!-- source-snippet id="rough-dielectric-vndf-pdf" path="src/device_programs.cu" anchor="ggx_visible_normal_pdf" -->
+```cpp
+static __forceinline__ __device__ float ggx_visible_normal_pdf(
+    float3 n, float3 wo, float3 half_vector, float alpha) {
+  const float no_v = fmaxf(dot3(n, wo), 0.0f);
+  const float no_h = fmaxf(dot3(n, half_vector), 0.0f);
+  const float vo_h = fmaxf(dot3(wo, half_vector), 0.0f);
+  if (!(no_v > 0.0f) || !(no_h > 0.0f) || !(vo_h > 0.0f)) {
+    return 0.0f;
+  }
+  return ggx_distribution(no_h, alpha) * ggx_g1(no_v, alpha) * vo_h /
+         no_v;
+}
+```
+
+这段 PDF 与采样器使用同一可见法线测度。`sample_ggx_vndf` 先把观察方向按 $\alpha$ 拉伸，在投影圆盘上取样并混合地平线区域，再反拉伸回宏观法线坐标；这样显著减少掠射角生成不可见微表面的拒绝。当网格插值着色法线与真实几何法线不同时，着色法线只塑造 GGX 波瓣；反射/透射的物理介质侧别和射线起点偏移由定向几何法线决定，两种法线对样本的侧别不一致时拒绝该样本，防止错误修改介质栈。对应实现见[第 12 章第 6 节](12-runtime-analytic-water.md#6-粗糙水面的-nee只连接当前散射事件)。当前 GGX metal 仍用普通 NDF 抽样，VNDF 改进只应用于粗糙介电反射/透射。
+
+### 4.2 光滑兼容分支
 
 ### 源码对照：无水兼容分支的离散反射与折射
 
@@ -284,10 +405,11 @@ $$
 
 ### 当前介电质边界
 
-- 所有分支的界面都完全光滑，没有粗糙玻璃或色散；
+- `dielectric` 省略 `roughness` 时默认为 0，`metal` 的省略默认仍是 0.5；只有严格正粗糙度进入连续 GGX 介电模型；
+- 不模拟光谱色散、偏振、薄膜或多重微表面散射；粗糙介电模型是单次散射 Walter GGX；
 - 无 `water_surface` 的兼容路径把外部介质固定为空气，不维护嵌套介质栈，也没有 Beer–Lambert 距离吸收；
 - 含水路径维护最多四层严格 LIFO 介质栈，用 RGB Beer 吸收处理水段，并只允许普通 dielectric 绑定闭合 sphere，详见[第 12 章第 4、5 节](12-runtime-analytic-water.md#4-介质栈与严格嵌套)；
-- `base_color` 会乘到每次介电散射事件（反射或折射），透射还会另乘 $(\eta_i/\eta_t)^2$；它是界面着色，不等同于含水路径按传播距离累计的吸收。
+- `base_color` 会乘到每次介电散射事件（反射或折射），透射权重还包含 $(\eta_i/\eta_t)^2$；它是界面着色，不等同于含水路径按传播距离累计的吸收。
 
 ## 5. 发光材质
 
@@ -307,9 +429,9 @@ $$
 
 主要实现都位于 [`src/device_programs.cu`](../../src/device_programs.cu)：
 
-- `evaluate_bsdf`：计算 Lambert/GGX 的 BSDF 值和连续方向 PDF；
+- `evaluate_bsdf`：计算 Lambert、GGX metal 和粗糙介电反射/透射的 BSDF 值与连续方向 PDF；
 - `sample_bsdf`：生成 Lambert、GGX 或介电质方向及路径权重；
-- `ggx_distribution`、`ggx_g1`、`fresnel_schlick`：微表面公式。
+- `ggx_distribution`、`ggx_g1`、`sample_ggx_vndf`、`dielectric_fresnel`：微表面分布、可见法线采样和精确介电 Fresnel。
 
 场景解析只要求 `base_color` 非负，没有强制每个通道不超过 1。物理上要保持被动表面能量守恒，场景作者仍应让普通反射率处于合理范围。大于 1 的 `emission` 则很常见，因为 HDR 光源本来就需要比显示白色更亮。
 

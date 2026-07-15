@@ -27,6 +27,7 @@ using spectraldock::RenderSettings;
 struct Cli {
   std::filesystem::path scene;
   std::filesystem::path output;
+  std::optional<std::filesystem::path> linear_output;
   std::optional<std::uint32_t> width;
   std::optional<std::uint32_t> height;
   std::optional<std::uint32_t> spp;
@@ -44,6 +45,7 @@ struct Cli {
 void print_usage(std::ostream& out) {
   out << "Usage:\n"
       << "  spectraldock --scene SCENE.json --output OUTPUT.png"
+         " [--linear-output LINEAR.pfm]"
          " [--width N] [--height N] [--spp N] [--max-depth N]"
          " [--seed N] [--exposure EV] [--denoise|--no-denoise]\n\n"
       << "CLI values override scene render defaults. Rendering is deterministic"
@@ -90,6 +92,8 @@ Cli parse_cli(int argc, char** argv) {
       cli.scene = next(i, "--scene");
     } else if (arg == "--output") {
       cli.output = next(i, "--output");
+    } else if (arg == "--linear-output") {
+      cli.linear_output = next(i, "--linear-output");
     } else if (arg == "--width") {
       cli.width = parse_u32(next(i, "--width"), "--width");
     } else if (arg == "--height") {
@@ -129,8 +133,10 @@ std::filesystem::path stats_path_for(std::filesystem::path output) {
 
 nlohmann::ordered_json stats_json(const spectraldock::RenderStats& s,
                                   const std::filesystem::path& scene,
-                                  const std::filesystem::path& output) {
-  return {
+                                  const std::filesystem::path& output,
+                                  const std::optional<std::filesystem::path>&
+                                      linear_output) {
+  nlohmann::ordered_json result = {
       {"scene", scene.string()},
       {"output", output.string()},
       {"hardware",
@@ -176,12 +182,16 @@ nlohmann::ordered_json stats_json(const spectraldock::RenderStats& s,
        {{"water_height_evaluations", s.water_height_evaluations},
         {"water_tile_tests", s.water_tile_tests},
         {"water_roots_reported", s.water_roots_reported},
-        {"water_shadow_transmissions", s.water_shadow_transmissions},
         {"water_medium_segments", s.water_medium_segments},
         {"water_solver_overflows", s.water_solver_overflows},
         {"water_medium_errors", s.water_medium_errors},
-        {"water_shadow_boundary_overflows",
-         s.water_shadow_boundary_overflows}}}};
+        {"water_rough_nee_attempts", s.water_rough_nee_attempts},
+        {"water_rough_nee_contributions",
+         s.water_rough_nee_contributions},
+        {"water_delta_splits", s.water_delta_splits}}}};
+  if (linear_output.has_value())
+    result["linear_output"] = linear_output->string();
+  return result;
 }
 
 }  // namespace
@@ -207,30 +217,50 @@ int main(int argc, char** argv) {
     settings.exposure = cli.exposure.value_or(scene.background.exposure);
     settings.denoise = cli.denoise.value_or(scene.render.denoise);
     settings.validation = SPECTRALDOCK_ENABLE_VALIDATION_DEFAULT != 0;
+    settings.capture_linear = cli.linear_output.has_value();
 
     if (cli.output.extension() != ".png") {
       throw std::runtime_error("output must use the .png extension");
     }
+    if (cli.linear_output.has_value() &&
+        cli.linear_output->extension() != ".pfm") {
+      throw std::runtime_error("linear output must use the .pfm extension");
+    }
     if (!cli.output.parent_path().empty()) {
       std::filesystem::create_directories(cli.output.parent_path());
+    }
+    if (cli.linear_output.has_value() &&
+        !cli.linear_output->parent_path().empty()) {
+      std::filesystem::create_directories(
+          cli.linear_output->parent_path());
     }
 
     const spectraldock::RenderResult result = spectraldock::render_optix(scene, settings);
     spectraldock::write_png_rgba8(cli.output, result.width, result.height, result.rgba);
+    if (cli.linear_output.has_value()) {
+      spectraldock::write_pfm_rgb32f(
+          *cli.linear_output, result.width, result.height, result.linear_rgb);
+    }
 
     const auto stats_path = stats_path_for(cli.output);
     std::ofstream stats_stream(stats_path);
     if (!stats_stream) {
       throw std::runtime_error("cannot open stats file for writing: " + stats_path.string());
     }
-    stats_stream << std::setw(2) << stats_json(result.stats, cli.scene, cli.output) << '\n';
+    stats_stream << std::setw(2)
+                 << stats_json(result.stats, cli.scene, cli.output,
+                               cli.linear_output)
+                 << '\n';
 
     std::cout << "rendered " << result.width << 'x' << result.height
               << ", " << result.stats.spp << " spp in "
               << std::fixed << std::setprecision(3) << result.stats.render_ms << " ms"
               << " (" << std::setprecision(3) << result.stats.rays_per_second / 1.0e6
               << " Mrays/s)\n"
-              << "image: " << cli.output << "\nstats: " << stats_path << '\n';
+              << "image: " << cli.output << '\n';
+    if (cli.linear_output.has_value())
+      std::cout << "linear image: " << *cli.linear_output << '\n';
+    std::cout << "stats: " << stats_path << '\n';
     return 0;
   } catch (const std::invalid_argument& error) {
     std::cerr << "error: " << error.what() << '\n';

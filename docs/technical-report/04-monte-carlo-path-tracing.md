@@ -63,14 +63,15 @@ f_s(\boldsymbol\omega_i,\boldsymbol\omega_o)
 }{p_B(\boldsymbol\omega_i)}.
 $$
 
-对连续的 Lambert/GGX 分支，`sample_bsdf` 返回的 `weight` 正是这个分式。介电质是 delta 离散事件，不能用普通有限 BSDF 除以连续方向 PDF；其等价事件权重由反射/折射分支概率、`base_color` 和透射时的 $(\eta_i/\eta_t)^2$ 构成。$\boldsymbol\beta$ 记录路径到当前位置的整体权重；它不是剩余光子数量，也不是概率，所以经过 PDF 或俄罗斯轮盘补偿后可以大于 1。
+对连续的 Lambert/GGX 分支——包括非零粗糙度的 dielectric 与 water——`sample_bsdf` 返回的 `weight` 正是这个分式。只有 `roughness = 0` 的 dielectric/water 是 delta 离散事件，不能用普通有限 BSDF 除以连续方向 PDF；其等价事件权重由反射/折射分支概率、`base_color` 和透射时的 $(\eta_i/\eta_t)^2$ 构成。$\boldsymbol\beta$ 记录路径到当前位置的整体权重；它不是剩余光子数量，也不是概率，所以经过 PDF 或俄罗斯轮盘补偿后可以大于 1。
 
-下面是公式在路径循环中的落点：`scatter.weight` 对应分式，`throughput` 对应 $\boldsymbol\beta$。非负截断只消除浮点或实现错误产生的负分量；若三通道均为零，路径不可能再产生贡献。局部方向 PDF 和是否为 delta 事件则留给下一顶点的 MIS 使用。
+下面是公式在路径循环中的落点：`scatter.weight` 对应分式，`throughput` 对应 $\boldsymbol\beta$。非负截断只消除浮点或实现错误产生的负分量；若三通道均为零，路径不可能再产生贡献。局部方向 PDF、是否为 delta 事件以及当前顶点的有限选灯模式则留给下一顶点的 MIS 使用。
 
 <!-- source-snippet id="path-throughput-update" path="src/device_programs.cu" anchor="throughput = clamp_nonnegative" -->
 ```cpp
       const BsdfSample scatter =
-          sample_bsdf(material, base_color, hit.normal, wo,
+          sample_bsdf(material, base_color, hit.normal,
+                      hit.geometric_normal, wo,
                       hit.front_face, hit.material_index, rng,
                       params.water_surface_count != 0u ? &media : nullptr,
                       water_counters);
@@ -83,6 +84,7 @@ $$
       }
       previous_pdf = scatter.pdf;
       previous_delta = scatter.delta;
+      previous_light_mode = current_light_mode;
 ```
 
 若路径未命中并到达背景，累积

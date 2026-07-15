@@ -280,8 +280,8 @@ static __forceinline__ __device__ SurfaceHit trace_radiance(
 raygen
   ├─ optixTrace(radiance) → SurfaceHit 或 miss
   ├─ 评估背景/发光、BSDF 与 NEE/MIS
-  ├─ 无水：可能 optixTrace(shadow) → 可见性布尔值
-  ├─ 含水：可能重复 optixTrace(radiance) → 透明边界透射率
+  ├─ 可能 optixTrace(shadow) → 可见性布尔值
+  ├─ 粗糙介电透射 NEE：在栈副本中更新当前边界并计算 Beer 段
   ├─ 更新 radiance、throughput、PDF 与俄罗斯轮盘
   └─ 改写 ray origin/direction，进入下一次 bounce
 ~~~
@@ -290,13 +290,13 @@ raygen
 
 payload 0 和 1 合并为 `SurfaceHit*`。miss 不填写命中数据，closest-hit 通过该指针写入结果；`optixTrace` 返回后，raygen 像读取普通查询结果一样消费它。
 
-### 9.2 Shadow payload 与含水例外
+### 9.2 Shadow payload 与透明边界语义
 
-无 `water_surface` 时，shadow payload 0 初始为 0：若一路未命中，miss 写 1；遇到有效遮挡则用 `OPTIX_RAY_FLAG_TERMINATE_ON_FIRST_HIT` 终止并保留 0。payload 1 保存目标灯索引，使 any-hit 忽略终点处那盏灯自己的几何。这个二值 shadow 查询禁用 closest-hit，只需要遍历、intersection/内建求交、any-hit 和 miss。
+shadow payload 0 初始为 0：若一路未命中，miss 写 1；遇到有效遮挡则用 `OPTIX_RAY_FLAG_TERMINATE_ON_FIRST_HIT` 终止并保留 0。payload 1 保存目标灯索引，使 any-hit 忽略终点处那盏灯自己的几何。这个二值 shadow 查询禁用 closest-hit，只需要遍历、intersection/内建求交、any-hit 和 miss。
 
-含水场景必须取得每个透明边界的距离、法线和材质，不能使用上述布尔 payload。因此 `trace_water_transmittance` 沿到灯的直线反复调用带有限 `maximum_distance` 的 radiance 查询，逐段乘 Beer 吸收与 $1-F$，普通不透明命中仍返回零。它最多处理八个透明边界，但不按 Snell 弯折 shadow 连接；数学、介质栈与焦散限制见[第 12 章第 6 节](12-runtime-analytic-water.md#6-跨水面直接光的工程近似)。
+含水场景也使用同一个二值查询。粗糙介电 NEE 若连接当前界面的透射侧，raygen 在发射 shadow 前把 origin 移到正确一侧，并在 `MediumState` 副本中切换这**一次**边界；shadow 段可见后再按副本顶层介质计算 Beer。连接线上若遇到下一层水或玻璃，any-hit 会像处理不透明表面一样终止查询，因为一条直线不能代表经过第二个折射事件的光路。数学、介质栈与 MNEE 边界见[第 12 章第 6、7 节](12-runtime-analytic-water.md#6-粗糙水面的-nee只连接当前散射事件)。
 
-两类 SBT ray type 使用同一 IAS，但由 ray type、SBT stride 和 miss index 选择不同 records；pipeline 因而只需声明两个 32 位 payload values。含水透明阴影复用 radiance ray type 及其指针 payload，不增加第三种 SBT ray type。
+两类 SBT ray type 使用同一 IAS，但由 ray type、SBT stride 和 miss index 选择不同 records；pipeline 因而只需声明两个 32 位 payload values。含水路径不增加第三种 SBT ray type，也不再为一条直接光连接反复发射 radiance 查询。
 
 ## 10. OptiX Denoiser 与纯 CUDA 输出边界
 
@@ -305,7 +305,8 @@ payload 0 和 1 合并为 `SurfaceHit*`。miss 不填写命中数据，closest-h
 ~~~text
 OptiX ray tracing pipeline
   → raw linear HDR beauty + albedo/normal
-  → 可选 OptiX HDR Denoiser
+  ├→ 可选 D2H + CPU 写原始线性 RGB PFM
+  └→ 可选 OptiX HDR Denoiser
   → raw 或 denoised final_beauty
   → 纯 CUDA postprocess kernel
   → 设备端 RGBA8
@@ -316,7 +317,7 @@ OptiX ray tracing pipeline
 
 `denoise=false` 时直接使用 raw beauty；`denoise=true` 时，`run_denoiser` 创建 HDR denoiser，查询内存、分配并 setup state/scratch，计算 HDR intensity，绑定 beauty/albedo/normal，invoke 后同步。完整 API 顺序与源码片段见[第 8 章第 3 节](08-denoising-color-and-output.md#3-optix-hdr-降噪)。
 
-降噪之后的 `spectraldockLaunchPostprocess` 是普通 CUDA kernel，不是 RayGen、Miss 或 Hit 程序。它完成 EV 曝光、ACES 风格曲线、sRGB 编码和 RGBA8 量化。随后设备到主机复制与 stream 同步形成 GPU 完成边界；`render_optix` 返回 `RenderResult`，命令行主机代码再用 libpng 写文件。
+降噪之后的 `spectraldockLaunchPostprocess` 是普通 CUDA kernel，不是 RayGen、Miss 或 Hit 程序。它完成 EV 曝光、ACES 风格曲线、sRGB 编码和 RGBA8 量化。若请求 `--linear-output`，原始 `beauty` 另行 D2H，不经过 Denoiser 或显示变换。随后 stream 同步形成 GPU 完成边界；`render_optix` 返回 `RenderResult`，命令行主机代码分别用 libpng 写 PNG、用 PFM writer 写线性 RGB。
 
 ## 11. RAII 销毁与部署边界
 

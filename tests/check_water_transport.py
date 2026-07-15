@@ -16,13 +16,13 @@ POSITIVE_METRICS = (
     "water_height_evaluations",
     "water_tile_tests",
     "water_roots_reported",
-    "water_shadow_transmissions",
     "water_medium_segments",
+    "water_rough_nee_attempts",
+    "water_rough_nee_contributions",
 )
 SAFETY_METRICS = (
     "water_solver_overflows",
     "water_medium_errors",
-    "water_shadow_boundary_overflows",
 )
 
 
@@ -129,6 +129,19 @@ def remove_objects(scene, names):
     return result
 
 
+def set_water_roughness(scene, roughness):
+    result = copy.deepcopy(scene)
+    water_materials = [
+        material for material in result["materials"]
+        if material["type"] == "water"
+    ]
+    if not water_materials:
+        raise RuntimeError("water fixture has no water material")
+    for material in water_materials:
+        material["roughness"] = roughness
+    return result
+
+
 def absorption_scene(base, depth):
     scene = remove_objects(
         base,
@@ -155,7 +168,9 @@ def main():
         raise RuntimeError("usage: check_water_transport.py RENDERER WATER_SCENE")
     renderer = Path(sys.argv[1]).resolve()
     fixture = Path(sys.argv[2]).resolve()
-    base = json.loads(fixture.read_text(encoding="utf-8"))
+    base = set_water_roughness(
+        json.loads(fixture.read_text(encoding="utf-8")), 0.12
+    )
 
     with tempfile.TemporaryDirectory(prefix="spectraldock-water-") as tmp:
         directory = Path(tmp)
@@ -171,10 +186,27 @@ def main():
         for name in SAFETY_METRICS:
             if metric(first_stats, name) != 0:
                 raise RuntimeError(f"{name} must remain zero")
+        if metric(first_stats, "water_delta_splits") != 0:
+            raise RuntimeError("rough water must not use the smooth delta split")
+
+        smooth = set_water_roughness(base, 0.0)
+        smooth_image, smooth_stats = render(
+            renderer, smooth, directory, "water-smooth", spp=64
+        )
+        smooth_repeat, _ = render(
+            renderer, smooth, directory, "water-smooth-repeat", spp=64
+        )
+        if smooth_image.tobytes() != smooth_repeat.tobytes():
+            raise RuntimeError("smooth first-water Fresnel split is not deterministic")
+        if metric(smooth_stats, "water_delta_splits") in (None, 0):
+            raise RuntimeError("smooth water did not exercise the bounded delta split")
+        for name in ("water_rough_nee_attempts", "water_rough_nee_contributions"):
+            if metric(smooth_stats, name) != 0:
+                raise RuntimeError(f"smooth delta water must not increment {name}")
 
         no_water = remove_objects(base, {"test_water"})
         air_image, air_stats = render(renderer, no_water, directory, "water-off")
-        for name in POSITIVE_METRICS + SAFETY_METRICS:
+        for name in POSITIVE_METRICS + SAFETY_METRICS + ("water_delta_splits",):
             if metric(air_stats, name) != 0:
                 raise RuntimeError(f"{name} must be zero without water_surface")
         water_center = red_centroid(first)
@@ -201,7 +233,7 @@ def main():
         if mean_luminance(first, water_box) <= mean_luminance(
             dark_reflection, water_box
         ) + 0.20:
-            raise RuntimeError("smooth water did not reflect the above-water emitter")
+            raise RuntimeError("rough water did not reflect the above-water emitter")
 
         shallow_image, _ = render(
             renderer, absorption_scene(base, -0.42), directory,
@@ -235,7 +267,9 @@ def main():
         if mean_luminance(lit_floor, receiver_box) <= mean_luminance(
             unlit_floor, receiver_box
         ) + 0.5:
-            raise RuntimeError("above-water light did not illuminate underwater diffuse")
+            raise RuntimeError(
+                "rough-water BSDF/NEE paths did not restore underwater illumination"
+            )
 
         blocked_scene = copy.deepcopy(direct_scene)
         blocked_scene["objects"].append(

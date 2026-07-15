@@ -18,6 +18,7 @@ struct RenderSettings {
   float exposure = 0.0f;
   bool denoise = false;
   bool validation = false;
+  bool capture_linear = false;
 };
 
 struct RenderStats {
@@ -51,11 +52,12 @@ struct RenderStats {
   std::uint64_t water_height_evaluations = 0;
   std::uint64_t water_tile_tests = 0;
   std::uint64_t water_roots_reported = 0;
-  std::uint64_t water_shadow_transmissions = 0;
   std::uint64_t water_medium_segments = 0;
   std::uint64_t water_solver_overflows = 0;
   std::uint64_t water_medium_errors = 0;
-  std::uint64_t water_shadow_boundary_overflows = 0;
+  std::uint64_t water_rough_nee_attempts = 0;
+  std::uint64_t water_rough_nee_contributions = 0;
+  std::uint64_t water_delta_splits = 0;
   std::uint64_t objects = 0;
   std::uint64_t instances = 0;
   std::uint64_t unique_meshes = 0;
@@ -67,6 +69,7 @@ struct RenderResult {
   std::uint32_t width = 0;
   std::uint32_t height = 0;
   std::vector<std::uint8_t> rgba;
+  std::vector<float> linear_rgb;
   RenderStats stats;
 };
 

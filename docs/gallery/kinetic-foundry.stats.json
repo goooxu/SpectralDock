@@ -52,10 +52,11 @@
     "water_height_evaluations": 0,
     "water_tile_tests": 0,
     "water_roots_reported": 0,
-    "water_shadow_transmissions": 0,
     "water_medium_segments": 0,
     "water_solver_overflows": 0,
     "water_medium_errors": 0,
-    "water_shadow_boundary_overflows": 0
+    "water_rough_nee_attempts": 0,
+    "water_rough_nee_contributions": 0,
+    "water_delta_splits": 0
   }
 }
