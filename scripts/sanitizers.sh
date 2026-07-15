@@ -53,6 +53,22 @@ for tool in memcheck initcheck racecheck; do
     --report-api-errors explicit --error-exitcode 99 "${WATER_COMMON[@]}"
 done
 
+DELTA_SCENE="tests/scenes/delta-light-smoke.json"
+DELTA_OUT="output/sanitizer-delta-light-smoke.png"
+require_file "${ROOT}/${DELTA_SCENE}"
+DELTA_COMMON=(
+  build/Debug/spectraldock
+  --scene "${DELTA_SCENE}" --output "${DELTA_OUT}"
+  --width 64 --height 64 --spp 1 --max-depth 6 --seed 313
+  --clamp-direct 0.01 --clamp-indirect 0.01
+  --no-denoise
+)
+for tool in memcheck initcheck racecheck; do
+  echo "== compute-sanitizer ${tool} (delta lights and clamp) =="
+  gpu_container compute-sanitizer --tool "${tool}" \
+    --report-api-errors explicit --error-exitcode 99 "${DELTA_COMMON[@]}"
+done
+
 gpu_container python3 tests/check_mesh_smoke.py \
   "${SCENE}" tests/assets/uv-quad.obj "${OUT}" \
   "${OUT%.png}.stats.json" \

@@ -74,6 +74,47 @@ static __forceinline__ __device__ float3 clamp_nonnegative(float3 a) {
   return f3(fmaxf(a.x, 0.0f), fmaxf(a.y, 0.0f), fmaxf(a.z, 0.0f));
 }
 
+static __forceinline__ __device__ float3 clamp_path_contribution(
+    float3 contribution, float threshold,
+    unsigned long long* clamped_counter) {
+  if (!(threshold > 0.0f)) return contribution;
+  const float maximum = max_component(contribution);
+  if (!(maximum > threshold) || isnan(maximum)) return contribution;
+  if (clamped_counter != nullptr) {
+    atomicAdd(clamped_counter, 1ull);
+  }
+  if (!isfinite(maximum)) {
+    // This is the limiting max-RGB normalization for overflowed positive
+    // components; finite components vanish relative to an infinite maximum.
+    return f3(isinf(contribution.x) && contribution.x > 0.0f
+                  ? threshold : 0.0f,
+              isinf(contribution.y) && contribution.y > 0.0f
+                  ? threshold : 0.0f,
+              isinf(contribution.z) && contribution.z > 0.0f
+                  ? threshold : 0.0f);
+  }
+  return mul(contribution, threshold / maximum);
+}
+
+static __forceinline__ __device__ bool scaled_path_contribution_needs_clamp(
+    float3 throughput, float3 term, float threshold) {
+  if (!(threshold > 0.0f)) return false;
+  // Volatile keeps this detection-only multiply from being algebraically
+  // folded into the legacy grouped accumulation under --use_fast_math.
+  volatile float maximum = fmaxf(
+      throughput.x * term.x,
+      fmaxf(throughput.y * term.y, throughput.z * term.z));
+  return maximum > threshold && !isnan(maximum);
+}
+
+static __forceinline__ __device__ void accumulate_path_contribution(
+    float3& radiance, float3 contribution, float threshold,
+    unsigned long long* clamped_counter) {
+  radiance = add(
+      radiance,
+      clamp_path_contribution(contribution, threshold, clamped_counter));
+}
+
 static __forceinline__ __device__ float3 exp_attenuation(
     float3 absorption, float distance) {
   return f3(absorption.x > 0.0f ? expf(-absorption.x * distance) : 1.0f,
@@ -418,7 +459,7 @@ static __forceinline__ __device__ VolumeCollision track_volume(
   unsigned int flame_slots = 0u;
   unsigned int event_count = 0u;
   for (unsigned int light_index = 0u;
-       light_index < params.light_count && flame_slots < kMaxFlames;
+       light_index < params.all_light_count && flame_slots < kMaxFlames;
        ++light_index) {
     const LightData& light = params.lights[light_index];
     if (light.type != spectraldock::kLightFlame) continue;
@@ -1370,7 +1411,9 @@ static __forceinline__ __device__ void evaluate_bsdf(
               fminf(fmaxf(material.metallic, 0.0f), 1.0f));
     const float3 fresnel = fresnel_schlick(vo_h, f0);
     value = mul(fresnel, d * g / fmaxf(4.0f * no_v * no_l, 1.0e-20f));
-    pdf = d * no_h / fmaxf(4.0f * vo_h, 1.0e-20f);
+    const float half_pdf = ggx_visible_normal_pdf(
+        n, wo, half_vector, alpha);
+    pdf = half_pdf / fmaxf(4.0f * vo_h, 1.0e-20f);
     return;
   }
   if (!is_rough_dielectric(material)) {
@@ -1452,15 +1495,8 @@ static __forceinline__ __device__ BsdfSample sample_bsdf(
   if (material.type == spectraldock::kMaterialMetal) {
     const float alpha =
         fmaxf(material.roughness * material.roughness, 0.001f);
-    const float r1 = rng.next();
-    const float r2 = rng.next();
-    const float phi = 2.0f * kPi * r1;
-    const float cos_theta =
-        sqrtf((1.0f - r2) / fmaxf(1.0f + (alpha * alpha - 1.0f) * r2,
-                                  1.0e-20f));
-    const float sin_theta = sqrtf(fmaxf(0.0f, 1.0f - cos_theta * cos_theta));
-    const float3 half_vector = local_to_world(
-        f3(sin_theta * cosf(phi), sin_theta * sinf(phi), cos_theta), n);
+    const float3 half_vector = sample_ggx_vndf(
+        n, wo, alpha, rng.next(), rng.next());
     sample.wi = normalize3(reflect3(neg(wo), half_vector));
     float3 value;
     evaluate_bsdf(material, base_color, n, wo, sample.wi,
@@ -1646,9 +1682,10 @@ static __forceinline__ __device__ FiniteLightMode finite_light_mode(
 
 static __forceinline__ __device__ float finite_light_selection_pdf(
     const LightData& light, FiniteLightMode mode) {
-  if (params.light_count == 0u) return 0.0f;
+  if (params.sampled_light_count == 0u) return 0.0f;
   if (mode == kFiniteLightPower) return light.selection_pdf;
-  const float uniform = 1.0f / static_cast<float>(params.light_count);
+  const float uniform =
+      1.0f / static_cast<float>(params.sampled_light_count);
   if (mode == kFiniteLightUniform) return uniform;
   // Rough water takes one power-CDF sample and one uniform-index sample.
   // Both light estimators use the combined density qG + qU, with no extra 0.5
@@ -1720,8 +1757,8 @@ static __forceinline__ __device__ bool sample_visible_sphere_direction(
 static __forceinline__ __device__ float light_direction_pdf(
     int light_index, float3 from, float3 point, FiniteLightMode mode) {
   if (light_index < 0 ||
-      static_cast<unsigned int>(light_index) >= params.light_count ||
-      params.lights == nullptr || params.light_count == 0) {
+      static_cast<unsigned int>(light_index) >= params.all_light_count ||
+      params.lights == nullptr || params.all_light_count == 0) {
     return 0.0f;
   }
   const LightData light = params.lights[light_index];
@@ -1746,9 +1783,7 @@ static __forceinline__ __device__ float light_direction_pdf(
   }
   const float selection_pdf = finite_light_selection_pdf(light, mode);
   if (!(selection_pdf > 0.0f)) return 0.0f;
-  if (is_water_finite_light_mode(mode) &&
-      light.type == spectraldock::kLightSphere &&
-      light.two_sided == 0) {
+  if (light.type == spectraldock::kLightSphere) {
     const float solid_angle_pdf =
         sphere_visible_solid_angle_pdf(light, from);
     if (solid_angle_pdf > 0.0f) {
@@ -1797,17 +1832,17 @@ static __forceinline__ __device__ float3 sample_flame_volume(
                  mul(bitangent, radius * sinf(phi))));
 }
 
-static __forceinline__ __device__ unsigned int sample_finite_light_index(
+static __forceinline__ __device__ unsigned int sample_finite_light_slot(
     float value) {
-  if (params.light_count == 0u) return 0u;
+  if (params.sampled_light_count == 0u) return 0u;
   if (params.light_cdf == nullptr) {
     const unsigned int candidate =
-        static_cast<unsigned int>(value * params.light_count);
-    return candidate < params.light_count ? candidate
-                                          : params.light_count - 1u;
+        static_cast<unsigned int>(value * params.sampled_light_count);
+    return candidate < params.sampled_light_count
+        ? candidate : params.sampled_light_count - 1u;
   }
   unsigned int lower = 0u;
-  unsigned int upper = params.light_count;
+  unsigned int upper = params.sampled_light_count;
   while (lower + 1u < upper) {
     const unsigned int middle = lower + (upper - lower) / 2u;
     if (value < params.light_cdf[middle]) {
@@ -1819,21 +1854,22 @@ static __forceinline__ __device__ unsigned int sample_finite_light_index(
   return lower;
 }
 
-static __forceinline__ __device__ unsigned int sample_uniform_light_index(
+static __forceinline__ __device__ unsigned int sample_uniform_light_slot(
     float value) {
   const unsigned int candidate =
-      static_cast<unsigned int>(value * params.light_count);
-  return candidate < params.light_count ? candidate
-                                        : params.light_count - 1u;
+      static_cast<unsigned int>(value * params.sampled_light_count);
+  return candidate < params.sampled_light_count
+      ? candidate : params.sampled_light_count - 1u;
 }
 
 static __forceinline__ __device__ unsigned int sample_finite_light_index(
     float value, FiniteLightMode mode) {
-  if (mode == kFiniteLightPower ||
-      mode == kFiniteLightWaterPowerSample) {
-    return sample_finite_light_index(value);
-  }
-  return sample_uniform_light_index(value);
+  const unsigned int slot =
+      mode == kFiniteLightPower || mode == kFiniteLightWaterPowerSample
+          ? sample_finite_light_slot(value)
+          : sample_uniform_light_slot(value);
+  return params.sampled_light_indices != nullptr
+      ? params.sampled_light_indices[slot] : slot;
 }
 
 static __forceinline__ __device__ float3 sample_finite_direct_light(
@@ -1842,7 +1878,7 @@ static __forceinline__ __device__ float3 sample_finite_direct_light(
     Pcg32& rng,
     unsigned long long& traced_rays, VolumeCounters& volume_counters,
     const MediumState& media, WaterCounters& water_counters) {
-  if (params.lights == nullptr || params.light_count == 0 ||
+  if (params.lights == nullptr || params.sampled_light_count == 0 ||
       !supports_direct_lighting(material)) {
     return f3(0.0f, 0.0f, 0.0f);
   }
@@ -1860,6 +1896,9 @@ static __forceinline__ __device__ float3 sample_finite_direct_light(
   }
   const unsigned int light_index =
       sample_finite_light_index(rng.next(), light_mode);
+  if (light_index >= params.all_light_count) {
+    return f3(0.0f, 0.0f, 0.0f);
+  }
   const LightData light = params.lights[light_index];
   const float selection_pdf =
       finite_light_selection_pdf(light, light_mode);
@@ -1944,8 +1983,7 @@ static __forceinline__ __device__ float3 sample_finite_direct_light(
   float one_minus_cos = 0.0f;
   float sphere_solid_angle_pdf = 0.0f;
   const bool sample_sphere_solid_angle =
-      is_water_finite_light_mode(light_mode) &&
-      light.type == spectraldock::kLightSphere && light.two_sided == 0 &&
+      light.type == spectraldock::kLightSphere &&
       (sphere_solid_angle_pdf = sphere_visible_solid_angle_pdf(
            light, hit.position, &one_minus_cos)) > 0.0f;
   if (sample_sphere_solid_angle) {
@@ -1957,8 +1995,8 @@ static __forceinline__ __device__ float3 sample_finite_direct_light(
       return f3(0.0f, 0.0f, 0.0f);
     }
   } else {
-    // Keep the legacy expression (including its RNG call path) byte-for-byte
-    // for every non-water mode, non-sphere light and near/inside sphere.
+    // Near or inside a sphere, where its visible cone is not well-defined,
+    // fall back to the area-domain sampler used by other surface lights.
     sample_light_surface(light, rng.next(), rng.next(),
                          light_point, light_normal);
   }
@@ -2051,6 +2089,141 @@ static __forceinline__ __device__ float3 sample_finite_direct_light(
     ++water_counters.rough_nee_contributions;
   }
   return contribution;
+}
+
+// Point and directional lights are delta distributions in direction space.
+// They have no emitter surface which a continuous BSDF can hit, so each light
+// is evaluated exactly once and its direct-light MIS weight is one.
+static __forceinline__ __device__ void accumulate_delta_direct_lights(
+    const SurfaceHit& hit, const MaterialData& material, float3 base_color,
+    float3 wo, Pcg32& rng, unsigned long long& traced_rays,
+    VolumeCounters& volume_counters, const MediumState& media,
+    WaterCounters& water_counters, float3 throughput, float clamp_threshold,
+    unsigned long long* clamped_counter, float3& radiance) {
+  if (params.lights == nullptr || params.delta_light_count == 0u ||
+      params.delta_light_indices == nullptr ||
+      !supports_direct_lighting(material)) {
+    return;
+  }
+
+  float eta_i = 1.0f;
+  float eta_t = 1.0f;
+  if (is_rough_dielectric(material)) {
+    dielectric_eta_pair(
+        material, hit.front_face, hit.material_index,
+        params.water_surface_count != 0u ? &media : nullptr,
+        water_counters, eta_i, eta_t);
+  }
+  const bool count_rough_water =
+      material.type == spectraldock::kMaterialWater &&
+      material.roughness > 0.0f;
+
+  for (unsigned int slot = 0u; slot < params.delta_light_count; ++slot) {
+    const unsigned int light_index = params.delta_light_indices[slot];
+    if (light_index >= params.all_light_count) continue;
+    const LightData& light = params.lights[light_index];
+    const bool is_point = light.type == spectraldock::kLightPoint;
+    const bool is_directional =
+        light.type == spectraldock::kLightDirectional;
+    if (!is_point && !is_directional) continue;
+    if (count_rough_water) ++water_counters.rough_nee_attempts;
+
+    float3 wi;
+    float radiometric_distance2 = 1.0f;
+    float radiometric_distance = kInfinity;
+    float shadow_distance = kInfinity;
+    if (is_point) {
+      const float3 displacement = sub(light.p0, hit.position);
+      radiometric_distance2 = length2(displacement);
+      if (!(radiometric_distance2 > 0.0f) ||
+          !isfinite(radiometric_distance2)) {
+        continue;
+      }
+      radiometric_distance = sqrtf(radiometric_distance2);
+      wi = divv(displacement, radiometric_distance);
+      shadow_distance = radiometric_distance;
+    } else {
+      if (!(length2(light.axis) > 1.0e-20f)) continue;
+      wi = normalize3(light.axis);
+    }
+
+    const float signed_no_l = dot3(hit.normal, wi);
+    bool transmitted_connection = signed_no_l < 0.0f;
+    if (is_rough_dielectric(material) &&
+        !rough_macro_sides_agree(
+            hit.normal, hit.geometric_normal, wi,
+            transmitted_connection)) {
+      continue;
+    }
+    const float no_l = is_rough_dielectric(material)
+        ? fabsf(signed_no_l) : signed_no_l;
+    if (!(no_l > 0.0f)) continue;
+
+    float3 bsdf;
+    float bsdf_pdf;
+    evaluate_bsdf(material, base_color, hit.normal, wo, wi,
+                  eta_i, eta_t, bsdf, bsdf_pdf);
+    if (!(bsdf_pdf > 0.0f)) continue;
+
+    const float3 offset_normal = is_rough_dielectric(material)
+        ? hit.geometric_normal : hit.normal;
+    const float side = transmitted_connection ? -1.0f : 1.0f;
+    const float offset_distance = is_point
+        ? fminf(params.scene_epsilon * 2.0f,
+                radiometric_distance * 0.25f)
+        : params.scene_epsilon * 2.0f;
+    const float3 shadow_origin = add(
+        hit.position,
+        mul(offset_normal, side * offset_distance));
+    float3 shadow_direction = wi;
+    if (is_point) {
+      const float3 shadow_displacement = sub(light.p0, shadow_origin);
+      shadow_distance = length3(shadow_displacement);
+      if (!(shadow_distance > 0.0f) || !isfinite(shadow_distance)) continue;
+      shadow_direction = divv(shadow_displacement, shadow_distance);
+    }
+
+    float3 surface_transmittance;
+    if (is_point && shadow_distance <= params.scene_epsilon * 2.0f) {
+      // There is no numerically representable shadow interval between tmin
+      // and this very near ideal point. Do not invent a minimum light range;
+      // retain the medium transition/Beer term and treat the tiny segment as
+      // geometrically unobstructed.
+      MediumState shadow_media = media;
+      if (params.water_surface_count != 0u &&
+          is_rough_dielectric(material) && transmitted_connection &&
+          !update_medium_after_transmission(
+              shadow_media, hit.material_index, material, hit.front_face,
+              water_counters)) {
+        continue;
+      }
+      surface_transmittance = params.water_surface_count != 0u
+          ? medium_segment_transmittance(
+                shadow_media, shadow_distance, water_counters)
+          : f3(1.0f, 1.0f, 1.0f);
+    } else {
+      surface_transmittance = direct_segment_transmittance(
+          hit, material, shadow_origin, shadow_direction, shadow_distance, -1,
+          transmitted_connection, media, traced_rays, water_counters);
+    }
+    if (!(max_component(surface_transmittance) > 0.0f)) continue;
+    if (track_volume(shadow_origin, shadow_direction, shadow_distance, rng,
+                     volume_counters).collided != 0) {
+      continue;
+    }
+
+    const float attenuation =
+        is_point ? 1.0f / radiometric_distance2 : 1.0f;
+    const float3 contribution = mul(
+        mul(mul(bsdf, light.emission), surface_transmittance),
+        no_l * attenuation);
+    if (count_rough_water && max_component(contribution) > 0.0f) {
+      ++water_counters.rough_nee_contributions;
+    }
+    accumulate_path_contribution(
+        radiance, mul(throughput, contribution), clamp_threshold,
+        clamped_counter);
+  }
 }
 
 static __forceinline__ __device__ bool has_environment() {
@@ -2442,6 +2615,10 @@ extern "C" __global__ void __raygen__pathtrace() {
     float previous_pdf = 0.0f;
     int previous_delta = 1;
     FiniteLightMode previous_light_mode = kFiniteLightPower;
+    // Keep the unshifted predecessor vertex for emitter-hit light PDFs. The
+    // numerical ray-origin offset must not change the sampling measure used by
+    // the matching NEE strategy, especially at the sphere-cone boundary.
+    float3 previous_position = ray_origin;
     int guide_written = 0;
     MediumState media{};
     int split_used = 0;
@@ -2457,6 +2634,7 @@ extern "C" __global__ void __raygen__pathtrace() {
     float pending_previous_pdf = 0.0f;
     int pending_previous_delta = 1;
     FiniteLightMode pending_previous_light_mode = kFiniteLightPower;
+    float3 pending_previous_position{};
     unsigned int pending_bounce = 0u;
     MediumState pending_media{};
     unsigned long long pending_rng_state = 0ull;
@@ -2466,6 +2644,14 @@ extern "C" __global__ void __raygen__pathtrace() {
     for (;;) {
       for (unsigned int bounce = bounce_start;
            bounce < params.max_depth; ++bounce) {
+      const float clamp_threshold =
+          bounce == 0u ? params.clamp_direct : params.clamp_indirect;
+      unsigned long long* clamped_counter = nullptr;
+      if (params.firefly_counters != nullptr) {
+        clamped_counter = bounce == 0u
+            ? &params.firefly_counters->direct_clamped_contributions
+            : &params.firefly_counters->indirect_clamped_contributions;
+      }
       const SurfaceHit hit = trace_radiance(ray_origin, ray_direction, traced_rays);
       if (params.water_surface_count != 0u && hit.hit != 0) {
         infer_base_water_incident_medium(hit, media);
@@ -2485,8 +2671,9 @@ extern "C" __global__ void __raygen__pathtrace() {
       }
       if (volume.collided != 0) {
         if (previous_delta != 0) {
-          radiance =
-              add(radiance, mul(throughput, volume.source));
+          accumulate_path_contribution(
+              radiance, mul(throughput, volume.source), clamp_threshold,
+              clamped_counter);
         }
         break;
       }
@@ -2498,9 +2685,10 @@ extern "C" __global__ void __raygen__pathtrace() {
             previous_delta != 0 || !(environment_pdf > 0.0f)
                 ? 1.0f
                 : power_heuristic(previous_pdf, environment_pdf);
-        radiance = add(
+        accumulate_path_contribution(
             radiance,
-            mul(mul(throughput, background(ray_direction)), miss_weight));
+            mul(mul(throughput, background(ray_direction)), miss_weight),
+            clamp_threshold, clamped_counter);
         break;
       }
       if (hit.material_index < 0 ||
@@ -2528,7 +2716,7 @@ extern "C" __global__ void __raygen__pathtrace() {
         }
         const bool emitter_is_bound_to_light = hit.light_index >= 0;
         const float light_pdf = emitter_is_bound_to_light
-            ? light_direction_pdf(hit.light_index, ray_origin,
+            ? light_direction_pdf(hit.light_index, previous_position,
                                   hit.position, previous_light_mode)
             : 0.0f;
         // A rough-water predecessor uses deterministic qG, qU and BSDF
@@ -2545,7 +2733,9 @@ extern "C" __global__ void __raygen__pathtrace() {
             : emitter_hit_mis_weight(
                   previous_pdf, light_pdf, previous_delta != 0,
                   emitter_is_bound_to_light);
-        radiance = add(radiance, mul(mul(throughput, emitted), weight));
+        accumulate_path_contribution(
+            radiance, mul(mul(throughput, emitted), weight),
+            clamp_threshold, clamped_counter);
         break;
       }
 
@@ -2553,29 +2743,71 @@ extern "C" __global__ void __raygen__pathtrace() {
       const bool next_bsdf_ray_exists = bounce + 1u < params.max_depth;
       const FiniteLightMode current_light_mode =
           finite_light_mode(material, media);
-      float3 finite_direct =
+      const float3 finite_direct =
           sample_finite_direct_light(hit, material, base_color, wo,
                                      next_bsdf_ray_exists, current_light_mode,
                                      rng, traced_rays,
                                      volume_counters, media, water_counters);
+      float3 water_uniform_direct = f3(0.0f, 0.0f, 0.0f);
       if (current_light_mode == kFiniteLightWaterPowerSample) {
         // Deterministic two-component stratification: take one qG sample and
         // one qU sample. Their combined light density is qG + qU, so no 0.5
         // factor belongs here; a bound endpoint completes balance with BSDF.
-        finite_direct = add(
-            finite_direct,
-            sample_finite_direct_light(
-                hit, material, base_color, wo, next_bsdf_ray_exists,
-                kFiniteLightWaterUniformSample, rng, traced_rays,
-                volume_counters, media, water_counters));
+        water_uniform_direct = sample_finite_direct_light(
+            hit, material, base_color, wo, next_bsdf_ray_exists,
+            kFiniteLightWaterUniformSample, rng, traced_rays,
+            volume_counters, media, water_counters);
       }
       const float3 environment_direct =
           sample_environment_direct_light(
               hit, material, base_color, wo, next_bsdf_ray_exists, rng,
               traced_rays, volume_counters, media, water_counters);
-      radiance = add(
-          radiance,
-          mul(throughput, add(finite_direct, environment_direct)));
+      bool preserve_grouped_add = params.delta_light_count == 0u;
+      if (preserve_grouped_add && clamp_threshold > 0.0f) {
+        preserve_grouped_add =
+            !scaled_path_contribution_needs_clamp(
+                throughput, finite_direct, clamp_threshold) &&
+            (current_light_mode != kFiniteLightWaterPowerSample ||
+             !scaled_path_contribution_needs_clamp(
+                 throughput, water_uniform_direct, clamp_threshold)) &&
+            !scaled_path_contribution_needs_clamp(
+                throughput, environment_direct, clamp_threshold);
+      }
+      if (preserve_grouped_add) {
+        // If no independent term needs clamping, retain the pre-feature
+        // operation tree even when a positive threshold is configured.
+        float3 grouped_finite_direct = finite_direct;
+        if (current_light_mode == kFiniteLightWaterPowerSample) {
+          grouped_finite_direct = add(
+              grouped_finite_direct, water_uniform_direct);
+        }
+        radiance = add(
+            radiance,
+            mul(throughput,
+                add(grouped_finite_direct, environment_direct)));
+      } else {
+        const float3 finite_contribution =
+            mul(throughput, finite_direct);
+        const float3 uniform_contribution =
+            mul(throughput, water_uniform_direct);
+        const float3 environment_contribution =
+            mul(throughput, environment_direct);
+        accumulate_path_contribution(
+            radiance, finite_contribution, clamp_threshold,
+            clamped_counter);
+        if (current_light_mode == kFiniteLightWaterPowerSample) {
+          accumulate_path_contribution(
+              radiance, uniform_contribution,
+              clamp_threshold, clamped_counter);
+        }
+        accumulate_path_contribution(
+            radiance, environment_contribution, clamp_threshold,
+            clamped_counter);
+        accumulate_delta_direct_lights(
+            hit, material, base_color, wo, rng, traced_rays,
+            volume_counters, media, water_counters, throughput,
+            clamp_threshold, clamped_counter, radiance);
+      }
       if (!next_bsdf_ray_exists) {
         break;
       }
@@ -2601,6 +2833,7 @@ extern "C" __global__ void __raygen__pathtrace() {
           previous_pdf = 1.0f;
           previous_delta = 1;
           previous_light_mode = current_light_mode;
+          previous_position = hit.position;
           ray_origin = add(
               hit.position,
               mul(hit.normal, params.scene_epsilon * 2.0f));
@@ -2630,6 +2863,7 @@ extern "C" __global__ void __raygen__pathtrace() {
         pending_previous_pdf = 1.0f;
         pending_previous_delta = 1;
         pending_previous_light_mode = current_light_mode;
+        pending_previous_position = hit.position;
         pending_bounce = bounce + 1u;
         pending_media = media;
         pending_rng_state = reflected_rng.state;
@@ -2642,6 +2876,7 @@ extern "C" __global__ void __raygen__pathtrace() {
         previous_pdf = 1.0f;
         previous_delta = 1;
         previous_light_mode = current_light_mode;
+        previous_position = hit.position;
         ray_origin = add(
             hit.position,
             mul(hit.normal, -params.scene_epsilon * 2.0f));
@@ -2671,6 +2906,7 @@ extern "C" __global__ void __raygen__pathtrace() {
       previous_pdf = scatter.pdf;
       previous_delta = scatter.delta;
       previous_light_mode = current_light_mode;
+      previous_position = hit.position;
 
       if (bounce >= 4u) {
         const float survival =
@@ -2700,6 +2936,7 @@ extern "C" __global__ void __raygen__pathtrace() {
       previous_pdf = pending_previous_pdf;
       previous_delta = pending_previous_delta;
       previous_light_mode = pending_previous_light_mode;
+      previous_position = pending_previous_position;
       bounce_start = pending_bounce;
       media = pending_media;
       rng.state = pending_rng_state;

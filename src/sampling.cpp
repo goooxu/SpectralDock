@@ -184,6 +184,9 @@ double finite_light_proxy(const Light& light) {
     }
     case LightType::Flame:
       break;
+    case LightType::Point:
+    case LightType::Directional:
+      return 0.0;
   }
   return static_cast<double>(kPi) * area * luminance(light.emission);
 }
@@ -294,15 +297,23 @@ FiniteLightDistribution build_finite_light_distribution(
     DirectLightSampling mode) {
   if (lights.size() > kMaximumFiniteLights)
     throw std::invalid_argument("finite-light distribution supports at most 4096 lights");
-  if (lights.empty()) return {{0.0f}, {}};
+  std::vector<std::uint32_t> indices;
+  indices.reserve(lights.size());
+  for (std::size_t i = 0; i < lights.size(); ++i) {
+    if (lights[i].type != LightType::Point &&
+        lights[i].type != LightType::Directional) {
+      indices.push_back(static_cast<std::uint32_t>(i));
+    }
+  }
+  if (indices.empty()) return {{}, {0.0f}, {}};
 
-  const std::size_t count = lights.size();
+  const std::size_t count = indices.size();
   std::vector<double> masses(count, 1.0 / static_cast<double>(count));
   if (mode == DirectLightSampling::Importance) {
     std::vector<double> proxies(count);
     long double proxy_sum = 0.0L;
     for (std::size_t i = 0; i < count; ++i) {
-      proxies[i] = finite_light_proxy(lights[i]);
+      proxies[i] = finite_light_proxy(lights[indices[i]]);
       if (!std::isfinite(proxies[i]) || proxies[i] < 0.0)
         throw std::invalid_argument("finite light has an invalid power proxy");
       proxy_sum += static_cast<long double>(proxies[i]);
@@ -318,7 +329,8 @@ FiniteLightDistribution build_finite_light_distribution(
   }
 
   FloatCdf distribution = make_float_cdf(masses);
-  return {std::move(distribution.boundaries),
+  return {std::move(indices),
+          std::move(distribution.boundaries),
           std::move(distribution.probabilities)};
 }
 

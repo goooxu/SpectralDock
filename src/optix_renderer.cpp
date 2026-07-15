@@ -424,9 +424,20 @@ std::vector<MaterialData> materials_for(const Scene& scene) {
 }
 
 std::vector<LightData> lights_for(
-    const Scene& scene, const std::vector<float>& selection_probabilities) {
-  if (selection_probabilities.size() != scene.lights.size()) {
+    const Scene& scene, const FiniteLightDistribution& distribution) {
+  if (distribution.probabilities.size() != distribution.indices.size()) {
     throw std::runtime_error("finite-light probability count mismatch");
+  }
+  if (distribution.cdf.size() != distribution.indices.size() + 1u) {
+    throw std::runtime_error("finite-light CDF size mismatch");
+  }
+  std::vector<float> selection_probabilities(scene.lights.size(), 0.0f);
+  for (std::size_t slot = 0; slot < distribution.indices.size(); ++slot) {
+    const std::size_t light_index = distribution.indices[slot];
+    if (light_index >= scene.lights.size()) {
+      throw std::runtime_error("finite-light index is out of range");
+    }
+    selection_probabilities[light_index] = distribution.probabilities[slot];
   }
   std::vector<LightData> result;
   result.reserve(scene.lights.size());
@@ -454,7 +465,7 @@ std::vector<LightData> lights_for(
       d.p0 = f3(l.position);
       d.radius = l.radius;
       d.area = 4.0f * 3.14159265358979323846f * l.radius * l.radius;
-    } else {
+    } else if (l.type == LightType::Flame) {
       d.type = kLightFlame;
       d.p0 = f3(l.position);
       d.axis = f3(l.axis);
@@ -468,6 +479,14 @@ std::vector<LightData> lights_for(
       d.turbulence = l.turbulence;
       d.noise_scale = l.noise_scale;
       d.seed = l.seed;
+    } else if (l.type == LightType::Point) {
+      d.type = kLightPoint;
+      d.p0 = f3(l.position);
+      d.geometry_index = kInvalidIndex;
+    } else {
+      d.type = kLightDirectional;
+      d.axis = f3(l.axis);
+      d.geometry_index = kInvalidIndex;
     }
     result.push_back(d);
   }
@@ -1073,6 +1092,12 @@ RenderResult render_optix(const Scene& scene,
       !settings.max_depth)
     throw std::runtime_error(
         "width, height, spp, and max-depth must be positive");
+  if (!std::isfinite(settings.clamp_direct) || settings.clamp_direct < 0.0f ||
+      !std::isfinite(settings.clamp_indirect) ||
+      settings.clamp_indirect < 0.0f) {
+    throw std::runtime_error(
+        "clamp-direct and clamp-indirect must be finite and non-negative");
+  }
   const std::size_t pixel_count =
       checked_product(settings.width, settings.height, "pixel count");
   const auto total_begin = std::chrono::steady_clock::now();
@@ -1126,7 +1151,18 @@ RenderResult render_optix(const Scene& scene,
       build_finite_light_distribution(
           scene.lights, scene.integrator.direct_light_sampling);
   std::vector<LightData> light_data =
-      lights_for(scene, finite_light_distribution.probabilities);
+      lights_for(scene, finite_light_distribution);
+  std::vector<std::uint32_t> delta_light_indices;
+  delta_light_indices.reserve(scene.lights.size());
+  for (std::size_t i = 0; i < scene.lights.size(); ++i) {
+    if (scene.lights[i].type == LightType::Point ||
+        scene.lights[i].type == LightType::Directional) {
+      delta_light_indices.push_back(checked_u32(i, "delta light index"));
+    }
+  }
+  if (delta_light_indices.size() > 32u) {
+    throw std::runtime_error("delta light count exceeds the limit of 32");
+  }
   const std::size_t flame_count = static_cast<std::size_t>(std::count_if(
       scene.lights.begin(), scene.lights.end(), [](const Light& light) {
         return light.type == LightType::Flame;
@@ -1145,6 +1181,11 @@ RenderResult render_optix(const Scene& scene,
       tracker, light_data.size() * sizeof(LightData));
   DeviceBuffer light_cdf_buffer(
       tracker, finite_light_distribution.cdf.size() * sizeof(float));
+  DeviceBuffer sampled_light_index_buffer(
+      tracker, finite_light_distribution.indices.size() *
+                   sizeof(std::uint32_t));
+  DeviceBuffer delta_light_index_buffer(
+      tracker, delta_light_indices.size() * sizeof(std::uint32_t));
   DeviceBuffer environment_row_cdf_buffer(
       tracker, environment_distribution.row_cdf.size() * sizeof(float));
   DeviceBuffer environment_conditional_cdf_buffer(
@@ -1154,6 +1195,8 @@ RenderResult render_optix(const Scene& scene,
   texture_buffer.upload(texture_data);
   light_buffer.upload(light_data);
   light_cdf_buffer.upload(finite_light_distribution.cdf);
+  sampled_light_index_buffer.upload(finite_light_distribution.indices);
+  delta_light_index_buffer.upload(delta_light_indices);
   environment_row_cdf_buffer.upload(environment_distribution.row_cdf);
   environment_conditional_cdf_buffer.upload(
       environment_distribution.conditional_cdf);
@@ -1239,12 +1282,17 @@ RenderResult render_optix(const Scene& scene,
                    ? 0u
                    : checked_product(pixel_count, sizeof(WaterCounters),
                                      "water counters"));
+  const bool firefly_clamp_enabled =
+      settings.clamp_direct > 0.0f || settings.clamp_indirect > 0.0f;
+  DeviceBuffer firefly_count(
+      tracker, firefly_clamp_enabled ? sizeof(FireflyCounters) : 0u);
   beauty.clear(stream);
   albedo.clear(stream);
   normal.clear(stream);
   ray_count.clear(stream);
   volume_count.clear(stream);
   water_count.clear(stream);
+  firefly_count.clear(stream);
 
   LaunchParams parameters{};
   parameters.traversable = ias.handle;
@@ -1301,18 +1349,33 @@ RenderResult render_optix(const Scene& scene,
   parameters.lights = light_data.empty()
       ? nullptr
       : reinterpret_cast<const LightData*>(light_buffer.pointer());
-  parameters.light_cdf = light_data.empty()
+  parameters.light_cdf = finite_light_distribution.indices.empty()
       ? nullptr
       : reinterpret_cast<const float*>(light_cdf_buffer.pointer());
+  parameters.sampled_light_indices =
+      finite_light_distribution.indices.empty()
+          ? nullptr
+          : reinterpret_cast<const std::uint32_t*>(
+                sampled_light_index_buffer.pointer());
+  parameters.delta_light_indices = delta_light_indices.empty()
+      ? nullptr
+      : reinterpret_cast<const std::uint32_t*>(
+            delta_light_index_buffer.pointer());
   parameters.material_count =
       checked_u32(material_data.size(), "material count");
   parameters.texture_count =
       checked_u32(texture_data.size(), "texture count");
-  parameters.light_count =
+  parameters.all_light_count =
       checked_u32(light_data.size(), "light count");
+  parameters.sampled_light_count = checked_u32(
+      finite_light_distribution.indices.size(), "sampled light count");
+  parameters.delta_light_count =
+      checked_u32(delta_light_indices.size(), "delta light count");
   parameters.flame_count = checked_u32(flame_count, "flame count");
   parameters.water_surface_count =
       checked_u32(water_surface_count, "water surface count");
+  parameters.clamp_direct = settings.clamp_direct;
+  parameters.clamp_indirect = settings.clamp_indirect;
   parameters.traced_rays =
       reinterpret_cast<unsigned long long*>(ray_count.pointer());
   parameters.volume_counters =
@@ -1323,6 +1386,9 @@ RenderResult render_optix(const Scene& scene,
       water_surface_count == 0u
           ? nullptr
           : reinterpret_cast<WaterCounters*>(water_count.pointer());
+  parameters.firefly_counters = firefly_clamp_enabled
+      ? reinterpret_cast<FireflyCounters*>(firefly_count.pointer())
+      : nullptr;
 
   DeviceBuffer launch_parameters(tracker, sizeof(parameters));
   launch_parameters.upload(&parameters, sizeof(parameters), stream);
@@ -1377,6 +1443,7 @@ RenderResult render_optix(const Scene& scene,
       flame_count == 0u ? 0u : pixel_count);
   std::vector<WaterCounters> water_counts(
       water_surface_count == 0u ? 0u : pixel_count);
+  FireflyCounters firefly_counts{};
   output.download(rgba.data(), rgba.size(), stream);
   if (!linear_pixels.empty()) {
     beauty.download(linear_pixels.data(),
@@ -1388,6 +1455,9 @@ RenderResult render_optix(const Scene& scene,
                         volume_counts.size() * sizeof(VolumeCounters), stream);
   water_count.download(water_counts.data(),
                        water_counts.size() * sizeof(WaterCounters), stream);
+  if (firefly_clamp_enabled) {
+    firefly_count.download(&firefly_counts, sizeof(firefly_counts), stream);
+  }
   check_cuda(cudaStreamSynchronize(stream),
              "cudaStreamSynchronize(output)");
   unsigned long long traced_rays = 0;
@@ -1456,6 +1526,12 @@ RenderResult render_optix(const Scene& scene,
       scene.integrator.direct_light_sampling == DirectLightSampling::Uniform
           ? "uniform"
           : "importance";
+  result.stats.clamp_direct = settings.clamp_direct;
+  result.stats.clamp_indirect = settings.clamp_indirect;
+  result.stats.firefly_direct_clamped_contributions =
+      firefly_counts.direct_clamped_contributions;
+  result.stats.firefly_indirect_clamped_contributions =
+      firefly_counts.indirect_clamped_contributions;
   result.stats.bvh_build_ms = bvh_ms;
   result.stats.render_ms = render_ms;
   result.stats.denoise_ms = denoise_ms;

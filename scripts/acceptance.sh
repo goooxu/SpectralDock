@@ -21,6 +21,8 @@ gpu_container python3 tests/check_radiance_pavilion_importance.py \
   build/Release/spectraldock scenes/radiance-pavilion.json
 gpu_container python3 tests/check_light_importance.py \
   build/Release/spectraldock
+gpu_container python3 tests/check_delta_lights_and_firefly.py \
+  build/Release/spectraldock
 "$(dirname "$0")/configure.sh" Debug
 gpu_container cmake --build build/Debug --clean-first --parallel
 

@@ -34,7 +34,16 @@ enum class GeometryType : std::uint32_t {
 };
 enum class BackgroundType : std::uint32_t { Constant, Sky, Environment };
 enum class DirectLightSampling : std::uint32_t { Uniform, Importance };
-enum class LightType : std::uint32_t { Sphere, Rectangle, Disk, Flame };
+// Keep the original values stable: device-side records and existing fixtures
+// rely on Sphere..Flame occupying values 0..3.
+enum class LightType : std::uint32_t {
+  Sphere,
+  Rectangle,
+  Disk,
+  Flame,
+  Point,
+  Directional,
+};
 
 struct Camera {
   Vec3 look_from{0.0f, 0.0f, 5.0f};
@@ -62,6 +71,9 @@ struct Background {
 struct Integrator {
   DirectLightSampling direct_light_sampling =
       DirectLightSampling::Importance;
+  // A value of zero disables the corresponding (biased) contribution clamp.
+  float clamp_direct = 64.0f;
+  float clamp_indirect = 16.0f;
 };
 
 struct RenderDefaults {
@@ -214,12 +226,16 @@ struct Light {
   Vec3 edge_u{1.0f, 0.0f, 0.0f};
   Vec3 edge_v{0.0f, 0.0f, 1.0f};
   Vec3 normal{0.0f, -1.0f, 0.0f};
+  // Radiance for finite surface lights; intensity for point lights; and
+  // irradiance for directional lights.
   Vec3 emission{1.0f};
   float radius = 0.01f;
 
   // Procedural absorption-emission volume. The finite support runs
   // from position to position + axis * height and is conservatively enclosed
   // by a cylinder whose radius is max(radius_start, radius_end).
+  // Flame axis, or the surface-to-light unit direction of a directional
+  // light.
   Vec3 axis{0.0f, 1.0f, 0.0f};
   Vec3 emission_start{1.0f};
   Vec3 emission_end{1.0f};

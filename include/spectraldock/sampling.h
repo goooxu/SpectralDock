@@ -24,6 +24,10 @@ struct ImageRgb32f {
 ImageRgb32f load_radiance_hdr(const std::filesystem::path& path);
 
 struct FiniteLightDistribution {
+  // Original Scene::lights indices for the non-delta lights represented by
+  // this distribution. Point and directional lights are evaluated in their
+  // own deterministic domain and never appear here.
+  std::vector<std::uint32_t> indices;
   // CDF boundaries, including exactly 0 and 1.
   std::vector<float> cdf;
   // Actual float interval widths cdf[i + 1] - cdf[i]. These values, rather

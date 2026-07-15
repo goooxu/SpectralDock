@@ -317,7 +317,7 @@ OptiX ray tracing pipeline
 
 `denoise=false` 时直接使用 raw beauty；`denoise=true` 时，`run_denoiser` 创建 HDR denoiser，查询内存、分配并 setup state/scratch，计算 HDR intensity，绑定 beauty/albedo/normal，invoke 后同步。完整 API 顺序与源码片段见[第 8 章第 3 节](08-denoising-color-and-output.md#3-optix-hdr-降噪)。
 
-降噪之后的 `spectraldockLaunchPostprocess` 是普通 CUDA kernel，不是 RayGen、Miss 或 Hit 程序。它完成 EV 曝光、ACES 风格曲线、sRGB 编码和 RGBA8 量化。若请求 `--linear-output`，原始 `beauty` 另行 D2H，不经过 Denoiser 或显示变换。随后 stream 同步形成 GPU 完成边界；`render_optix` 返回 `RenderResult`，命令行主机代码分别用 libpng 写 PNG、用 PFM writer 写线性 RGB。
+降噪之后的 `spectraldockLaunchPostprocess` 是普通 CUDA kernel，不是 RayGen、Miss 或 Hit 程序。它完成 EV 曝光、ACES 风格曲线、sRGB 编码和 RGBA8 量化。若请求 `--linear-output`，raygen 的 `beauty` 另行 D2H，不经过 Denoiser 或显示变换；它仍位于贡献钳位之后，只有 clamp 0/0 才是无偏参考。随后 stream 同步形成 GPU 完成边界；`render_optix` 返回 `RenderResult`，命令行主机代码分别用 libpng 写 PNG、用 PFM writer 写线性 RGB。
 
 ## 11. RAII 销毁与部署边界
 

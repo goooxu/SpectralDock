@@ -16,6 +16,8 @@ struct RenderSettings {
   std::uint32_t max_depth = 12;
   std::uint32_t seed = 1;
   float exposure = 0.0f;
+  float clamp_direct = 64.0f;
+  float clamp_indirect = 16.0f;
   bool denoise = false;
   bool validation = false;
   bool capture_linear = false;
@@ -36,6 +38,8 @@ struct RenderStats {
   std::uint32_t seed = 0;
   bool denoised = false;
   std::string direct_light_sampling;
+  float clamp_direct = 64.0f;
+  float clamp_indirect = 16.0f;
   double bvh_build_ms = 0.0;
   double render_ms = 0.0;
   double denoise_ms = 0.0;
@@ -44,6 +48,8 @@ struct RenderStats {
   std::size_t peak_tracked_device_bytes = 0;
   std::uint64_t traced_rays = 0;
   double rays_per_second = 0.0;
+  std::uint64_t firefly_direct_clamped_contributions = 0;
+  std::uint64_t firefly_indirect_clamped_contributions = 0;
   std::uint64_t volume_density_evaluations = 0;
   std::uint64_t volume_real_collisions = 0;
   std::uint64_t volume_light_samples = 0;

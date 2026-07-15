@@ -120,7 +120,7 @@ def _mul(matrix, vector):
 
 
 def validate(scene, metadata):
-    _require(scene.get("schema_version") == 5, "scene must use schema_version 5")
+    _require(scene.get("schema_version") == 6, "scene must use schema_version 6")
     _require(isinstance(scene.get("objects"), list), "scene.objects must be an array")
     _require(
         scene.get("meshes") == [

@@ -1,18 +1,18 @@
 # 场景格式
 
-场景为 JSON，统一使用 `schema_version: 5`。当前 schema 同时包含 OBJ mesh、程序化 `flame` 体积光、运行时 `water_surface`、Radiance HDR 环境和直接光重要性采样；v1–v4 与未来未知版本都不再作为输入接口。未知引用、缺失资源、非有限数、退化几何和非法材质会在 CUDA/OptiX 初始化前报错。
+场景为 JSON，统一使用 `schema_version: 6`。当前 schema 同时包含 OBJ mesh、程序化 `flame` 体积光、运行时 `water_surface`、Radiance HDR 环境、point/directional delta 灯和两级贡献钳位；v1–v5 与未来未知版本都不再作为输入接口。未知引用、缺失资源、非有限数、退化几何和非法材质会在 CUDA/OptiX 初始化前报错。
 
 ## 顶层字段
 
 - `camera`：`look_from`、`look_at`、`up`、`vfov`/`vertical_fov_degrees`、`aperture`、`focus_distance`。
-- `integrator`：`direct_light_sampling` 可为 `importance` 或 `uniform`，省略时默认为 `importance`。
+- `integrator`：`direct_light_sampling` 可为 `importance` 或 `uniform`；`clamp_direct` 和 `clamp_indirect` 是非负有限数。默认依次为 `importance`、64 和 16，钳位阈值 0 表示关闭。
 - `background`：`constant`、带渐变和太阳瓣的 `sky`，或 Radiance RGBE `environment`；`exposure` 以 EV 表示。
 - `render`：`width`、`height`、`spp`、`max_depth`、`seed`、`denoise`。
 - `textures`：`constant` 或 PNG `image`，色彩空间为 `srgb`/`linear`。
 - `materials`：`lambertian`、`metal`、`dielectric`、`emitter` 和 `water`。
 - `meshes`：命名 OBJ 资源。
 - `objects`：sphere、rectangle、sketch、disk、cylinder、parabola、mesh 和 water_surface。
-- `lights`：显式采样的 rectangle、disk、sphere 面积光和 flame 体积光。
+- `lights`：随机采样的 rectangle、disk、sphere 面积光和 flame 体积光，以及逐灯求值的 point、directional delta 灯。
 
 `max_depth` 的范围为 1–64，语义是最多处理的表面事件数；最后一个事件完整估计显式直接光，但不再生成下一事件的 BSDF 射线。
 
@@ -20,8 +20,12 @@
 
 ```json
 {
-  "schema_version": 5,
-  "integrator": {"direct_light_sampling": "importance"},
+  "schema_version": 6,
+  "integrator": {
+    "direct_light_sampling": "importance",
+    "clamp_direct": 64.0,
+    "clamp_indirect": 16.0
+  },
   "background": {
     "type": "environment",
     "path": "../assets/examples/environments/radiance-pavilion.hdr",
@@ -34,7 +38,7 @@
 
 `path` 相对场景 JSON 解析。`intensity` 是非负的线性环境辐亮度缩放；`exposure` 仍只作用于最终显示变换，二者不能互换。`rotation_degrees` 把环境绕世界 `+Y` 轴按右手方向旋转，任意有限角度都可使用。纬经图顶部对应 `+Y`，U 方向环绕，V 方向在两极截断。
 
-v5 只接受带 `FORMAT=32-bit_rle_rgbe` 的 Radiance RGBE `.hdr`，颜色解释为线性 Rec.709 RGB。文件方向必须是常见的 `-Y H +X W`；现代逐通道 RLE 与原始 RGBE scanline 都受支持。最大宽度为 8192、高度为 4096、总像素数不超过 $2^{25}$；非法头部、截断 packet、尺寸溢出、负值或非有限解码结果都会在 CUDA 上传前失败。首版不接受 OpenEXR；命令行可用 `--linear-output FILE.pfm` 另存原始线性样本均值。
+v6 只接受带 `FORMAT=32-bit_rle_rgbe` 的 Radiance RGBE `.hdr`，颜色解释为线性 Rec.709 RGB。文件方向必须是常见的 `-Y H +X W`；现代逐通道 RLE 与原始 RGBE scanline 都受支持。最大宽度为 8192、高度为 4096、总像素数不超过 $2^{25}$；非法头部、截断 packet、尺寸溢出、负值或非有限解码结果都会在 CUDA 上传前失败。首版不接受 OpenEXR；命令行可用 `--linear-output FILE.pfm` 另存钳位之后、降噪与显示变换之前的线性样本均值。
 
 环境查找使用纬经映射。第 $j$ 行覆盖的精确 texel 立体角是
 
@@ -45,9 +49,9 @@ $$
 
 `importance` 模式按 Rec.709 亮度 $Y_{ij}\Omega_j$ 建立行 CDF 与行内条件 CDF，并混入 1% 均匀球面概率；全黑环境自动退化为均匀球面采样。`uniform` 对照模式始终按均匀球面分布采样。两种模式改变方差而不应改变收敛均值。
 
-## 有限灯选择与两个 NEE 域
+## 随机有限灯选择与 NEE 域
 
-`importance` 模式还会按发光功率代理为 `lights` 建立全局基础分布。rectangle、disk 和 sphere 使用 $\pi A Y(L_e)$；flame 使用包围圆柱体积、消光系数、密度缩放和两端平均亮度构成的各向同性发光代理。这些值只用于分配样本，不是物理瓦特值。每个灯的基础选择概率为
+`importance` 模式还会为 `lights` 中的非 delta 子集建立全局基础分布。这里的 $N$ 只计 rectangle、disk、sphere 和 flame；point/directional 进入后述逐灯域，不进入这个 CDF。rectangle、disk 和 sphere 使用 $\pi A Y(L_e)$；flame 使用包围圆柱体积、消光系数、密度缩放和两端平均亮度构成的各向同性发光代理。这些值只用于分配样本，不是物理瓦特值。每个随机有限灯的基础选择概率为
 
 $$
 q_i=0.99\frac{w_i}{\sum_k w_k}+\frac{0.01}{N},
@@ -55,15 +59,48 @@ $$
 
 全零代理或 `uniform` 模式退化为 $q_i=1/N$。显式灯最多 4096 个。最终上传的是严格递增的 float CDF；设备端 PDF 使用实际相邻 CDF 边界之差，而不是构建 CDF 前的 double 权重。粗糙 water 顶点不是随机二选一，而是确定性地各取一份基础分布 $q_i^G$ 和均匀分布 $q_i^U=1/N$ 的样本；两份贡献都使用联合密度 $q_i^G+q_i^U$，不再乘 0.5。已在介质内的其他顶点直接均匀选灯；其余顶点使用基础分布。这些规则进入 NEE 与 emitter-hit MIS，只改变方差。
 
-选灯之后通常在 rectangle、disk 或 sphere 面积上均匀取点，并以 $q_i r^2/(A_i|\mathbf n_l\cdot-\boldsymbol\omega|)$ 换成方向 PDF。唯一的固定例外是粗糙 water 选中单面 sphere 灯：当水面交点位于半径 $R$ 的球外且与球心距离 $d>R+\varepsilon$ 时，设备端均匀采可见圆锥，条件方向密度为 $[2\pi(1-\sqrt{1-R^2/d^2})]^{-1}$；球内/近球顶点回退到面积采样。两份水面样本的完整灯密度都是 $p_L=(q_i^G+q_i^U)p(\boldsymbol\omega\mid i)$。这不是 JSON 开关，而是无偏的设备端方差规则。
+选灯之后通常在 rectangle 或 disk 面积上均匀取点，并以 $q_i r^2/(A_i|\mathbf n_l\cdot-\boldsymbol\omega|)$ 换成方向 PDF。对任意支持 NEE 的连续 BSDF 顶点，选中 sphere 灯且交点位于半径 $R$ 的球外、与球心距离 $d>R+\varepsilon$ 时，设备端均匀采可见圆锥，条件方向密度为 $[2\pi(1-\sqrt{1-R^2/d^2})]^{-1}$；球内或近球顶点回退到面积采样。粗糙水面的两份样本仍使用完整灯密度 $p_L=(q_i^G+q_i^U)p(\boldsymbol\omega\mid i)$。这不是 JSON 开关，而是无偏的设备端方差规则。
 
-在支持 NEE 的 Lambert、GGX metal 与 `roughness > 0` 的 GGX dielectric/water 表面，环境域和有限灯域彼此独立。普通表面在有限灯域取一份样本；粗糙 water 取上述两份确定性分层样本，因此连同环境域每个事件最多形成三次 shadow connection。对于可由下一条 BSDF 射线命中的绑定表面灯，两份 water direct 样本和 BSDF emitter-hit 以 $p_L+p_B$ 的 balance 权重互补；最后一层、未绑定灯和 flame 没有该 BSDF 端点竞争者。环境 NEE 与稍后 BSDF miss 仍使用 power-heuristic MIS；flame 保留体积碰撞/NEE 的互斥估计器。完美光滑的 `roughness: 0` 介电界面是 delta 分布，不执行普通 NEE。
+在支持 NEE 的 Lambert、GGX metal 与 `roughness > 0` 的 GGX dielectric/water 表面，环境域、有限灯域和 delta 灯域彼此独立。普通表面在有限灯域取一份样本；粗糙 water 取上述两份确定性分层样本。除此之外，每个顶点确定性求值场景中的全部 point/directional 灯。对于可由下一条 BSDF 射线命中的绑定表面灯，两份 water direct 样本和 BSDF emitter-hit 以 $p_L+p_B$ 的 balance 权重互补；最后一层、未绑定灯和 flame 没有该 BSDF 端点竞争者。环境 NEE 与稍后 BSDF miss 仍使用 power-heuristic MIS；flame 保留体积碰撞/NEE 的互斥估计器。delta 灯不进入随机选灯 CDF，连续 BSDF 也不可能偶然命中它们，所以其 MIS 权重恒为 1。完美光滑的 `roughness: 0` 介电界面是 delta 分布，不执行普通 NEE。
+
+## Point 与 directional 灯
+
+```json
+{
+  "lights": [
+    {"name": "work_light", "type": "point",
+     "position": [1.5, 3.0, 0.5], "intensity": [80.0, 65.0, 48.0]},
+    {"name": "sun_key", "type": "directional",
+     "direction": [0.35, 1.0, 0.2], "irradiance": [2.8, 2.6, 2.3]}
+  ]
+}
+```
+
+`point.intensity` 是 RGB 辐射强度；距灯 $r$ 的未遮挡表面接收 $1/r^2$ 衰减。`directional.irradiance` 是不随位置变化的 RGB 辐照度；`direction` 会归一化，语义与 `background.sun_direction` 一致，表示从着色点指向光源的方向，而不是光线传播方向。两种能量都必须非负并至少含一个正通道。
+
+point 用到灯位置的有限 shadow ray，directional 使用无限 shadow ray。二者没有可见几何、不接受 `object`、不进入 emitter-hit MIS，并产生理想硬阴影；需要软阴影时应使用 rectangle、disk 或 sphere 面积灯。场景最多包含 32 盏 point 与 directional，渲染器在每个连续 BSDF NEE 顶点逐盏求值，因而其 shadow-ray 成本随灯数线性增长。本版本不包含 range、soft radius、spot、IES 或自定义衰减指数。
+
+忽略可见性与介质透射时，它们在位置 $\mathbf x$ 的直接光贡献分别是
+
+$$
+C_{\mathrm{point}}=
+\boldsymbol\beta f(\boldsymbol\omega_i,\boldsymbol\omega_o)
+I\,|\mathbf n\cdot\boldsymbol\omega_i|/r^2,
+$$
+
+$$
+C_{\mathrm{directional}}=
+\boldsymbol\beta f(\boldsymbol\omega_i,\boldsymbol\omega_o)
+E\,|\mathbf n\cdot\boldsymbol\omega_i|.
+$$
+
+其中 $\boldsymbol\beta$ 是到当前顶点的路径吞吐量。实际实现还乘 shadow visibility、flame 透射和水介质 Beer 衰减。
 
 ## OBJ 网格与实例
 
 ```json
 {
-  "schema_version": 5,
+  "schema_version": 6,
   "meshes": [
     {"name": "mascot", "path": "../assets/examples/models/capsule-mascot.obj"}
   ],
@@ -101,7 +138,7 @@ $$
 \alpha=\max(\mathrm{roughness}^2,0.001).
 $$
 
-粗糙介电质同时具有反射和透射 GGX 瓣，使用精确介电 Fresnel、Smith 遮蔽和可见法线（VNDF）采样；折射分支包含方向变换 Jacobian 与辐亮度传输的折射率平方因子。普通 dielectric 按 Fresnel $F$ 选反射分支；粗糙 water 把反射采样概率提高到 $\max(F,0.5)$，但 BSDF 值仍使用 $F$，并用实际 PDF 补偿过采样。`roughness: 0` 仍走离散的完美 Fresnel/Snell 分支，而不是把很窄的连续 GGX 瓣冒充 delta。
+metal 和粗糙介电质都使用 Heitz 的各向同性 GGX 可见法线（VNDF）采样，并用同一可见法线测度计算方向 PDF。粗糙介电质同时具有反射和透射 GGX 瓣，使用精确介电 Fresnel 与 Smith 遮蔽；折射分支包含方向变换 Jacobian 与辐亮度传输的折射率平方因子。普通 dielectric 按 Fresnel $F$ 选反射分支；粗糙 water 把反射采样概率提高到 $\max(F,0.5)$，但 BSDF 值仍使用 $F$，并用实际 PDF 补偿过采样。`roughness: 0` 仍走离散的完美 Fresnel/Snell 分支，而不是把很窄的连续 GGX 瓣冒充 delta。
 
 ## 程序化 flame 体积光
 
@@ -175,7 +212,21 @@ $$
 
 ## 统计
 
-stats JSON 的 `render.direct_light_sampling` 记录全局基础的 `importance` 或 `uniform`；粗糙水面的全局/均匀确定性双样本与介质内均匀选灯是基础模式之上的固定实现规则，因此二者合起来构成完整可复现策略。
+stats JSON 的 `render.direct_light_sampling` 记录全局基础的 `importance` 或 `uniform`；`render.clamp_direct` 与 `render.clamp_indirect` 记录 CLI 覆盖之后的实际阈值。粗糙水面的全局/均匀确定性双样本、介质内均匀选灯和全部 delta 灯逐灯求值是基础模式之上的固定实现规则，因此它们合起来构成完整可复现策略。
+
+路径贡献钳位以完整 RGB 贡献的最大通道为尺度。令 $M=\max(C_r,C_g,C_b)$、阈值为 $T$，则
+
+$$
+\mathbf C'=
+\begin{cases}
+\mathbf C\,T/M,&T>0\ \text{且}\ M>T,\\
+\mathbf C,&\text{其他情况}.
+\end{cases}
+$$
+
+第 0 个表面事件及相机直接可见的端点使用 `clamp_direct`，后续事件使用 `clamp_indirect`。每份独立的环境、emitter、volume、有限灯和 delta 灯贡献都在 throughput、可见性、介质透射与 MIS 之后单独钳位，再累加到 radiance；不会对已经相加的像素做硬截断。保色相缩放能压低孤立高光，但这是有偏估计器。默认阈值是 direct 64、indirect 16；任何能量、均值或收敛验证都必须用 `--clamp-direct 0 --clamp-indirect 0` 关闭它。
+
+stats 的 `firefly.direct_clamped_contributions` 与 `firefly.indirect_clamped_contributions` 记录两类实际触发次数。阈值为 0 时路径保持原加法与 RNG 行为，计数为 0。
 
 渲染统计的 `geometry` 节包含：
 
@@ -187,6 +238,6 @@ stats JSON 的 `render.direct_light_sampling` 记录全局基础的 `importance`
 
 含 water_surface 的渲染还在 `water` 节记录 `water_height_evaluations`、`water_tile_tests`、`water_roots_reported`、`water_medium_segments`、`water_rough_nee_attempts`、`water_rough_nee_contributions` 和 `water_delta_splits`。`water_solver_overflows` 与 `water_medium_errors` 是安全门；任一非零时渲染器直接报错而不接受输出。无水场景不分配该逐像素计数缓冲，也不改变原随机数序列。
 
-`--linear-output FILE.pfm` 不改变必需的 PNG 输出。PFM 为 `PF` 三通道、负 scale 表示小端 float32，并按规范从最下面一行写到最上面一行；数值是 Denoiser、曝光、色调映射和 sRGB 编码之前的原始线性 RGB 样本均值。启用时 stats 顶层 `linear_output` 记录对应文件名。
+`--linear-output FILE.pfm` 不改变必需的 PNG 输出。PFM 为 `PF` 三通道、负 scale 表示小端 float32，并按规范从最下面一行写到最上面一行；数值是贡献钳位之后、Denoiser、曝光、色调映射和 sRGB 编码之前的线性 RGB 样本均值。PFM 不会绕过 clamp；无偏参考必须同时把两个阈值设为 0。启用时 stats 顶层 `linear_output` 记录对应文件名。
 
 完整示例见 `scenes/`，定向测试场景见 `tests/scenes/`。

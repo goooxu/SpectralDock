@@ -122,8 +122,9 @@ $$
       }
       if (volume.collided != 0) {
         if (previous_delta != 0) {
-          radiance =
-              add(radiance, mul(throughput, volume.source));
+          accumulate_path_contribution(
+              radiance, mul(throughput, volume.source), clamp_threshold,
+              clamped_counter);
         }
         break;
       }
@@ -176,7 +177,7 @@ $$
                 (selection_pdf * distance2));
 ```
 
-连接段还先发出普通 OptiX shadow ray 检查表面遮挡。rectangle/disk/sphere 面积光的连接也增加同样的体积透射测试，所以火焰能衰减从其他灯到表面的光。面积光与 BSDF 的 MIS 结构保持不变，但灯方向 PDF 现在包含实际 $q_i$。
+连接段还先发出普通 OptiX shadow ray 检查表面遮挡。rectangle/disk/sphere 面积光、HDR 环境以及 point/directional delta 灯的连接也增加同样的体积透射测试，所以火焰能衰减从其他灯到表面的光。面积光与 BSDF 的 MIS 结构保持不变，delta 灯则逐盏求值且 MIS 权重为 1。
 
 ## 6. 安全边界、统计与性能
 
@@ -196,7 +197,7 @@ $$
 
 stats 单独记录 density evaluations、real collisions、light samples、majorant violations 和 tracking overflows。`traced_rays` 仍只计 `optixTrace`，所以新增大量纯 CUDA 密度求值可能增加 path trace 时间，却不增加射线数；此时 rays/s 不能单独代表火焰算法效率。
 
-Ember Forge 的正式配置使用 2048 spp、depth 12 且关闭 Denoiser。原因不是 Denoiser 不能处理亮色，而是当前 albedo/normal guide 只描述首次表面，没有体积特征或透射 guide；让正式图保留原始 Monte Carlo 结果，能更直接暴露硬支撑边界、分层和 firefly。
+Ember Forge 的正式配置使用 2048 spp、depth 12、direct 64 / indirect 16 贡献钳位且关闭 Denoiser。原因不是 Denoiser 不能处理亮色，而是当前 albedo/normal guide 只描述首次表面，没有体积特征或透射 guide；正式图保留未经神经重建的体积结构，同时用显式有偏钳位控制少量极端 firefly。要检查原始 Monte Carlo 长尾或比较能量，必须再传 `--clamp-direct 0 --clamp-indirect 0`；PFM 本身不会绕过钳位。
 
 ## 7. 当前边界
 

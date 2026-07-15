@@ -1,5 +1,5 @@
 {
-  "schema_version": 5,
+  "schema_version": 6,
   "camera": {
     "look_from": [0.0, 2.4, 7.0],
     "look_at": [0.0, 0.8, -0.4],
@@ -14,7 +14,9 @@
     "exposure": 0.0
   },
   "integrator": {
-    "direct_light_sampling": "uniform"
+    "direct_light_sampling": "uniform",
+    "clamp_direct": 0.0,
+    "clamp_indirect": 0.0
   },
   "render": {
     "width": 64,

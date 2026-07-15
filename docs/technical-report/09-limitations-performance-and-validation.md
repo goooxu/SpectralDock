@@ -7,7 +7,7 @@
 | 类别 | 含义 | SpectralDock 中的例子 | 增加 spp 能否解决 |
 |---|---|---|---|
 | 随机方差 | 有限样本围绕目标波动 | 小灯、太阳瓣、尖锐高光的噪点 | 能缓解，约按 $1/\sqrt N$ |
-| 数值偏差 | 算法求解了近似目标 | `max_depth` 截断长路径 | 不能 |
+| 数值偏差 | 算法求解了近似目标 | `max_depth` 截断、非零贡献钳位 | 不能 |
 | 模型误差 | 数学模型省略现实机制 | RGB、flame 无散射、无色散 | 不能 |
 | 实现缺陷 | 代码没有实现既定公式 | PDF 漏掉选灯概率、方向写反 | 不能，必须修代码 |
 
@@ -20,14 +20,15 @@
 - 以稳态表面光传输为主，没有通用雾、烟或散射参与介质、次表面散射与传播时间；特化的 flame 只做吸收—自发光，water 只做均匀 RGB 吸收；
 - 使用线性 RGB，不模拟波长、色散、衍射或偏振；
 - `max_depth` 会截断最后一个已处理表面事件之后的继续路径；最后一个事件自身的显式直接光仍完整估计；
+- schema v6 默认以 direct 64 / indirect 16 保色相钳位独立路径贡献，能控制 firefly 但会引入偏差；无偏参考必须把两者都设为 0；
 - Radiance HDR 环境有显式重要性采样；constant、sky 渐变和太阳瓣仍没有；
 - 纹理 emitter 和 mesh emitter 不能进入 NEE 灯列表；
-- 有限灯在普通空气顶点按发光功率代理选择，粗糙水面确定性地各取一份全局分布和均匀索引样本，介质内其他顶点用均匀索引；球外粗糙水面对单面 sphere 使用可见立体角，普通顶点与球内/近球回退仍采整个球面。
+- 有限灯在普通空气顶点按发光功率代理选择，粗糙水面确定性地各取一份全局分布和均匀索引样本，介质内其他顶点用均匀索引；所有球外连续 BSDF 顶点对 sphere 使用可见立体角，球内/近球回退仍采整个球面；point/directional 逐灯求值，最多 32 盏，shadow-ray 成本线性增长。
 
 ### 材质
 
 - `metal` 是纯 GGX 镜面微表面瓣，$\mathbf F_0$ 直接取自 `base_color`，不是通用 metallic workflow；
-- `metal` 的 GGX 仍采普通 NDF，掠射角方差可能较高；粗糙 `dielectric`/`water` 使用 Heitz GGX VNDF；
+- `metal` 与粗糙 `dielectric`/`water` 都使用 Heitz GGX VNDF；这降低掠射角拒绝方差，但仍是单次散射微表面模型，不含多重散射补偿；
 - `dielectric` 的 `roughness = 0` 是 delta 界面，非零时是 Walter 单次散射 GGX 反射/透射；无 `water_surface` 的光滑兼容路径固定空气外部介质、使用 Schlick 且没有嵌套与体吸收，含水路径使用精确 Fresnel、严格介质栈与 RGB Beer；
 - 粗糙 water 为了降低反射方差，把 BSDF 反射分支概率设为 $\max(F,0.5)$；物理 BSDF 仍使用精确 Fresnel $F$，路径权重和 MIS PDF 用实际分支概率补偿，所以这是无偏采样改变而不是更改材质能量；
 - 场景解析不强制被动材质的 `base_color ≤ 1`，能量合理性部分依赖输入；
@@ -39,7 +40,7 @@
 - alpha 是二值 cutoff，不是连续透明或折射；
 - 固定世界空间 `scene_epsilon` 不随场景尺度变化；
 - 色调映射是逐通道 ACES 风格拟合曲线，不是完整 ACES；
-- 8 bit PNG 不保存原始 HDR 缓冲区；可选 PFM 保存未降噪、未显示映射的原始线性 RGB 样本均值，但没有 OpenEXR 的元数据、任意通道和压缩能力。
+- 8 bit PNG 不保存 HDR 缓冲区；可选 PFM 保存贡献钳位之后、未降噪和未显示映射的线性 RGB 样本均值，没有 OpenEXR 的元数据、任意通道和压缩能力。只有 clamp 0/0 的 PFM 才适合无偏均值验证。
 - sRGB 纹理先对编码码值做硬件双线性过滤，之后才解码到线性空间。
 
 发光材质命中后立即终止路径，不会同时反射；HDR 环境是纬经贴图，不是光度学天空，也不包含大气散射模型。
@@ -90,7 +91,7 @@ class Event {
 
 ## 4. 射线吞吐量怎样理解
 
-每像素记录实际调用 `optixTrace` 的次数，包括常规 radiance 与二值 shadow。普通粗糙介电的当前界面 NEE 每个灯域至多增加一次 shadow；粗糙 water 的有限灯域有两份分层样本，因此连同环境域最多增加三次。光滑首水面 split 会为被保留的第二个子路径增加后续 radiance 查询。令 $N_{\mathrm{rays}}$ 对应 `traced_rays`，$t_{\mathrm{render}}$ 对应以毫秒计的 `render_ms`：
+每像素记录实际调用 `optixTrace` 的次数，包括常规 radiance 与二值 shadow。普通粗糙介电的随机 NEE 每个灯域至多增加一次 shadow；粗糙 water 的有限灯域有两份分层样本，因此连同环境域最多增加三次；此外每盏通过余弦/BSDF 检查的 point/directional 都可能增加一次 shadow。光滑首水面 split 会为被保留的第二个子路径增加后续 radiance 查询。令 $N_{\mathrm{rays}}$ 对应 `traced_rays`，$t_{\mathrm{render}}$ 对应以毫秒计的 `render_ms`：
 
 $$
 \text{rays/s}=
@@ -100,7 +101,7 @@ $$
 
 它不是纯 BVH microbenchmark：材质计算、随机数、分支、纹理和路径循环都在同一个 launch 内。不同场景的 rays/s 差异不应简单解释为硬件快慢。
 
-`traced_rays` 也不等于 $W\times H\times \mathrm{spp}\times D_{\max}$，其中 $D_{\max}$ 对应 `max_depth`：路径可提前终止，普通表面可能为有限灯和环境各发一条 shadow ray，粗糙 water 还会多取一份有限灯样本，而首个光滑水面 split 可能继续两条有界子路径。
+`traced_rays` 也不等于 $W\times H\times \mathrm{spp}\times D_{\max}$，其中 $D_{\max}$ 对应 `max_depth`：路径可提前终止，普通表面可能为有限灯、环境和每盏 delta 灯各发 shadow ray，粗糙 water 还会多取一份有限灯样本，而首个光滑水面 split 可能继续两条有界子路径。
 
 逐像素计数缓冲区在 launch 后回传到主机，并求和得到公式中的 $N_{\mathrm{rays}}$：
 
@@ -112,6 +113,9 @@ $$
                         volume_counts.size() * sizeof(VolumeCounters), stream);
   water_count.download(water_counts.data(),
                        water_counts.size() * sizeof(WaterCounters), stream);
+  if (firefly_clamp_enabled) {
+    firefly_count.download(&firefly_counts, sizeof(firefly_counts), stream);
+  }
   check_cuda(cudaStreamSynchronize(stream),
              "cudaStreamSynchronize(output)");
   unsigned long long traced_rays = 0;
@@ -153,26 +157,27 @@ $$
 1. Host-only 单元测试检查向量、场景解析、OBJ、PNG/HDR/PFM I/O、CDF 分布和输入语义；
 2. parser fixtures 覆盖 primitive、灯、UV、alpha、实例与共享 GAS 的输入组合，但不执行 GPU 着色；
 3. 无 golden 的积分器 GPU 对照覆盖末端 bound/unbound MIS、HDR 环境唯一照明、旋转、确定性、零强度黑场，以及 uniform/importance 的高 spp 均值与低 spp MSE；
-4. 多灯对照分别触发 rectangle、disk、sphere、flame，再验证功率选择降低强弱灯场景的低 spp MSE；
+4. 多灯对照分别触发 rectangle、disk、sphere、flame，再验证功率选择降低强弱灯场景的低 spp MSE；sphere 对所有连续 BSDF 顶点验证可见锥采样，metal 另验证 VNDF 的均值与低样本误差；
 5. 综合 mesh GPU fixture 定向覆盖共享 GAS、实例变换、UV、平滑法线、alpha 和 custom primitives；
-6. water GPU 对照用线性 PFM 检查粗糙反射/透射、两侧介质、Beer、TIR、透明阻断、光滑有界 split，并以等散射阶数（bound depth 2 / unbound depth 3）比较高 spp 均值与三 seed 低 spp MSE；Moonlit 另以同一 `roughness: 0.12` 积分对象做维护级 time-to-error：一份独立 seed 的 8192 spp 粗糙 NEE 线性参考，对比三 seed 的 NEE 1024 spp 与仅删除显式灯绑定、保留 emitter 几何的 BSDF-only 2048 spp；两者平均 GPU render 时间须在 15% 内，且 NEE 在反射/水下 ROI 的归一化 MSE 都更低；
-7. Compute Sanitizer 对 mesh、water、flame 和 HDR environment fixture 查找越界、竞争和未初始化数据；
-8. 技术报告 pytest 逐字核对引用的源码片段，并检查数学标记没有使用渲染环境不支持的宏，避免报告与实现漂移。
+6. delta 灯对照检查 point 逆平方、directional 距离不变性、背面、遮挡、逐灯确定性、粗糙介电两侧和水中 Beer；firefly 对照检查 direct/indirect 独立触发、最大 RGB 通道保色相缩放、计数器、CLI 覆盖和 clamp 0/0 兼容路径；
+7. water GPU 对照用 clamp 0/0 线性 PFM 检查粗糙反射/透射、两侧介质、Beer、TIR、透明阻断、光滑有界 split，并以等散射阶数（bound depth 2 / unbound depth 3）比较高 spp 均值与三 seed 低 spp MSE；Moonlit 另以同一 `roughness: 0.12` 积分对象做维护级 time-to-error：一份独立 seed 的 8192 spp 粗糙 NEE 线性参考，对比三 seed 的 NEE 1024 spp 与仅删除显式灯绑定、保留 emitter 几何的 BSDF-only 2048 spp；两者平均 GPU render 时间须在 15% 内，且 NEE 在反射/水下 ROI 的归一化 MSE 都更低；
+8. Compute Sanitizer 对 mesh、water、flame、HDR environment 和新 delta/clamp fixture 查找越界、竞争和未初始化数据；
+9. 技术报告 pytest 逐字核对引用的源码片段，并检查数学标记没有使用渲染环境不支持的宏，避免报告与实现漂移。
 
 唯一保留的像素 golden 是 mesh fixture 的 RTX 5090 基线；积分器对照的临时 PNG 和 stats 会自动清理，不保存哈希。mesh golden 只证明定向输出与已接受结果逐字节相同，不能独立证明物理正确；跨 GPU、编译器或 `--use_fast_math` 的少量浮点差异，也不自动等于数学回归。正式 gallery 与 stats 继续作为作品和一次运行记录保存，但不再是自动测试门禁；默认 acceptance 不设置性能阈值或 profiling 验收，耗时较高的 Moonlit 维护脚本才在同一次手工运行内检查相对时间。可靠结论仍需要公式审查、定向场景和数值/视觉证据结合。
 
-需要特别区分：这组 host-only 检查不编译 CUDA/OptiX 渲染器，不执行路径着色，也不输出参考像素。因此它们不是 CPU reference renderer，不能代替上述 GPU 对照、sanitizer 或 golden。RR/MIS 实现现在只位于设备路径：第 4、5 章负责公式与源码审查，现有 GPU MIS 对照只覆盖末端 bound/unbound 策略，并不执行俄罗斯轮盘或构造极端 PDF；这些性质不再由 host-only CI 自动验证。
+需要特别区分：这组 host-only 检查不编译 CUDA/OptiX 渲染器，不执行路径着色，也不输出参考像素。因此它们不是 CPU reference renderer，不能代替上述 GPU 对照、sanitizer 或 golden。RR、MIS、delta NEE 与贡献钳位实现只位于设备路径；第 4、5 章负责公式与源码审查，数值性质由 clamp 0/0 的 GPU 对照验证。
 
 ## 7. 从一个像素重新串起全文
 
 1. 在像素与镜头上取样，得到相机射线；
 2. OptiX 遍历 IAS/GAS/BVH，内建或自定义 intersection 返回最近交点；解析水面在 tile AABB 内求高度场根，得到法线、UV 和水材质；
-3. 支持 NEE 的表面对有限灯和 HDR 环境分别取样：普通有限灯按顶点选择全局或均匀 PMF，粗糙 water 则从全局与均匀索引各取一份确定性样本；Lambert/metal 只接正半球，粗糙介电可接当前界面的反射或透射侧；透射在栈副本中切换一次并乘 Beer，任何后续透明边界都由二值 shadow 阻断；flame 再沿连接段估计吸收；
+3. 支持 NEE 的表面对有限灯和 HDR 环境分别取样，并逐盏连接 point/directional：普通有限灯按顶点选择全局或均匀 PMF，粗糙 water 则从全局与均匀索引各取一份确定性样本；Lambert/metal 只接正半球，粗糙介电可接当前界面的反射或透射侧；透射在栈副本中切换一次并乘 Beer，任何后续透明边界都由二值 shadow 阻断；flame 再沿连接段估计吸收；
 4. BSDF 选择下一方向，吞吐量乘 `scatter.weight`；连续事件对应 $f_s|\mathbf n\cdot\boldsymbol\omega_i|/p_B$，粗糙介电 PDF 含实际反射/透射分支概率与透射 Jacobian，粗糙水面至少把一半 BSDF 样本分配给反射；含水路径用介质栈决定两侧 IOR 并在传播段累计 Beer；首个光滑水面改为一次确定性、至多两状态的 Fresnel split；
-5. 普通面积灯 NEE 与命中灯面、环境 NEE 与 BSDF miss 分别用 power heuristic MIS 分权；粗糙 water 的两份有限灯样本和 BSDF-hit 用三技术 balance；flame 保留互斥体积估计器；
+5. 普通面积灯 NEE 与命中灯面、环境 NEE 与 BSDF miss 分别用 power heuristic MIS 分权；粗糙 water 的两份有限灯样本和 BSDF-hit 用三技术 balance；point/directional 的 delta NEE 权重为 1；flame 保留互斥体积估计器；
 6. 路径在 miss、emitter、无效散射、轮盘或最大深度处结束；最大深度的最后一个表面事件仍先完整估计有限灯与环境域，粗糙 water 的有限灯域包含两份样本；
-7. 多条路径的线性 RGB 平均成为 HDR beauty；
-8. 原始线性样本均值可选写 PFM；展示分支可选降噪后，再执行曝光、ACES 风格拟合、sRGB 编码和 8 bit 量化。程序化 flame 的吸收—自发光见第 11 章，解析水面的求交与介电传输见第 12 章。
+7. 每份完成 throughput、可见性、介质与 MIS 的 RGB 贡献按 direct/indirect 阈值独立钳位；0 表示关闭。多条路径的线性 RGB 平均成为 HDR beauty；
+8. 钳位后、降噪前的线性样本均值可选写 PFM；展示分支可选降噪后，再执行曝光、ACES 风格拟合、sRGB 编码和 8 bit 量化。程序化 flame 的吸收—自发光见第 11 章，解析水面的求交与介电传输见第 12 章。
 
 渲染器真正的核心正是这条链：**渲染方程给出目标，Monte Carlo 构造估计，几何与材质定义路径，OptiX/GPU 把大量路径高效执行。**
 

@@ -109,6 +109,7 @@ if(BUILD_TESTING)
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/scenes/geometry-smoke.json"
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/scenes/mesh-composite-smoke.json"
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/scenes/environment-smoke.json"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/scenes/delta-light-smoke.json"
     "${CMAKE_CURRENT_SOURCE_DIR}/scenes/material-cathedral.json"
     "${CMAKE_CURRENT_SOURCE_DIR}/scenes/neon-koi.json"
     "${CMAKE_CURRENT_SOURCE_DIR}/scenes/celestial-archive.json"

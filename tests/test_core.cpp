@@ -219,7 +219,13 @@ void test_hdr_and_sampling_distributions() {
   large.edge_u = {10.0f, 0.0f, 0.0f};
   large.edge_v = {0.0f, 0.0f, 10.0f};
   large.emission = {10.0f, 10.0f, 10.0f};
-  const std::vector<Light> lights{small, large};
+  Light point;
+  point.type = LightType::Point;
+  point.emission = {100.0f, 100.0f, 100.0f};
+  Light directional;
+  directional.type = LightType::Directional;
+  directional.emission = {100.0f, 100.0f, 100.0f};
+  const std::vector<Light> lights{small, point, large, directional};
   const FiniteLightDistribution uniform_lights =
       build_finite_light_distribution(lights, DirectLightSampling::Uniform);
   const FiniteLightDistribution important_lights =
@@ -227,6 +233,8 @@ void test_hdr_and_sampling_distributions() {
   check(uniform_lights.cdf.size() == 3 &&
             uniform_lights.probabilities.size() == 2,
         "finite-light distribution dimensions");
+  check(uniform_lights.indices == std::vector<std::uint32_t>({0u, 2u}),
+        "finite-light distribution excludes delta lights");
   near(uniform_lights.probabilities[0], 0.5f, 1.0e-6f,
        "uniform finite-light probability");
   check(important_lights.probabilities[1] > 0.98f &&
@@ -237,6 +245,12 @@ void test_hdr_and_sampling_distributions() {
          important_lights.cdf[i + 1] - important_lights.cdf[i], 0.0f,
          "finite-light CDF interval source of truth");
   }
+  const FiniteLightDistribution delta_only =
+      build_finite_light_distribution({point, directional},
+                                      DirectLightSampling::Importance);
+  check(delta_only.indices.empty() && delta_only.probabilities.empty() &&
+            delta_only.cdf == std::vector<float>({0.0f}),
+        "delta-only scene has an empty stochastic-light domain");
 
   ImageRgb32f black;
   black.width = 2;
@@ -387,7 +401,7 @@ f 1/1 2/2 3/3
 )obj");
   const auto scene_path = directory.path / "scene.json";
   write_text(scene_path, R"json({
-    "schema_version": 5,
+    "schema_version": 6,
     "camera": {"look_from":[0,1,4],"look_at":[0,0,0],"up":[0,1,0],"vfov":40},
     "background": {"type":"constant","color":[0,0,0]},
     "textures": [],
@@ -419,7 +433,7 @@ f 1/1 2/2 3/3
              "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n");
   const auto textured = directory.path / "textured-no-uv.json";
   write_text(textured, R"json({
-    "schema_version": 5,
+    "schema_version": 6,
     "camera": {"look_from":[0,1,4],"look_at":[0,0,0],"up":[0,1,0],"vfov":40},
     "background": {"type":"constant","color":[0,0,0]},
     "textures": [{"name":"paint","type":"constant","color":[1,1,1]}],
@@ -432,7 +446,7 @@ f 1/1 2/2 3/3
 
   const auto bad_scale = directory.path / "bad-scale.json";
   write_text(bad_scale, R"json({
-    "schema_version": 5,
+    "schema_version": 6,
     "camera": {"look_from":[0,1,4],"look_at":[0,0,0],"up":[0,1,0],"vfov":40},
     "background": {"type":"constant","color":[0,0,0]},
     "textures": [], "materials": [{"name":"m","type":"lambertian"}],
@@ -454,7 +468,7 @@ void test_flame_lights() {
   })json";
 
   const auto document = [](const std::string& lights) {
-    return std::string(R"json({"schema_version":5,
+    return std::string(R"json({"schema_version":6,
       "camera":{"look_from":[0,4,4],"look_at":[0,0,0],"up":[0,1,0],"vfov":40},
       "background":{"type":"constant","color":[0,0,0]},
       "textures":[], "materials":[{"name":"mat","type":"lambertian"}],
@@ -555,6 +569,144 @@ void test_flame_lights() {
                "flame count limit");
 }
 
+void test_delta_lights_and_clamps() {
+  TemporaryDirectory directory;
+  const auto scene_path = directory.path / "delta-lights.json";
+  const auto document = [](const std::string& integrator,
+                           const std::string& lights) {
+    return std::string(R"json({"schema_version":6,
+      "camera":{"look_from":[0,1,4],"look_at":[0,0,0],"up":[0,1,0],"vfov":40},
+      "background":{"type":"constant","color":[0,0,0]},)json") +
+           integrator +
+           R"json("textures":[],"materials":[{"name":"mat","type":"lambertian"}],
+      "objects":[{"name":"ball","type":"sphere","center":[0,0,0],
+                  "radius":1,"material":"mat"}],"lights":)json" +
+           lights + "}";
+  };
+  const std::string valid_lights = R"json([
+    {"name":"work","type":"point","position":[1,2,3],
+     "intensity":[4,5,6]},
+    {"name":"sun","type":"directional","direction":[0,3,4],
+     "irradiance":[1,2,3]}
+  ])json";
+
+  write_text(scene_path, document(
+      R"json("integrator":{"direct_light_sampling":"uniform",
+                            "clamp_direct":0,"clamp_indirect":2.5},)json",
+      valid_lights));
+  const Scene explicit_scene = load_scene(scene_path);
+  check(explicit_scene.lights.size() == 2,
+        "point and directional light parsing");
+  const Light& point = explicit_scene.lights[0];
+  check(point.type == LightType::Point && point.object_id == kInvalidId,
+        "point light type and geometry independence");
+  check(length_squared(point.position - Vec3{1.0f, 2.0f, 3.0f}) < 1.0e-12f &&
+            length_squared(point.emission - Vec3{4.0f, 5.0f, 6.0f}) <
+                1.0e-12f,
+        "point light position and intensity storage");
+  const Light& directional = explicit_scene.lights[1];
+  check(directional.type == LightType::Directional &&
+            directional.object_id == kInvalidId,
+        "directional light type and geometry independence");
+  check(length_squared(directional.axis - Vec3{0.0f, 0.6f, 0.8f}) <
+            1.0e-12f &&
+            length_squared(directional.emission - Vec3{1.0f, 2.0f, 3.0f}) <
+                1.0e-12f,
+        "directional surface-to-light direction and irradiance storage");
+
+  write_text(scene_path, document(
+      "",
+      R"json([{"name":"extreme","type":"directional",
+                "direction":[3e38,0,0],"irradiance":[1,1,1]}])json"));
+  const Vec3 extreme_axis = load_scene(scene_path).lights[0].axis;
+  check(finite(extreme_axis) &&
+            length_squared(extreme_axis - Vec3{1.0f, 0.0f, 0.0f}) < 1.0e-12f,
+        "directional normalization remains stable near float32 limits");
+
+  near(explicit_scene.integrator.clamp_direct, 0.0f, 0.0f,
+       "explicit direct clamp disable");
+  near(explicit_scene.integrator.clamp_indirect, 2.5f, 0.0f,
+       "explicit indirect clamp");
+
+  write_text(scene_path, document("", valid_lights));
+  const Scene default_scene = load_scene(scene_path);
+  near(default_scene.integrator.clamp_direct, 64.0f, 0.0f,
+       "default direct clamp");
+  near(default_scene.integrator.clamp_indirect, 16.0f, 0.0f,
+       "default indirect clamp");
+
+  const auto reject_lights = [&](const std::string& lights,
+                                 const std::string& expected,
+                                 const std::string& message) {
+    write_text(scene_path, document("", lights));
+    expect_error([&] { (void)load_scene(scene_path); }, expected, message);
+  };
+  reject_lights(
+      R"json([{"name":"p","type":"point","position":[0,1,0],
+                "intensity":[0,0,0]}])json",
+      "must contain positive energy", "zero point intensity rejection");
+  reject_lights(
+      R"json([{"name":"p","type":"point","position":[0,1,0],
+                "intensity":[1,-1,1]}])json",
+      "components must be finite and non-negative",
+      "negative point intensity rejection");
+  reject_lights(
+      R"json([{"name":"p","type":"point","position":[0,1,0],
+                "intensity":[1,1,1],"emission":[1,1,1]}])json",
+      "key is not valid for this light type",
+      "point emission alias rejection");
+  reject_lights(
+      R"json([{"name":"p","type":"point","position":[0,1,0],
+                "intensity":[1,1,1],"object":"ball"}])json",
+      "key is not valid for this light type",
+      "point geometry binding rejection");
+  reject_lights(
+      R"json([{"name":"sun","type":"directional","direction":[0,0,0],
+                "irradiance":[1,1,1]}])json",
+      "must be non-zero", "zero directional vector rejection");
+  reject_lights(
+      R"json([{"name":"sun","type":"directional","direction":[0,1,0],
+                "irradiance":[0,0,0]}])json",
+      "must contain positive energy", "zero directional irradiance rejection");
+  reject_lights(
+      R"json([{"name":"sun","type":"directional","direction":[0,1,0],
+                "irradiance":[1,1,1],"position":[0,2,0]}])json",
+      "key is not valid for this light type",
+      "directional position rejection");
+
+  const auto delta_array = [](std::size_t count) {
+    std::string lights = "[";
+    for (std::size_t i = 0; i < count; ++i) {
+      if (i != 0) lights += ',';
+      lights += "{\"name\":\"delta-" + std::to_string(i) + "\",";
+      if ((i & 1u) == 0u) {
+        lights += "\"type\":\"point\",\"position\":[0,1,0],"
+                  "\"intensity\":[1,1,1]}";
+      } else {
+        lights += "\"type\":\"directional\",\"direction\":[0,1,0],"
+                  "\"irradiance\":[1,1,1]}";
+      }
+    }
+    return lights + ']';
+  };
+  write_text(scene_path, document("", delta_array(32)));
+  check(load_scene(scene_path).lights.size() == 32,
+        "delta light count accepts the limit");
+  reject_lights(delta_array(33), "at most 32 point and directional lights",
+                "delta light count limit");
+
+  write_text(scene_path, document(
+      R"json("integrator":{"clamp_direct":-1,"clamp_indirect":16},)json",
+      "[]"));
+  expect_error([&] { (void)load_scene(scene_path); }, "must be non-negative",
+               "negative direct clamp rejection");
+  write_text(scene_path, document(
+      R"json("integrator":{"clamp_direct":64,"clamp_indirect":-1},)json",
+      "[]"));
+  expect_error([&] { (void)load_scene(scene_path); }, "must be non-negative",
+               "negative indirect clamp rejection");
+}
+
 void test_water_surfaces() {
   TemporaryDirectory directory;
   const auto scene_path = directory.path / "water.json";
@@ -568,7 +720,7 @@ void test_water_surfaces() {
      ]})json";
   const auto document = [](const std::string& materials,
                            const std::string& objects) {
-    return std::string(R"json({"schema_version":5,
+    return std::string(R"json({"schema_version":6,
       "camera":{"look_from":[0,4,4],"look_at":[0,0,0],"up":[0,1,0],"vfov":40},
       "background":{"type":"constant","color":[0,0,0]},
       "textures":[],"materials":)json") + materials +
@@ -841,15 +993,15 @@ void test_schema_version() {
   expect_error([&] { (void)load_scene(path); }, "schema_version",
                "missing schema version rejection");
 
-  for (const std::uint32_t version : {1u, 2u, 3u, 4u, 6u}) {
+  for (const std::uint32_t version : {1u, 2u, 3u, 4u, 5u, 7u}) {
     write_text(path, "{\"schema_version\":" + std::to_string(version) +
                          "," + body);
     expect_error([&] { (void)load_scene(path); }, "schema_version",
-                 "non-v5 schema rejection");
+                 "non-v6 schema rejection");
   }
 
-  write_text(path, "{\"schema_version\":\"5\"," + body);
-  expect_error([&] { (void)load_scene(path); }, "expected the integer 5",
+  write_text(path, "{\"schema_version\":\"6\"," + body);
+  expect_error([&] { (void)load_scene(path); }, "expected the integer 6",
                "non-integer schema version rejection");
 }
 
@@ -867,13 +1019,15 @@ void test_environment_scene_parser() {
   })json";
   const auto document = [&](const std::string& integrator,
                             const std::string& background) {
-    return std::string("{\"schema_version\":5,") + integrator +
+    return std::string("{\"schema_version\":6,") + integrator +
            "\"background\":" + background + "," + tail;
   };
   const std::string environment =
       R"json({"type":"environment","path":"studio.hdr","intensity":2.5,"rotation_degrees":-45,"exposure":1})json";
   write_text(path, document(
-                       R"json("integrator":{"direct_light_sampling":"uniform"},)json",
+                       R"json("integrator":{"direct_light_sampling":"uniform",
+                                             "clamp_direct":0,
+                                             "clamp_indirect":0},)json",
                        environment));
   const Scene scene = load_scene(path, SceneLoadOptions{false});
   check(scene.background.type == BackgroundType::Environment,
@@ -886,6 +1040,10 @@ void test_environment_scene_parser() {
        "environment rotation");
   check(scene.integrator.direct_light_sampling == DirectLightSampling::Uniform,
         "uniform direct-light sampling parse");
+  near(scene.integrator.clamp_direct, 0.0f, 0.0f,
+       "environment fixture direct clamp disabled");
+  near(scene.integrator.clamp_indirect, 0.0f, 0.0f,
+       "environment fixture indirect clamp disabled");
   expect_error([&] { (void)load_scene(path); }, "asset not found",
                "missing environment asset rejection");
 
@@ -894,6 +1052,10 @@ void test_environment_scene_parser() {
   check(default_scene.integrator.direct_light_sampling ==
             DirectLightSampling::Importance,
         "default direct-light importance sampling");
+  near(default_scene.integrator.clamp_direct, 64.0f, 0.0f,
+       "default direct clamp parse");
+  near(default_scene.integrator.clamp_indirect, 16.0f, 0.0f,
+       "default indirect clamp parse");
 
   write_text(path, document(
                        R"json("integrator":{"direct_light_sampling":"power"},)json",
@@ -913,10 +1075,11 @@ void test_scene_parser() {
   const auto path = temporary(".json");
   std::ofstream output(path);
   output << R"json({
-    "schema_version": 5,
+    "schema_version": 6,
     "camera": {"look_from":[0,1,4],"look_at":[0,0,0],"up":[0,1,0],"vfov":40},
     "background": {"type":"constant","color":[0.1,0.2,0.3],"exposure":1},
-    "integrator": {"direct_light_sampling":"uniform"},
+    "integrator": {"direct_light_sampling":"uniform",
+                   "clamp_direct":12,"clamp_indirect":3},
     "render": {"width":64,"height":32,"spp":2,"max_depth":4,"seed":7},
     "textures": [{"name":"white","type":"constant","color":[0.8,0.8,0.8]}],
     "materials": [{"name":"mat","type":"lambertian","texture":"white"},
@@ -944,6 +1107,10 @@ void test_scene_parser() {
   near(scene.background.exposure, 1.0f, 1.0e-6f, "background exposure");
   check(scene.integrator.direct_light_sampling == DirectLightSampling::Uniform,
         "scene integrator mode");
+  near(scene.integrator.clamp_direct, 12.0f, 0.0f,
+       "scene direct clamp");
+  near(scene.integrator.clamp_indirect, 3.0f, 0.0f,
+       "scene indirect clamp");
 }
 
 void check_ember_forge_contract(const Scene& scene,
@@ -986,6 +1153,7 @@ int main(int argc, char** argv) {
     test_scene_parser();
     test_meshes();
     test_flame_lights();
+    test_delta_lights_and_clamps();
     test_water_surfaces();
     for (int i = 1; i < argc; ++i) {
       const std::filesystem::path path = argv[i];

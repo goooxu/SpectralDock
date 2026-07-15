@@ -18,17 +18,19 @@
     "max_depth": 12,
     "seed": 808,
     "denoised": true,
-    "direct_light_sampling": "importance"
+    "direct_light_sampling": "importance",
+    "clamp_direct": 64.0,
+    "clamp_indirect": 16.0
   },
   "timings_ms": {
-    "bvh_build": 10.641951560974121,
-    "render": 6159.0126953125,
-    "denoise": 12.158111572265625,
-    "total": 10571.269093
+    "bvh_build": 6.722047805786133,
+    "render": 6628.83642578125,
+    "denoise": 11.920127868652344,
+    "total": 12742.227432
   },
   "memory": {
     "peak_device_bytes": 1994719232,
-    "peak_tracked_device_bytes": 651115972
+    "peak_tracked_device_bytes": 651116044
   },
   "geometry": {
     "objects": 36,
@@ -38,8 +40,12 @@
     "gas_count": 36
   },
   "performance": {
-    "traced_rays": 4226251047,
-    "rays_per_second": 686189695.6660788
+    "traced_rays": 4250011154,
+    "rays_per_second": 641139844.3127384
+  },
+  "firefly": {
+    "direct_clamped_contributions": 0,
+    "indirect_clamped_contributions": 28481
   },
   "volume": {
     "volume_density_evaluations": 0,
@@ -49,14 +55,14 @@
     "volume_tracking_overflows": 0
   },
   "water": {
-    "water_height_evaluations": 13179520982,
-    "water_tile_tests": 1704266814,
-    "water_roots_reported": 276339417,
-    "water_medium_segments": 238141315,
+    "water_height_evaluations": 13239801692,
+    "water_tile_tests": 1709683496,
+    "water_roots_reported": 277840586,
+    "water_medium_segments": 253017452,
     "water_solver_overflows": 0,
     "water_medium_errors": 0,
-    "water_rough_nee_attempts": 398546826,
-    "water_rough_nee_contributions": 233686645,
+    "water_rough_nee_attempts": 398730722,
+    "water_rough_nee_contributions": 233784483,
     "water_delta_splits": 0
   }
 }

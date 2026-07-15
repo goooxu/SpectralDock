@@ -3,6 +3,8 @@
 
 import copy
 import json
+import math
+import struct
 import subprocess
 import sys
 import tempfile
@@ -18,7 +20,7 @@ ROI = (4, 4, 44, 44)
 
 def base_scene():
     return {
-        "schema_version": 5,
+        "schema_version": 6,
         "camera": {
             "look_from": [0.0, 0.0, 4.0],
             "look_at": [0.0, 0.0, 0.0],
@@ -27,7 +29,11 @@ def base_scene():
             "aperture": 0.0,
             "focus_distance": 4.0,
         },
-        "integrator": {"direct_light_sampling": "importance"},
+        "integrator": {
+            "direct_light_sampling": "importance",
+            "clamp_direct": 0.0,
+            "clamp_indirect": 0.0,
+        },
         "background": {
             "type": "constant",
             "color": [0.0, 0.0, 0.0],
@@ -152,6 +158,38 @@ def render(renderer, scene_data, directory, name, mode, spp, seed,
     return image, stats
 
 
+def render_linear_probe(renderer, scene_data, directory, name, spp, seed):
+    data = copy.deepcopy(scene_data)
+    data["render"].update({"width": 1, "height": 1, "spp": spp,
+                           "max_depth": 2, "seed": seed,
+                           "denoise": False})
+    scene = directory / (name + ".json")
+    output = directory / (name + ".png")
+    linear = directory / (name + ".pfm")
+    scene.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    subprocess.run(
+        [
+            str(renderer), "--scene", str(scene), "--output", str(output),
+            "--linear-output", str(linear), "--width", "1", "--height", "1",
+            "--spp", str(spp), "--max-depth", "2", "--seed", str(seed),
+            "--no-denoise",
+        ],
+        check=True,
+    )
+    with linear.open("rb") as stream:
+        if stream.readline() != b"PF\n" or stream.readline() != b"1 1\n":
+            raise RuntimeError("unexpected sphere-boundary PFM header")
+        if float(stream.readline()) >= 0.0:
+            raise RuntimeError("expected little-endian sphere-boundary PFM")
+        payload = stream.read()
+    if len(payload) != 12:
+        raise RuntimeError("unexpected sphere-boundary PFM payload")
+    values = struct.unpack("<3f", payload)
+    if any(not math.isfinite(value) for value in values):
+        raise RuntimeError("non-finite sphere-boundary PFM value")
+    return values
+
+
 def bound_emitter_mis_scene():
     scene = base_scene()
     scene["materials"].extend(
@@ -211,6 +249,34 @@ def bound_emitter_mis_scene():
     return scene
 
 
+def sphere_cone_boundary_scene(bound):
+    scene = base_scene()
+    scene["camera"].update(
+        {"look_from": [10.0, 0.0, 0.02], "look_at": [0.0, 0.0, 0.0],
+         "up": [0.0, 1.0, 0.0], "vfov": 0.001,
+         "focus_distance": 10.0}
+    )
+    scene["materials"][0]["base_color"] = [1.0, 1.0, 1.0]
+    center = [0.0, 0.0, 1.00025]
+    if bound:
+        scene["materials"].append(
+            {"name": "sphere_emitter", "type": "emitter",
+             "emission": [1.0, 1.0, 1.0]}
+        )
+        scene["objects"].append(
+            {"name": "sphere_emitter", "type": "sphere", "center": center,
+             "radius": 1.0, "material": "sphere_emitter"}
+        )
+    light = {
+        "name": "near_sphere", "type": "sphere", "position": center,
+        "radius": 1.0, "emission": [1.0, 1.0, 1.0],
+    }
+    if bound:
+        light["object"] = "sphere_emitter"
+    scene["lights"] = [light]
+    return scene
+
+
 def metric(tree, name):
     if isinstance(tree, dict):
         if name in tree:
@@ -259,6 +325,38 @@ def main():
     with tempfile.TemporaryDirectory(prefix="spectraldock-light-importance-") as tmp:
         directory = Path(tmp)
         lights = representative_lights()
+
+        # The true vertex is only 2.5 epsilon outside this sphere, while the
+        # shifted continuation origin falls inside the cone/area fallback
+        # band. Bound NEE + BSDF-hit MIS
+        # must therefore reconstruct the sphere-cone PDF from the unshifted
+        # predecessor vertex. An unbound copy is the NEE-only reference; the
+        # deliberately epsilon-scale gap also exercises the renderer's short
+        # shadow-segment rejection, so an infinite-precision closed form is not
+        # the appropriate reference for this numerical boundary fixture.
+        boundary_spp = 16384
+        bound_boundary = render_linear_probe(
+            renderer, sphere_cone_boundary_scene(True), directory,
+            "sphere-cone-bound", boundary_spp, 1709
+        )
+        unbound_boundary = render_linear_probe(
+            renderer, sphere_cone_boundary_scene(False), directory,
+            "sphere-cone-unbound", boundary_spp, 1811
+        )
+        for channel, (bound_value, unbound_value) in enumerate(
+                zip(bound_boundary, unbound_boundary)):
+            comparison_scale = max(
+                0.5 * (bound_value + unbound_value), 1.0e-6
+            )
+            if min(bound_value, unbound_value) <= 0.5:
+                raise RuntimeError("sphere-cone boundary probe rendered dark")
+            if abs(bound_value - unbound_value) > 0.025 * comparison_scale:
+                raise RuntimeError(
+                    "sphere-cone bound/unbound MIS mismatch in channel {}: "
+                    "{} versus {}".format(
+                        channel, bound_value, unbound_value
+                    )
+                )
 
         # Exercise every finite-light sampling branch independently before the
         # unequal-power comparison. A one-light distribution also checks that

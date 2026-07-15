@@ -88,6 +88,8 @@ def scene_with_absolute_assets(scene_path):
 def render(renderer, base, directory, name, mode, spp, seed):
     scene_data = copy.deepcopy(base)
     scene_data["integrator"]["direct_light_sampling"] = mode
+    scene_data["integrator"]["clamp_direct"] = 0.0
+    scene_data["integrator"]["clamp_indirect"] = 0.0
     scene_data["render"]["spp"] = spp
     scene_data["render"]["seed"] = seed
 

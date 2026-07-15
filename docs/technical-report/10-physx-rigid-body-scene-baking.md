@@ -2,7 +2,7 @@
 
 前九章从场景 JSON 出发，解释 SpectralDock 怎样得到一张图。Kinetic
 Foundry 在这条链之前多了一段**离线场景生成**：PhysX 5.8.0 先计算刚体
-姿态，生成器再把一个固定时刻烘焙为普通 schema v5 JSON，最后仍由同一个
+姿态，生成器再把一个固定时刻烘焙为普通 schema v6 JSON，最后仍由同一个
 SpectralDock/OptiX 路径追踪器渲染。PhysX 不进入渲染器进程，也不在
 `optixLaunch` 期间运行。
 
@@ -20,7 +20,7 @@ flowchart LR
     A["固定 seed 与初始布局"] --> B["PhysX actor、shape 与接触材质"]
     B --> C["GPU broad phase、接触生成与 TGS 求解"]
     C -->|"300 × 1/120 s"| D["读取位置 p 与四元数 q"]
-    D --> E["烘焙 schema v5 JSON"]
+    D --> E["烘焙 schema v6 JSON"]
     D --> F["写 physics sidecar"]
     E --> G["Python 契约验证"]
     F --> G
@@ -30,7 +30,7 @@ flowchart LR
 
 这条链有两个互不混用的 GPU 环境。物理生成器位于专用 CUDA 12.8.1、
 PhysX 5.8.0 checked 容器；渲染器位于 CUDA 13.3、OptiX 9.1 环境。中间的
-schema v5 JSON 是边界：它只描述静态几何、变换、相机、灯和渲染设置，
+schema v6 JSON 是边界：它只描述静态几何、变换、相机、灯和渲染设置，
 不携带 PhysX 对象或库句柄。
 
 ## 2. 刚体状态与 Newton–Euler 原理
@@ -297,7 +297,7 @@ $$
 
 ## 6. 从四元数姿态到渲染变换
 
-PhysX 返回位置 $\mathbf p$ 与四元数 $\mathbf q$；schema v5 则保存平移、
+PhysX 返回位置 $\mathbf p$ 与四元数 $\mathbf q$；schema v6 则保存平移、
 XYZ 欧拉角和缩放。生成器先归一化四元数并构造旋转矩阵，然后求满足
 
 $$

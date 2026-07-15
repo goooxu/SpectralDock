@@ -43,6 +43,8 @@ enum DeviceLightType : std::uint32_t {
   kLightDisk = 1,
   kLightSphere = 2,
   kLightFlame = 3,
+  kLightPoint = 4,
+  kLightDirectional = 5,
 };
 
 enum TextureFlags : std::uint32_t {
@@ -137,6 +139,9 @@ struct HitgroupData {
 };
 
 struct LightData {
+  // Rectangle/disk/sphere/flame use the established finite-light fields.
+  // Point uses p0=position and emission=intensity. Directional uses
+  // axis=surface-to-light direction and emission=irradiance.
   float3 p0 = {0.0f, 0.0f, 0.0f};
   float area = 0.0f;
   float3 edge_u = {1.0f, 0.0f, 0.0f};
@@ -195,6 +200,14 @@ struct WaterCounters {
 static_assert(sizeof(WaterCounters) == 64,
               "WaterCounters is part of the host/device launch ABI");
 
+struct FireflyCounters {
+  unsigned long long direct_clamped_contributions = 0;
+  unsigned long long indirect_clamped_contributions = 0;
+};
+
+static_assert(sizeof(FireflyCounters) == 16,
+              "FireflyCounters is part of the host/device launch ABI");
+
 // Camera basis uses w pointing backwards (look-from minus look-at), with u to
 // the right and v up. tan_half_fov is the vertical half-angle tangent.
 struct CameraData {
@@ -252,18 +265,27 @@ struct LaunchParams {
   const MaterialData* materials = nullptr;
   const TextureData* textures = nullptr;
   const LightData* lights = nullptr;
+  // Surface/volume lights use a stochastic CDF over this global-index map.
+  // Delta lights are evaluated deterministically through a separate map.
   const float* light_cdf = nullptr;
+  const std::uint32_t* sampled_light_indices = nullptr;
+  const std::uint32_t* delta_light_indices = nullptr;
   std::uint32_t material_count = 0;
   std::uint32_t texture_count = 0;
-  std::uint32_t light_count = 0;
+  std::uint32_t all_light_count = 0;
+  std::uint32_t sampled_light_count = 0;
+  std::uint32_t delta_light_count = 0;
   std::uint32_t flame_count = 0;
   std::uint32_t water_surface_count = 0;
+  float clamp_direct = 64.0f;
+  float clamp_indirect = 16.0f;
 
   // Optional global counter. Every radiance and shadow optixTrace increments
   // it once, allowing rays/s reporting without estimating bounce counts.
   unsigned long long* traced_rays = nullptr;
   VolumeCounters* volume_counters = nullptr;
   WaterCounters* water_counters = nullptr;
+  FireflyCounters* firefly_counters = nullptr;
 };
 
 extern "C" cudaError_t spectraldockLaunchPostprocess(

@@ -1,5 +1,6 @@
 {
-  "schema_version": 5,
+  "schema_version": 6,
+  "integrator": {"direct_light_sampling": "importance", "clamp_direct": 0.0, "clamp_indirect": 0.0},
   "camera": {
     "look_from": [3.6, 3.0, 6.5],
     "look_at": [0.0, -0.35, -0.65],

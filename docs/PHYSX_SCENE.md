@@ -2,7 +2,7 @@
 
 Kinetic Foundry 是一个按需生成的静态 gallery 场景。PhysX 5.8.0 只负责
 GPU 刚体模拟，并在固定第 300 步（2.5 秒）烘焙撞击峰值的瞬时姿态；
-SpectralDock 随后读取普通 schema v5 JSON，以 CUDA/OptiX 完成路径追踪。
+SpectralDock 随后读取普通 schema v6 JSON，以 CUDA/OptiX 完成路径追踪。
 渲染器本身不链接 PhysX，也不提供运行时物理、交互或动画。
 
 ## 产物边界

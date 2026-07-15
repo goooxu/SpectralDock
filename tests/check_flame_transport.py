@@ -98,7 +98,12 @@ def area_transmission_scene(with_flame):
             }
         )
     return {
-        "schema_version": 5,
+        "schema_version": 6,
+        "integrator": {
+            "direct_light_sampling": "importance",
+            "clamp_direct": 0.0,
+            "clamp_indirect": 0.0,
+        },
         "camera": {
             "look_from": [0.0, 1.25, 5.0], "look_at": [0.0, 1.25, -1.5],
             "up": [0.0, 1.0, 0.0], "vfov": 30.0,

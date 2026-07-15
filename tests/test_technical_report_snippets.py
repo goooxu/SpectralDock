@@ -247,7 +247,7 @@ def test_technical_report_source_snippets_match_the_repository():
     )
     for boundary in (
         "GPU-only",
-        "schema v5",
+        "schema v6",
         "sleeping_dynamic_actors=0",
         "motion blur",
     ):

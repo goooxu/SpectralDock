@@ -193,24 +193,35 @@ $$
               fminf(fmaxf(material.metallic, 0.0f), 1.0f));
     const float3 fresnel = fresnel_schlick(vo_h, f0);
     value = mul(fresnel, d * g / fmaxf(4.0f * no_v * no_l, 1.0e-20f));
-    pdf = d * no_h / fmaxf(4.0f * vo_h, 1.0e-20f);
+    const float half_pdf = ggx_visible_normal_pdf(
+        n, wo, half_vector, alpha);
+    pdf = half_pdf / fmaxf(4.0f * vo_h, 1.0e-20f);
     return;
   }
 ```
 
-`wo`、`wi`、`n` 分别对应 $\boldsymbol\omega_o$、$\boldsymbol\omega_i$、$\mathbf n$，而 `no_v`、`no_l` 是 BRDF 分母中的两个余弦。`value` 实现 $\mathbf F D G/(4n_on_i)$，`pdf` 实现 $D(\mathbf h)(\mathbf n\cdot\mathbf h)/(4|\boldsymbol\omega_o\cdot\mathbf h|)$；在已通过正半球检查的分支中 `vo_h` 为正，因而无需再次取绝对值。粗糙度下限与极小分母共同保护近 delta 情况下的数值稳定性。
+`wo`、`wi`、`n` 分别对应 $\boldsymbol\omega_o$、$\boldsymbol\omega_i$、$\mathbf n$，而 `no_v`、`no_l` 是 BRDF 分母中的两个余弦。`value` 实现 $\mathbf F D G/(4n_on_i)$；`half_pdf` 是观察方向条件下的可见法线密度，最后除以反射映射的 $4|\boldsymbol\omega_o\cdot\mathbf h|$ Jacobian。粗糙度下限与极小分母共同保护近 delta 情况下的数值稳定性。
 
 ### 3.3 GGX 采样密度
 
-实现先按普通 GGX NDF 选择 $\mathbf h$，再把 $-\boldsymbol\omega_o$ 关于 $\mathbf h$ 反射。方向 PDF 是
+实现按 Heitz 的各向同性 GGX 可见法线分布选择 $\mathbf h$，再把 $-\boldsymbol\omega_o$ 关于 $\mathbf h$ 反射。给定观察方向，半程向量 PDF 是
+
+$$
+p_h(\mathbf h)=
+\frac{D(\mathbf h)G_1(\mathbf n\cdot\boldsymbol\omega_o)
+|\boldsymbol\omega_o\cdot\mathbf h|}
+{\mathbf n\cdot\boldsymbol\omega_o},
+$$
+
+反射方向 PDF 因而为
 
 $$
 p_B(\boldsymbol\omega_i)=
-\frac{D(\mathbf h)(\mathbf n\cdot\mathbf h)}
+\frac{p_h(\mathbf h)}
 {4|\boldsymbol\omega_o\cdot\mathbf h|}.
 $$
 
-这不是可见法线分布采样（VNDF）。在掠射角，普通 NDF 采样更可能生成被拒绝的方向，结果仍能正确估计当前模型，但方差可能更高。
+`sample_ggx_vndf` 先把观察方向按 $\alpha$ 拉伸，在投影圆盘上采样可见区域，再把法线反拉伸到世界空间。与普通 NDF 抽样相比，它减少掠射角下生成不可见微表面、随后被拒绝的样本；BSDF 求值与 MIS 使用 `ggx_visible_normal_pdf` 返回的同一测度。metal 与下一节的粗糙 dielectric/water 共用这个 sampler，不增加随机数数量。
 
 ## 4. 介电质：从 delta 界面到粗糙微表面
 
@@ -365,7 +376,7 @@ static __forceinline__ __device__ float ggx_visible_normal_pdf(
 }
 ```
 
-这段 PDF 与采样器使用同一可见法线测度。`sample_ggx_vndf` 先把观察方向按 $\alpha$ 拉伸，在投影圆盘上取样并混合地平线区域，再反拉伸回宏观法线坐标；这样显著减少掠射角生成不可见微表面的拒绝。当网格插值着色法线与真实几何法线不同时，着色法线只塑造 GGX 波瓣；反射/透射的物理介质侧别和射线起点偏移由定向几何法线决定，两种法线对样本的侧别不一致时拒绝该样本，防止错误修改介质栈。对应实现见[第 12 章第 6 节](12-runtime-analytic-water.md#6-粗糙水面的-nee只连接当前散射事件)。当前 GGX metal 仍用普通 NDF 抽样，VNDF 改进只应用于粗糙介电反射/透射。
+这段 PDF 与 metal 和粗糙介电采样器使用同一可见法线测度。`sample_ggx_vndf` 先把观察方向按 $\alpha$ 拉伸，在投影圆盘上取样并混合地平线区域，再反拉伸回宏观法线坐标；这样显著减少掠射角生成不可见微表面的拒绝。当网格插值着色法线与真实几何法线不同时，着色法线只塑造 GGX 波瓣；反射/透射的物理介质侧别和射线起点偏移由定向几何法线决定，两种法线对样本的侧别不一致时拒绝该样本，防止错误修改介质栈。对应实现见[第 12 章第 6 节](12-runtime-analytic-water.md#6-粗糙水面的-nee只连接当前散射事件)。
 
 ### 4.2 光滑兼容分支
 
@@ -421,7 +432,7 @@ $$
 
 加入像素估计，其中 $\boldsymbol\beta$ 是路径到达这里之前积累的吞吐量。场景中的 `emission` 是线性 RGB 相对辐亮度，没有瓦特或坎德拉等绝对单位标定。
 
-纹理可以改变发光面的外观，但当前只有显式声明的 rectangle、disk 和 sphere 面积灯能进入直接光采样列表；纹理 emitter 与 mesh emitter 只能被路径偶然命中。
+纹理可以改变发光面的外观，但当前只有显式声明的 rectangle、disk 和 sphere 面积灯能把可见 emitter 绑定到直接光采样列表；纹理 emitter 与 mesh emitter 只能被路径偶然命中。flame 是独立的程序化体积发光模型，point/directional 则是没有 emitter 几何的 delta 灯。
 
 命中 emitter 后路径立即结束，因此当前发光材质不会在同一次命中上继续反射或折射。它是“只发光”的终端材质，不是发光与普通 BSDF 的叠加层。
 

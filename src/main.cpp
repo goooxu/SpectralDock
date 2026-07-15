@@ -34,6 +34,8 @@ struct Cli {
   std::optional<std::uint32_t> max_depth;
   std::optional<std::uint32_t> seed;
   std::optional<float> exposure;
+  std::optional<float> clamp_direct;
+  std::optional<float> clamp_indirect;
   std::optional<bool> denoise;
   bool help = false;
 };
@@ -47,7 +49,9 @@ void print_usage(std::ostream& out) {
       << "  spectraldock --scene SCENE.json --output OUTPUT.png"
          " [--linear-output LINEAR.pfm]"
          " [--width N] [--height N] [--spp N] [--max-depth N]"
-         " [--seed N] [--exposure EV] [--denoise|--no-denoise]\n\n"
+         " [--seed N] [--exposure EV]"
+         " [--clamp-direct N] [--clamp-indirect N]"
+         " [--denoise|--no-denoise]\n\n"
       << "CLI values override scene render defaults. Rendering is deterministic"
          " for a fixed scene, GPU, build, and seed.\n";
 }
@@ -106,6 +110,16 @@ Cli parse_cli(int argc, char** argv) {
       cli.seed = parse_u32(next(i, "--seed"), "--seed", true);
     } else if (arg == "--exposure") {
       cli.exposure = parse_float(next(i, "--exposure"), "--exposure");
+    } else if (arg == "--clamp-direct") {
+      cli.clamp_direct =
+          parse_float(next(i, "--clamp-direct"), "--clamp-direct");
+      if (*cli.clamp_direct < 0.0f)
+        usage_error("--clamp-direct must be non-negative");
+    } else if (arg == "--clamp-indirect") {
+      cli.clamp_indirect =
+          parse_float(next(i, "--clamp-indirect"), "--clamp-indirect");
+      if (*cli.clamp_indirect < 0.0f)
+        usage_error("--clamp-indirect must be non-negative");
     } else if (arg == "--denoise") {
       if (cli.denoise.has_value() && !*cli.denoise) {
         usage_error("--denoise and --no-denoise are mutually exclusive");
@@ -154,7 +168,9 @@ nlohmann::ordered_json stats_json(const spectraldock::RenderStats& s,
         {"max_depth", s.max_depth},
         {"seed", s.seed},
         {"denoised", s.denoised},
-        {"direct_light_sampling", s.direct_light_sampling}}},
+        {"direct_light_sampling", s.direct_light_sampling},
+        {"clamp_direct", s.clamp_direct},
+        {"clamp_indirect", s.clamp_indirect}}},
       {"timings_ms",
        {{"bvh_build", s.bvh_build_ms},
         {"render", s.render_ms},
@@ -172,6 +188,11 @@ nlohmann::ordered_json stats_json(const spectraldock::RenderStats& s,
       {"performance",
        {{"traced_rays", s.traced_rays},
         {"rays_per_second", s.rays_per_second}}},
+      {"firefly",
+       {{"direct_clamped_contributions",
+         s.firefly_direct_clamped_contributions},
+        {"indirect_clamped_contributions",
+         s.firefly_indirect_clamped_contributions}}},
       {"volume",
        {{"volume_density_evaluations", s.volume_density_evaluations},
         {"volume_real_collisions", s.volume_real_collisions},
@@ -215,6 +236,10 @@ int main(int argc, char** argv) {
     }
     settings.seed = cli.seed.value_or(static_cast<std::uint32_t>(scene.render.seed));
     settings.exposure = cli.exposure.value_or(scene.background.exposure);
+    settings.clamp_direct =
+        cli.clamp_direct.value_or(scene.integrator.clamp_direct);
+    settings.clamp_indirect =
+        cli.clamp_indirect.value_or(scene.integrator.clamp_indirect);
     settings.denoise = cli.denoise.value_or(scene.render.denoise);
     settings.validation = SPECTRALDOCK_ENABLE_VALIDATION_DEFAULT != 0;
     settings.capture_linear = cli.linear_output.has_value();

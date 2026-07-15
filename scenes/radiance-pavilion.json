@@ -1,5 +1,5 @@
 {
-  "schema_version": 5,
+  "schema_version": 6,
   "camera": {
     "look_from": [10.5, 4.7, 14.5],
     "look_at": [0.0, 1.55, -1.25],
@@ -9,7 +9,9 @@
     "focus_distance": 19.2
   },
   "integrator": {
-    "direct_light_sampling": "importance"
+    "direct_light_sampling": "importance",
+    "clamp_direct": 64.0,
+    "clamp_indirect": 16.0
   },
   "background": {
     "type": "environment",

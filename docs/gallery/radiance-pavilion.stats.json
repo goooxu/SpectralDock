@@ -18,17 +18,19 @@
     "max_depth": 12,
     "seed": 909,
     "denoised": true,
-    "direct_light_sampling": "importance"
+    "direct_light_sampling": "importance",
+    "clamp_direct": 64.0,
+    "clamp_indirect": 16.0
   },
   "timings_ms": {
-    "bvh_build": 8.307392120361328,
-    "render": 762.5714111328125,
-    "denoise": 12.127776145935059,
-    "total": 4737.143002
+    "bvh_build": 5.870880126953125,
+    "render": 1561.0849609375,
+    "denoise": 10.864480018615723,
+    "total": 7822.481661
   },
   "memory": {
     "peak_device_bytes": 1904541696,
-    "peak_tracked_device_bytes": 560348280
+    "peak_tracked_device_bytes": 560348336
   },
   "geometry": {
     "objects": 37,
@@ -38,8 +40,12 @@
     "gas_count": 37
   },
   "performance": {
-    "traced_rays": 2407120944,
-    "rays_per_second": 3156584299.985993
+    "traced_rays": 2409807029,
+    "rays_per_second": 1543674488.7688913
+  },
+  "firefly": {
+    "direct_clamped_contributions": 3000460,
+    "indirect_clamped_contributions": 1014
   },
   "volume": {
     "volume_density_evaluations": 0,

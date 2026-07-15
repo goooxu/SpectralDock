@@ -38,6 +38,24 @@ SpectralDock 不做光谱或绝对物理单位仿真，而用三个线性数 $(L
 
 一个容易误解的事实是：在没有吸收的真空中，沿一条射线传播的辐亮度不会因为距离自动变小。远处面积灯看起来更暗，主要因为它在观察点占据的立体角按 $1/r^2$ 缩小，而不是射线携带的数值沿途被除以 $r^2$。
 
+### 1.3 面积灯、点光与平行光的量不同
+
+rectangle、disk 和 sphere 灯描述有限表面发出的辐亮度 $L_e$。point 灯把有限功率理想化为零面积位置，JSON 的 RGB `intensity` 表示辐射强度 $I$；它在距离 $r$ 处产生与 $I/r^2$ 成正比的入射量。directional 灯把光源放到无限远，所有连接方向平行，JSON 的 RGB `irradiance` 直接表示辐照度 $E$，不随着色点平移而变化。
+
+对路径吞吐量 $\boldsymbol\beta$、BSDF $f_s$ 和从表面指向光源的方向 $\boldsymbol\omega_i$，忽略遮挡与介质时，两者的单灯贡献分别为
+
+$$
+\mathbf C_p=
+\boldsymbol\beta\odot f_s I
+\frac{|\mathbf n\cdot\boldsymbol\omega_i|}{r^2},
+\qquad
+\mathbf C_d=
+\boldsymbol\beta\odot f_s E
+|\mathbf n\cdot\boldsymbol\omega_i|.
+$$
+
+point 和 directional 在方向测度上都是 delta 分布：它们没有可抽样的灯面，也不会被一条连续 BSDF 射线偶然命中。SpectralDock 因而在每个支持 NEE 的连续 BSDF 顶点逐盏连接它们，MIS 权重为 1；阴影由有限距离或无限距离的 shadow ray 决定。`directional.direction` 与 sky 的 `sun_direction` 语义一致，都是**从着色点指向光源**，与真实光传播方向相反。
+
 ## 2. 表面接收的光：半球积分
 
 在表面点 $\mathbf x$ 上，只有法线 $\mathbf n$ 上方的方向能从外部照到表面。把这个半球记为 $\mathcal H^2(\mathbf n)$。表面接收到的辐照度为
@@ -157,8 +175,9 @@ $$
 ```cpp
       if (volume.collided != 0) {
         if (previous_delta != 0) {
-          radiance =
-              add(radiance, mul(throughput, volume.source));
+          accumulate_path_contribution(
+              radiance, mul(throughput, volume.source), clamp_threshold,
+              clamped_counter);
         }
         break;
       }
@@ -170,9 +189,10 @@ $$
             previous_delta != 0 || !(environment_pdf > 0.0f)
                 ? 1.0f
                 : power_heuristic(previous_pdf, environment_pdf);
-        radiance = add(
+        accumulate_path_contribution(
             radiance,
-            mul(mul(throughput, background(ray_direction)), miss_weight));
+            mul(mul(throughput, background(ray_direction)), miss_weight),
+            clamp_threshold, clamped_counter);
         break;
       }
 ```
@@ -193,7 +213,9 @@ $$
             : emitter_hit_mis_weight(
                   previous_pdf, light_pdf, previous_delta != 0,
                   emitter_is_bound_to_light);
-        radiance = add(radiance, mul(mul(throughput, emitted), weight));
+        accumulate_path_contribution(
+            radiance, mul(mul(throughput, emitted), weight),
+            clamp_threshold, clamped_counter);
         break;
 ```
 
@@ -201,36 +223,36 @@ $$
 
 ### 5.3 直接光与下一次散射
 
-<!-- source-snippet id="raygen-direct-and-scatter" path="src/device_programs.cu" anchor="sample_environment_direct_light" -->
+<!-- source-snippet id="raygen-direct-and-scatter" path="src/device_programs.cu" anchor="accumulate_delta_direct_lights" -->
 ```cpp
-      float3 finite_direct =
-          sample_finite_direct_light(hit, material, base_color, wo,
-                                     next_bsdf_ray_exists, current_light_mode,
-                                     rng, traced_rays,
-                                     volume_counters, media, water_counters);
-      if (current_light_mode == kFiniteLightWaterPowerSample) {
-        // Deterministic two-component stratification: take one qG sample and
-        // one qU sample. Their combined light density is qG + qU, so no 0.5
-        // factor belongs here; a bound endpoint completes balance with BSDF.
-        finite_direct = add(
-            finite_direct,
-            sample_finite_direct_light(
-                hit, material, base_color, wo, next_bsdf_ray_exists,
-                kFiniteLightWaterUniformSample, rng, traced_rays,
-                volume_counters, media, water_counters));
+      } else {
+        const float3 finite_contribution =
+            mul(throughput, finite_direct);
+        const float3 uniform_contribution =
+            mul(throughput, water_uniform_direct);
+        const float3 environment_contribution =
+            mul(throughput, environment_direct);
+        accumulate_path_contribution(
+            radiance, finite_contribution, clamp_threshold,
+            clamped_counter);
+        if (current_light_mode == kFiniteLightWaterPowerSample) {
+          accumulate_path_contribution(
+              radiance, uniform_contribution,
+              clamp_threshold, clamped_counter);
+        }
+        accumulate_path_contribution(
+            radiance, environment_contribution, clamp_threshold,
+            clamped_counter);
+        accumulate_delta_direct_lights(
+            hit, material, base_color, wo, rng, traced_rays,
+            volume_counters, media, water_counters, throughput,
+            clamp_threshold, clamped_counter, radiance);
       }
-      const float3 environment_direct =
-          sample_environment_direct_light(
-              hit, material, base_color, wo, next_bsdf_ray_exists, rng,
-              traced_rays, volume_counters, media, water_counters);
-      radiance = add(
-          radiance,
-          mul(throughput, add(finite_direct, environment_direct)));
 ```
 
-有限灯与 HDR 环境是两个独立 NEE 域。普通表面在有限灯域取一个样本；粗糙 water 在该域确定性地各取一个全局功率样本和均匀索引样本，二者的选灯密度相加为 $q_G+q_U$，不乘 0.5。若绑定表面灯还可由下一条 BSDF 射线命中，direct 与 emitter-hit 再用 $p_L+p_B$ 的 balance 权重分配同一路径；否则两份灯样本独自覆盖有限灯域。环境域仍只取一个方向样本并与 BSDF miss 做 power MIS。因此普通顶点最多尝试两个 connection，粗糙 water 最多尝试三个；PDF、余弦或遮挡检查仍可提前返回。最后一个表面事件仍计算直接光，之后才停止。
+有限灯、HDR 环境和 delta 灯是三个独立 NEE 域。普通表面在有限灯域取一个样本；粗糙 water 在该域确定性地各取一个全局功率样本和均匀索引样本，二者的选灯密度相加为 $q_G+q_U$，不乘 0.5。若绑定表面灯还可由下一条 BSDF 射线命中，direct 与 emitter-hit 再用 $p_L+p_B$ 的 balance 权重分配同一路径；否则两份灯样本独自覆盖有限灯域。环境域仍只取一个方向样本并与 BSDF miss 做 power MIS；point/directional 则逐灯求值且权重为 1。因此普通顶点最多尝试“两份随机域连接 + delta 灯数”，粗糙 water 再多一份有限灯连接；PDF、余弦或遮挡检查仍可提前返回。最后一个表面事件仍计算直接光，之后才停止。
 
-`wo` 对应 $\boldsymbol\omega_o$；`finite_direct` 聚合有限灯域的估计（普通顶点一份样本，粗糙 water 为 $q_G/q_U$ 两份），`environment_direct` 是无限远环境域的一份估计，二者相加后仍需乘当前 $\boldsymbol\beta$ 才能加入 `radiance`。随后 `sample_bsdf` 选出新的 $\boldsymbol\omega_i$：对 Lambert/GGX 连续分支（包括粗糙 dielectric/water），`weight` 包含 $f_s|\mathbf n\cdot\boldsymbol\omega_i|/p_B$；只有 `roughness = 0` 的 dielectric/water 使用离散 delta 反射或折射事件权重，透射时还包含 $(\eta_i/\eta_t)^2$。因此两类分支都只需一次乘法即可更新吞吐量。无下一跳、无效样本或零吞吐量都会尽早结束路径，避免无贡献追踪。
+`wo` 对应 $\boldsymbol\omega_o$；各域结果乘当前 $\boldsymbol\beta$ 后才加入 `radiance`。需要拆分时，每份策略贡献独立进入 `accumulate_path_contribution`；没有 delta 灯且各项都不触发 clamp 时，紧邻这段之前的 `preserve_grouped_add` 分支仍使用旧加法树。随后 `sample_bsdf` 选出新的 $\boldsymbol\omega_i$：对 Lambert/GGX 连续分支（包括 metal 与粗糙 dielectric/water），`weight` 包含 $f_s|\mathbf n\cdot\boldsymbol\omega_i|/p_B$；只有 `roughness = 0` 的 dielectric/water 使用离散 delta 反射或折射事件权重，透射时还包含 $(\eta_i/\eta_t)^2$。因此两类分支都只需一次乘法即可更新吞吐量。无下一跳、无效样本或零吞吐量都会尽早结束路径，避免无贡献追踪。
 
 下一章先研究方程中的材质项 $f_s$，再讨论如何用随机样本估计整个积分。
 

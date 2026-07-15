@@ -1,6 +1,6 @@
 # 05　直接光照、NEE 与 MIS
 
-仅按 BSDF 随机游走在数学上可行，但一盏小灯或 HDR 环境中的高亮区域在表面半球中只占很小方向范围。随机射线可能经过成千上万次尝试也找不到它，画面便出现高方差亮点。SpectralDock 在 Lambert、metal 和非零粗糙度的 dielectric 表面主动连接一个有限灯样本，粗糙 water 则在有限灯域确定性地取两个样本；存在 HDR 环境时还另取一个环境样本。这叫 Next Event Estimation（NEE）。
+仅按 BSDF 随机游走在数学上可行，但一盏小灯或 HDR 环境中的高亮区域在表面半球中只占很小方向范围。随机射线可能经过成千上万次尝试也找不到它，画面便出现高方差亮点。SpectralDock 在 Lambert、metal 和非零粗糙度的 dielectric/water 表面主动连接有限灯与 HDR 环境样本，并逐盏连接 point/directional delta 灯。这叫 Next Event Estimation（NEE）。
 
 ## 1. 在灯面上取一个随机点
 
@@ -10,7 +10,7 @@ $$
 p_A(\mathbf y)=\frac{q_i}{A_i}.
 $$
 
-矩形灯按两条边的均匀坐标取点；圆盘灯用 $r=\sqrt\xi$ 均匀采面积；常规球灯路径均匀采整个球面。
+矩形灯按两条边的均匀坐标取点；圆盘灯用 $r=\sqrt\xi$ 均匀采面积；球内或距球面很近的回退路径均匀采整个球面。
 
 渲染方程却是对着色点 $\mathbf x$ 周围的方向积分，所以必须把面积 PDF 换成方向 PDF。令
 
@@ -42,7 +42,7 @@ $$
 
 例如 $q_i=0.5$、$A_i=4$、$r=3$、灯面余弦为 0.5 时，$p_A=1/8$，而 $dA/d\omega=18$，所以 $p_\omega=2.25\ \mathrm{sr}^{-1}$。距离越远，同一面积覆盖的方向范围越小，单位立体角的概率密度反而越大。
 
-粗糙 water 顶点的两份有限灯样本对**单面 sphere 灯**再做一层方差优化。令球心为 $\mathbf c$、半径为 $R$、$d=\|\mathbf c-\mathbf x\|$。当水面交点位于球外且 $d>R+\varepsilon$ 时，可见球盖对应一个半角 $\theta_{\max}$ 的圆锥：
+所有支持 NEE 的连续 BSDF 顶点都对 **sphere 灯**做一层方差优化。令球心为 $\mathbf c$、半径为 $R$、$d=\|\mathbf c-\mathbf x\|$。当着色点位于球外且 $d>R+\varepsilon$ 时，可见球盖对应一个半角 $\theta_{\max}$ 的圆锥：
 
 $$
 \sin^2\theta_{\max}=\frac{R^2}{d^2},\qquad
@@ -54,9 +54,10 @@ $$
 
 $$
 \boxed{p_L(\boldsymbol\omega_i)=
-\frac{m_i}{2\pi(1-\cos\theta_{\max})}},\qquad
-m_i=q_G(i)+q_U(i).
+\frac{q_i^*}{2\pi(1-\cos\theta_{\max})}},
 $$
+
+其中普通顶点的 $q_i^*=q_i$；粗糙 water 的两份确定性样本使用 $q_i^*=m_i=q_G(i)+q_U(i)$。
 
 这不是把球灯变亮，只是不再把样本浪费在背向顶点的球面上。距离很大时，实现用 $1-\cos\theta_{\max}=\sin^2\theta_{\max}/(1+\cos\theta_{\max})$ 避免相近数相减：
 
@@ -79,7 +80,7 @@ $$
 }
 ```
 
-若顶点在球内或距球面不超过 $\varepsilon$，可见圆锥参数不适用，代码回退到整球面面积采样和前述 Jacobian。rectangle、disk、两面 sphere，以及非 water 的所有顶点也保持面积采样。
+若顶点在球内或距球面不超过 $\varepsilon$，可见圆锥参数不适用，代码回退到整球面面积采样和前述 Jacobian。rectangle 与 disk 始终保持面积采样。
 
 `light_direction_pdf` 逐项实现了这个换元：`distance2` 是 $r^2$，`cos_light` 是灯面余弦，`area` 对应 $A_i$，`selection_pdf` 对普通顶点是 $q_i$，对两种 water 样本模式都是 $m_i=q_G(i)+q_U(i)$。两面灯先对余弦取绝对值；单面灯背面或退化面积直接返回零。
 
@@ -93,9 +94,7 @@ $$
   }
   const float selection_pdf = finite_light_selection_pdf(light, mode);
   if (!(selection_pdf > 0.0f)) return 0.0f;
-  if (is_water_finite_light_mode(mode) &&
-      light.type == spectraldock::kLightSphere &&
-      light.two_sided == 0) {
+  if (light.type == spectraldock::kLightSphere) {
     const float solid_angle_pdf =
         sphere_visible_solid_angle_pdf(light, from);
     if (solid_angle_pdf > 0.0f) {
@@ -106,7 +105,7 @@ $$
 }
 ```
 
-当前场景接口中的显式灯都是单面：rectangle/disk 只从法线正面发光，sphere 只向外发光。设备结构预留了 `two_sided` 分支，但加载器未暴露它。非 water 顶点与 water 的球内/近球回退路径仍均匀采整个球面；球外粗糙 water 的两份样本都使用可见立体角。Moonlit Stepwell 的月灯是 disk，不使用这个球灯特例；它主要服务场景中的水下 sphere 灯。
+当前场景接口中的显式灯都是单面：rectangle/disk 只从法线正面发光，sphere 只向外发光。设备结构预留了 `two_sided` 分支，但加载器未暴露它。所有球外连续 BSDF 顶点使用可见立体角，球内或近球路径才均匀采整个球面。Moonlit Stepwell 的月灯是 disk，不使用这个球灯特例；水下 sphere 灯以及其他场景的球灯都会受益。
 
 ## 2. 二值可见性与当前介电事件
 
@@ -163,6 +162,42 @@ $$
 ```
 
 `direct_segment_transmittance` 先执行二值 `trace_visible`，只有当前散射是粗糙介电透射时才在栈副本中切换一次并计算 Beer；后续 `track_volume` 再估计 flame 吸收。`surface_transmittance` 因而不再代表“穿过任意透明边界”，只代表当前事件之后的同介质传播。粗糙水面细节见第 12 章，完整 flame 体积推导见第 11 章。
+
+### 2.1 Point 与 directional 的 delta NEE
+
+point 和 directional 没有灯面 PDF。渲染器把它们保存在独立索引表，在每个支持 NEE 的顶点逐盏求值，最多 32 盏。point 的连接向量、距离和衰减为
+
+$$
+\boldsymbol\omega_i=\frac{\mathbf p_l-\mathbf x}{r},
+\qquad r=\|\mathbf p_l-\mathbf x\|,
+\qquad a(r)=\frac{1}{r^2};
+$$
+
+directional 的 `direction` 已由加载器归一化，直接作为从表面指向光源的 $\boldsymbol\omega_i$，且 $a=1$。源码用有限 shadow distance 连接 point，用 `kInfinity` 连接 directional：
+
+<!-- source-snippet id="delta-light-direction-and-distance" path="src/device_programs.cu" anchor="radiometric_distance2" -->
+```cpp
+    float3 wi;
+    float radiometric_distance2 = 1.0f;
+    float radiometric_distance = kInfinity;
+    float shadow_distance = kInfinity;
+    if (is_point) {
+      const float3 displacement = sub(light.p0, hit.position);
+      radiometric_distance2 = length2(displacement);
+      if (!(radiometric_distance2 > 0.0f) ||
+          !isfinite(radiometric_distance2)) {
+        continue;
+      }
+      radiometric_distance = sqrtf(radiometric_distance2);
+      wi = divv(displacement, radiometric_distance);
+      shadow_distance = radiometric_distance;
+    } else {
+      if (!(length2(light.axis) > 1.0e-20f)) continue;
+      wi = normalize3(light.axis);
+    }
+```
+
+其直接贡献是 $\boldsymbol\beta f_s L |\mathbf n\cdot\boldsymbol\omega_i|a(r)$，其中 point 的 $L$ 是 `intensity`，directional 的 $L$ 是 `irradiance`。代码继续复用相同的粗糙介电反射/透射侧别、Beer 段、表面可见性与 flame 透射。因为连续 BSDF 不可能命中零立体角 delta 灯，灯侧 MIS 权重恒为 1；逐灯求和也不需要除以离散选灯概率。这让少量常用布光稳定可控，代价是 shadow-ray 数量随 delta 灯数线性增加。
 
 <!-- source-snippet id="shadow-ray-visibility-query" path="src/device_programs.cu" anchor="OPTIX_RAY_FLAG_TERMINATE_ON_FIRST_HIT" -->
 ```cpp
@@ -303,6 +338,7 @@ MIS 只应比较两种策略都可能生成的路径：
 - 发光几何没有绑定到显式灯时，`light_direction_pdf` 为 0，路径命中贡献也保持完整权重；
 - 在最后一个 `max_depth` 表面事件，没有下一条 BSDF 射线参与竞争，即使灯绑定了几何，NEE 权重也为 1。
 - 粗糙 water 的绑定表面灯只有在下一条 BSDF 策略真实存在时才纳入三技术 balance；最后一层、背面、球内无支持、未绑定灯和 flame 都删除不存在的竞争密度。
+- point/directional 没有可命中的 emitter 端点，只由逐灯 delta NEE 生成，权重固定为 1。
 
 两个设备局部策略函数把这些边界写成布尔条件。NEE 只有在灯可被后继射线命中且下一条 BSDF 射线确实存在时才竞争；emitter-hit 则在前驱为 delta 或 emitter 未绑定显式灯时保留完整贡献。
 
@@ -359,25 +395,26 @@ $$
 
 [`sample_finite_direct_light`](../../src/device_programs.cu) 与 [`sample_environment_direct_light`](../../src/device_programs.cu) 在 Lambert、metal 和 `roughness > 0` 的 dielectric/water 表面执行。`roughness = 0` 的介电质仍是 delta BSDF，通过继续路径寻找灯光；首个光滑 water 命中另有一次有界 Fresnel 分裂，但不是普通 NEE。
 
-有限灯 NEE 支持 rectangle、disk、sphere 面积灯和程序化 flame，HDR environment 则通过独立的无限远 NEE 域采样。以下光源仍不被主动采样：
+有限灯 NEE 支持 rectangle、disk、sphere 面积灯和程序化 flame，HDR environment 则通过独立的无限远 NEE 域采样；point/directional 在第三个域逐灯求值。以下光源仍不被主动采样：
 
 - constant、sky 渐变和太阳瓣；
 - mesh emitter；
 - 任何绑定纹理的 emitter。
 
-它们仍可由 BSDF 路径命中或 miss 得到，因此不是必然缺失，但小而亮时可能有很高方差。v5 在普通空气顶点默认按亮度与面积/体积代理选择一个有限灯，粗糙水面为了同时照顾强月光与弱水下灯，确定性地各取一个全局分布样本和均匀索引样本，介质内的普通顶点则只用均匀选灯。HDR 环境方向仍按亮度乘 texel 立体角选择，不受有限灯顶点模式影响。完整构造见[第 13 章](13-hdr-environment-and-importance-sampling.md)。
+它们仍可由 BSDF 路径命中或 miss 得到，因此不是必然缺失，但小而亮时可能有很高方差。schema v6 在普通空气顶点默认按亮度与面积/体积代理选择一个有限灯，粗糙水面为了同时照顾强月光与弱水下灯，确定性地各取一个全局分布样本和均匀索引样本，介质内的普通顶点则只用均匀选灯。HDR 环境方向仍按亮度乘 texel 立体角选择，不受有限灯顶点模式影响；delta 灯也不进入这个随机 CDF。完整构造见[第 13 章](13-hdr-environment-and-importance-sampling.md)。
 
 ## 8. 对应实现
 
 设备端采样与 RR/MIS 决策都实现在 [`src/device_programs.cu`](../../src/device_programs.cu)。相关 helper 位于该文件的匿名命名空间，与调用点一起编译为 OptiX IR；不存在需要同步维护的 CPU 渲染副本：
 
-- `sample_light_surface`：矩形、圆盘和球面的面积采样；
-- `light_direction_pdf`：面积 PDF 到方向 PDF 的换元；
-- `trace_visible`：有限距离阴影射线；
+- `sample_light_surface`、`sample_visible_sphere_direction`：矩形/圆盘面积采样、球内回退与球外可见锥采样；
+- `light_direction_pdf`：面积或球锥 PDF 到统一方向测度的换元；
+- `trace_visible`：有限或无限距离阴影射线；
 - `direct_segment_transmittance`：当前粗糙透射事件的介质栈副本与 Beer 段，并阻断后续透明边界；
 - `sample_finite_direct_light`：有限灯 NEE、BSDF 评估，以及普通顶点的 power 权重或水面的 balance 权重；
 - `sample_environment_direct_light`：无限远环境 NEE、透射和 $w_L$；
-- raygen 调用点：把两个独立 NEE 域的估计相加；
+- `accumulate_delta_direct_lights`：逐盏 point/directional NEE、逆平方或恒定照明，以及固定为 1 的 MIS 权重；
+- raygen 调用点：分别累加有限灯、环境和 delta 灯三个 NEE 域；
 - `power_heuristic`、`balance_heuristic`：数值稳定的普通双策略权重与水面三技术权重；
 - `resolve_continuation`：RR 存活、吞吐量补偿和原始 BSDF PDF；
 - `direct_light_mis_weight`、`emitter_hit_mis_weight`：普通域只在竞争策略真实存在时使用 MIS；

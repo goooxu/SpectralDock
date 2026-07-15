@@ -179,7 +179,12 @@ def reflection_scene(source, bound):
 
 def blocker_scene(light_depth=-0.85):
     return {
-        "schema_version": 5,
+        "schema_version": 6,
+        "integrator": {
+            "direct_light_sampling": "importance",
+            "clamp_direct": 0.0,
+            "clamp_indirect": 0.0,
+        },
         "camera": {
             "look_from": [0.0, 1.25, 4.2], "look_at": [0.0, 1.0, 0.0],
             "up": [0.0, 1.0, 0.0], "vfov": 30.0,
@@ -234,7 +239,12 @@ def blocker_scene(light_depth=-0.85):
 def generic_glass_scene(mode, ior=1.52):
     inside = mode == "inside_tir"
     scene = {
-        "schema_version": 5,
+        "schema_version": 6,
+        "integrator": {
+            "direct_light_sampling": "importance",
+            "clamp_direct": 0.0,
+            "clamp_indirect": 0.0,
+        },
         "camera": {
             "look_from": [0.0, 0.0, 0.78] if inside else [0.0, 0.0, 4.0],
             "look_at": [1.0, 0.0, 0.78] if inside else [0.0, 0.0, 0.0],

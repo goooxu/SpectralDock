@@ -70,7 +70,12 @@ def build_scene(seed=DEFAULT_SEED):
             })
 
     return {
-        "schema_version": 5,
+        "schema_version": 6,
+        "integrator": {
+            "direct_light_sampling": "importance",
+            "clamp_direct": 64.0,
+            "clamp_indirect": 16.0,
+        },
         "camera": {
             "look_from": [15.0, 10.0, 18.0],
             "look_at": [0.0, 0.1, 0.0],

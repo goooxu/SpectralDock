@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <fstream>
+#include <initializer_list>
 #include <limits>
 #include <stdexcept>
 #include <string_view>
@@ -101,10 +102,32 @@ void nonnegative(Vec3 value, const std::string& where) {
     fail(where, "components must be finite and non-negative");
 }
 
+void require_only_members(
+    const json& object,
+    std::initializer_list<std::string_view> allowed,
+    const std::string& where) {
+  if (!object.is_object()) fail(where, "expected an object");
+  for (auto it = object.begin(); it != object.end(); ++it) {
+    const std::string& key = it.key();
+    const bool accepted = std::any_of(
+        allowed.begin(), allowed.end(), [&](std::string_view candidate) {
+          return std::string_view(key) == candidate;
+        });
+    if (!accepted) fail(where + "." + key, "key is not valid for this light type");
+  }
+}
+
 Vec3 unit_vector(const json& value, const std::string& where) {
   const Vec3 v = vec3(value, where);
-  if (length_squared(v) < 1.0e-12f) fail(where, "must be non-zero");
-  return normalize(v);
+  // Compute the norm in double precision. Squaring a valid float32 component
+  // near FLT_MAX overflows in float and would otherwise normalize to zero.
+  const double norm = std::hypot(
+      static_cast<double>(v.x), static_cast<double>(v.y),
+      static_cast<double>(v.z));
+  if (norm < 1.0e-6) fail(where, "must be non-zero");
+  return {static_cast<float>(static_cast<double>(v.x) / norm),
+          static_cast<float>(static_cast<double>(v.y) / norm),
+          static_cast<float>(static_cast<double>(v.z) / norm)};
 }
 
 std::filesystem::path resolve_path(const std::filesystem::path& scene_path,
@@ -259,16 +282,25 @@ Integrator parse_integrator(const json& value) {
   if (!value.is_object()) fail(where, "expected an object");
   Integrator integrator;
   const auto sampling = value.find("direct_light_sampling");
-  if (sampling == value.end()) return integrator;
-  const std::string mode = text(*sampling, where + ".direct_light_sampling");
-  if (mode == "uniform") {
-    integrator.direct_light_sampling = DirectLightSampling::Uniform;
-  } else if (mode == "importance") {
-    integrator.direct_light_sampling = DirectLightSampling::Importance;
-  } else {
-    fail(where + ".direct_light_sampling",
-         "expected 'uniform' or 'importance'");
+  if (sampling != value.end()) {
+    const std::string mode = text(*sampling, where + ".direct_light_sampling");
+    if (mode == "uniform") {
+      integrator.direct_light_sampling = DirectLightSampling::Uniform;
+    } else if (mode == "importance") {
+      integrator.direct_light_sampling = DirectLightSampling::Importance;
+    } else {
+      fail(where + ".direct_light_sampling",
+           "expected 'uniform' or 'importance'");
+    }
   }
+  integrator.clamp_direct =
+      optional_number(value, "clamp_direct", integrator.clamp_direct, where);
+  integrator.clamp_indirect = optional_number(
+      value, "clamp_indirect", integrator.clamp_indirect, where);
+  if (integrator.clamp_direct < 0.0f)
+    fail(where + ".clamp_direct", "must be non-negative");
+  if (integrator.clamp_indirect < 0.0f)
+    fail(where + ".clamp_indirect", "must be non-negative");
   return integrator;
 }
 
@@ -316,12 +348,12 @@ bool object_requires_uvs(const Scene& scene, const Object& object) {
          material_uses_texture(scene, object.back_material);
 }
 
-void require_schema_version_5(const json& root) {
+void require_schema_version_6(const json& root) {
   const json& value = member(root, "schema_version", "root");
   if (!value.is_number_unsigned() && !value.is_number_integer())
-    fail("root.schema_version", "expected the integer 5");
-  if (value != 5)
-    fail("root.schema_version", "unsupported schema version; expected 5");
+    fail("root.schema_version", "expected the integer 6");
+  if (value != 6)
+    fail("root.schema_version", "unsupported schema version; expected 6");
 }
 
 }  // namespace
@@ -363,7 +395,7 @@ Scene load_scene(const std::filesystem::path& input_path, const SceneLoadOptions
     throw std::runtime_error("cannot parse scene file " + path.string() + ": " + error.what());
   }
   if (!root.is_object()) fail("root", "expected an object");
-  require_schema_version_5(root);
+  require_schema_version_6(root);
 
   Scene scene;
   scene.camera = parse_camera(member(root, "camera", "root"));
@@ -923,6 +955,7 @@ Scene load_scene(const std::filesystem::path& input_path, const SceneLoadOptions
     std::unordered_set<std::string> light_names;
     std::unordered_set<std::int32_t> linked_objects;
     std::size_t flame_count = 0;
+    std::size_t delta_count = 0;
     double total_flame_optical_thickness = 0.0;
     for (std::size_t i = 0; i < lights.size(); ++i) {
       const json& value = lights[i];
@@ -931,6 +964,41 @@ Scene load_scene(const std::filesystem::path& input_path, const SceneLoadOptions
       light.name = text(member(value, "name", where), where + ".name");
       if (!light_names.insert(light.name).second) fail(where, "duplicate name '" + light.name + "'");
       const std::string type = text(member(value, "type", where), where + ".type");
+
+      if (type == "point") {
+        require_only_members(value, {"name", "type", "position", "intensity"},
+                             where);
+        if (++delta_count > 32)
+          fail("lights", "must contain at most 32 point and directional lights");
+        light.type = LightType::Point;
+        light.position =
+            vec3(member(value, "position", where), where + ".position");
+        light.emission =
+            vec3(member(value, "intensity", where), where + ".intensity");
+        nonnegative(light.emission, where + ".intensity");
+        if (max_component(light.emission) <= 0.0f)
+          fail(where + ".intensity", "must contain positive energy");
+        scene.lights.push_back(std::move(light));
+        continue;
+      }
+
+      if (type == "directional") {
+        require_only_members(
+            value, {"name", "type", "direction", "irradiance"}, where);
+        if (++delta_count > 32)
+          fail("lights", "must contain at most 32 point and directional lights");
+        light.type = LightType::Directional;
+        light.axis =
+            unit_vector(member(value, "direction", where), where + ".direction");
+        light.emission =
+            vec3(member(value, "irradiance", where), where + ".irradiance");
+        nonnegative(light.emission, where + ".irradiance");
+        if (max_component(light.emission) <= 0.0f)
+          fail(where + ".irradiance", "must contain positive energy");
+        scene.lights.push_back(std::move(light));
+        continue;
+      }
+
       light.position = vec3(member(value, "position", where), where + ".position");
 
       if (type == "flame") {

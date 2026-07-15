@@ -95,7 +95,7 @@ def write_asymmetric_hdr(path):
 
 def receiver_scene(source, hdr_name):
     scene = copy.deepcopy(source)
-    scene["schema_version"] = 5
+    scene["schema_version"] = 6
     scene["camera"] = {
         "look_from": [0.0, 0.0, 3.0],
         "look_at": [0.0, 0.0, 0.0],
@@ -104,7 +104,11 @@ def receiver_scene(source, hdr_name):
         "aperture": 0.0,
         "focus_distance": 3.0,
     }
-    scene["integrator"] = {"direct_light_sampling": "importance"}
+    scene["integrator"] = {
+        "direct_light_sampling": "importance",
+        "clamp_direct": 0.0,
+        "clamp_indirect": 0.0,
+    }
     scene["background"] = {
         "type": "environment",
         "path": hdr_name,
