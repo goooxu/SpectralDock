@@ -133,4 +133,4 @@ OPTIX_ROOT="/absolute/path/to/OptiX-SDK-9.1.0" \
 
 NVIDIA、CUDA、OptiX、PhysX 和 RTX 是 NVIDIA Corporation 在美国及其他国家和地区的商标或注册商标。SpectralDock 是独立的非官方项目，与 NVIDIA Corporation 无隶属关系，也未获得其赞助或背书。
 
-更多资料：[渲染技术报告](docs/technical-report/README.md)、[场景格式](docs/SCENE_FORMAT.md)、[RTX 5090 运行记录](docs/BENCHMARK.md)、[示例画廊](docs/EXAMPLES.md)。
+更多资料：[版本变更](CHANGELOG.md)、[渲染技术报告](docs/technical-report/README.md)、[场景格式](docs/SCENE_FORMAT.md)、[RTX 5090 运行记录](docs/BENCHMARK.md)、[示例画廊](docs/EXAMPLES.md)。
