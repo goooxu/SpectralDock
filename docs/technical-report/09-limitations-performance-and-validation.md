@@ -162,7 +162,8 @@ $$
 6. delta 灯对照检查 point 逆平方、directional 距离不变性、背面、遮挡、逐灯确定性、粗糙介电两侧和水中 Beer；firefly 对照检查 direct/indirect 独立触发、最大 RGB 通道保色相缩放、计数器、CLI 覆盖和 clamp 0/0 兼容路径；
 7. water GPU 对照用 clamp 0/0 线性 PFM 检查粗糙反射/透射、两侧介质、Beer、TIR、透明阻断、光滑有界 split，并以等散射阶数（bound depth 2 / unbound depth 3）比较高 spp 均值与三 seed 低 spp MSE；Moonlit 另以同一 `roughness: 0.12` 积分对象做维护级 time-to-error：一份独立 seed 的 8192 spp 粗糙 NEE 线性参考，对比三 seed 的 NEE 1024 spp 与仅删除显式灯绑定、保留 emitter 几何的 BSDF-only 2048 spp；两者平均 GPU render 时间须在 15% 内，且 NEE 在反射/水下 ROI 的归一化 MSE 都更低；
 8. Compute Sanitizer 对 mesh、water、flame、HDR environment 和新 delta/clamp fixture 查找越界、竞争和未初始化数据；
-9. 技术报告 pytest 逐字核对引用的源码片段，并检查数学标记没有使用渲染环境不支持的宏，避免报告与实现漂移。
+9. 技术报告 pytest 逐字核对引用的源码片段，并检查数学标记没有使用渲染环境不支持的宏；PhysX 封面 checker 的 host 测试用合成有效文档和定向 mutation 覆盖版本、GPU-only flags、actor/灯光/体积/水面契约，但不假装执行真实刚体或像素渲染。
+10. RTX 5090 的正式 acceptance 对 Kinetic Foundry 与封面各即时生成低分辨率样本，完成契约和像素流程；封面还进入低分辨率 Compute Sanitizer，并在 4K 发布前人工检查爆发构图、水池、火/烟/神光代理及同次 sidecar。
 
 唯一保留的像素 golden 是 mesh fixture 的 RTX 5090 基线；积分器对照的临时 PNG 和 stats 会自动清理，不保存哈希。mesh golden 只证明定向输出与已接受结果逐字节相同，不能独立证明物理正确；跨 GPU、编译器或 `--use_fast_math` 的少量浮点差异，也不自动等于数学回归。正式 gallery 与 stats 继续作为作品和一次运行记录保存，但不再是自动测试门禁；默认 acceptance 不设置性能阈值或 profiling 验收，耗时较高的 Moonlit 维护脚本才在同一次手工运行内检查相对时间。可靠结论仍需要公式审查、定向场景和数值/视觉证据结合。
 
@@ -188,4 +189,4 @@ $$
 - Bruce Walter 等，*Microfacet Models for Refraction through Rough Surfaces*（2007）。
 - Matt Pharr、Wenzel Jakob、Greg Humphreys，*Physically Based Rendering*。
 
-[上一章：降噪、色调映射与输出](08-denoising-color-and-output.md) · [返回目录](README.md) · [下一章：PhysX 刚体模拟与场景烘焙](10-physx-rigid-body-scene-baking.md)
+[上一章：降噪、色调映射与输出](08-denoising-color-and-output.md) · [返回目录](README.md) · [下一章：PhysX 刚体模拟与场景 JIT 构建](10-physx-rigid-body-scene-baking.md)

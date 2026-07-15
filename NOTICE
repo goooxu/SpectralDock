@@ -9,7 +9,7 @@ THIRD_PARTY_NOTICES.md.
 
 Except where a different license is stated, the source code, scripts, tools,
 documentation, scenes, SVG figures, and tests are licensed under Apache-2.0.
-The sixteen visual assets explicitly listed in
+The seventeen visual assets explicitly listed in
 assets/examples/models/CC0-1.0.txt are dedicated under CC0-1.0.
 third_party/tinyobjloader remains under its upstream MIT license.
 

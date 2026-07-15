@@ -2,6 +2,17 @@
 
 Moonlit Stepwell 的水不是平面贴图，也不是预先烘焙的网格。它是 schema v6 在运行时求值的有限解析高度场：OptiX 用保守 tile AABB 找出候选区域，自定义 intersection 程序求射线与波面的根，路径积分器再处理粗糙 GGX 介电反射/透射、NEE/MIS、Fresnel/Snell、介质栈和水下吸收。
 
+“熔岩圣殿的机械先知”在右侧下陷池体中使用同一个解析模型：带苔石砖与
+不透明池壁/池底封闭水下区域，RGB Beer 吸收让池边保持可见而深处迅速转为
+幽蓝。PhysX 只计算空中预碎裂刚体；水面没有粒子、SPH/FLIP、刚体耦合或
+时间演化，仍由 OptiX 自定义求交与 CUDA 介质传输在渲染时求值。
+
+封面穹顶的“冰晶”不进入本章的介质栈。早期 dielectric sphere 在解析水面
+存在时，高样本诊断发现了稀有近切线路径的介质栈安全错误；在不修改渲染器
+且坚持正式输出 `medium_errors == 0` 的前提下，最终场景改用非透明冷色粗糙
+metal sphere 作为冰晶外观代理，并以 `opaque_frost_visual_proxy: true`
+显式记录。这保留了轮廓和冷色反光，但不宣称模拟冰的透射光学。
+
 这里的“水体”有严格边界：`water_surface` 只是有限顶界面，不自带侧壁或底部。v0.1 加载器强制相机 aperture 位于水和玻璃外；场景还必须用不透明池壁与池底封住水下区域。它不是流体模拟，也没有时间演化、泡沫、飞溅、专用焦散或 motion blur。
 
 ## 1. 四项解析波浪
@@ -441,7 +452,7 @@ stats 分开记录 height evaluations、tile tests、roots reported、medium seg
   }
 ```
 
-定向 GPU fixture 检查固定 seed、粗糙反射/透射、全反射、两侧法线语义、深浅路径 RGB Beer、浸没玻璃的介质栈、depth-1 粗糙 NEE、透明中间边界阻断，以及后续真实水面顶点恢复贡献。绑定 emitter 在 depth 2 已能用 NEE 完成末端连接，未绑定的 BSDF-only 路径需要 depth 3 才能命中同一 emitter；因此对照按**等散射阶数**比较 bound depth 2 / unbound depth 3，其高 spp 线性 PFM 均值必须在 2% 内，三组低 spp seed 的 NEE ROI MSE 至多是 BSDF-only 的 50%。光滑 fixture 检查单次 split、全反射、能量权重与确定性。Moonlit Stepwell 的维护者 time-to-error 固定同一 `roughness: 0.12` 积分对象，用一份独立 seed 的粗糙 NEE 8192 spp 线性参考，对比三组 NEE 1024 spp 与只删除显式灯绑定、保留 emitter 几何的 BSDF-only 2048 spp；候选平均渲染时间须在 15% 内，反射和水下 ROI 的归一化 MSE 都必须更低。本次 RTX 5090 记录为 2444.827 ms 对 2687.225 ms，反射 NMSE 为 0.00894643 对 0.00942178，水下 NMSE 为 0.138436 对 0.200359。该对照改变的是采样策略而不是场景辐射度，且仅供维护者手工执行，不进入默认 acceptance，也不是跨 GPU 性能承诺。
+定向 GPU fixture 检查固定 seed、粗糙反射/透射、全反射、两侧法线语义、深浅路径 RGB Beer、浸没玻璃的介质栈、depth-1 粗糙 NEE、透明中间边界阻断，以及后续真实水面顶点恢复贡献。绑定 emitter 在 depth 2 已能用 NEE 完成末端连接，未绑定的 BSDF-only 路径需要 depth 3 才能命中同一 emitter；因此对照按**等散射阶数**比较 bound depth 2 / unbound depth 3，其高 spp 线性 PFM 均值必须在 2% 内，三组低 spp seed 的 NEE ROI MSE 至多是 BSDF-only 的 50%。光滑 fixture 检查单次 split、全反射、能量权重与确定性。Moonlit Stepwell 的维护者 time-to-error 固定同一 `roughness: 0.12` 积分对象，用一份独立 seed 的粗糙 NEE 8192 spp 线性参考，对比三组 NEE 1024 spp 与只删除显式灯绑定、保留 emitter 几何的 BSDF-only 2048 spp；候选平均渲染时间须在 15% 内，反射和水下 ROI 的归一化 MSE 都必须更低。该对照不写入 gallery stats；当前报告不沿用缺少同次原始记录的历史数值。它改变的是采样策略而不是场景辐射度，且仅供维护者手工执行，不进入默认 acceptance，也不是跨 GPU 性能承诺。
 
 正式 Moonlit Stepwell 使用 `roughness: 0.12`、512 spp、depth 12、direct 64 / indirect 16 贡献钳位，并为 gallery PNG 启用 OptiX AI Denoiser。所有能量、无偏性和 time-to-error 比较都通过 `--linear-output` 保存 tone map 前的 PFM，并显式使用 `--no-denoise --clamp-direct 0 --clamp-indirect 0`；因此降噪和有偏钳位都不参与上述数值结论。tile seam、漏交和构图还需人工检查，统计安全门与 Compute Sanitizer 则检查数值和内存错误。
 
@@ -450,6 +461,7 @@ stats 分开记录 height evaluations、tile tests、roots reported、medium seg
 - 波浪是确定性静态正弦叠加，不是 CFD、浅水方程或海洋频谱动画；
 - `water_surface` 只是有限顶界面，依赖场景的不透明池壁/底部封闭；
 - 加载器强制相机 aperture 从水与玻璃外开始；普通 dielectric 只支持同材质双面、无 alpha 的闭合 sphere，水层加嵌套玻璃合计最多四层；
+- 封面不依靠普通 dielectric sphere 表现冰晶；其非透明冷色粗糙 metal 代理是为了在不修改渲染器时保持介质安全门为零错误，不代表真实冰材质；
 - 粗糙界面有单顶点 NEE/MIS，光滑首水面有一次有界 split；两者都不求解光滑多界面焦散或 MNEE；
 - GGX 介电是单次微表面散射，不补偿多次散射能量；RGB Beer 吸收不是波长采样，也没有体散射、悬浮物或泡沫。
 

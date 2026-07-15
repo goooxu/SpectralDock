@@ -47,6 +47,18 @@ if(SPECTRALDOCK_ENABLE_PHYSX_SCENE)
     CUDA::cuda_driver)
   target_compile_options(spectraldock_physx_scene PRIVATE
     -Wall -Wextra -Wpedantic)
+
+  add_executable(spectraldock_physx_lava_temple_oracle
+    tools/generate_physx_lava_temple_oracle.cpp)
+  target_include_directories(spectraldock_physx_lava_temple_oracle
+    PRIVATE include)
+  target_link_libraries(spectraldock_physx_lava_temple_oracle PRIVATE
+    PhysX::SDK
+    nlohmann_json::nlohmann_json
+    CUDA::cudart
+    CUDA::cuda_driver)
+  target_compile_options(spectraldock_physx_lava_temple_oracle PRIVATE
+    -Wall -Wextra -Wpedantic)
 endif()
 
 if(SPECTRALDOCK_ENABLE_GPU)

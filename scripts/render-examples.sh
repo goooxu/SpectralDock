@@ -14,6 +14,7 @@ usage() {
     'final:   1920x1080, 512 spp, depth 12, AI denoising' \
     'ember-forge:       256/2048 spp, depth 12, no denoising' \
     'moonlit-stepwell:   128/512 spp, depth 12, AI denoising' \
+    'lava-temple-oracle: 256/2048 spp, depth 12, AI denoising, UHD final' \
     'Warning: --preset final writes version-controlled files in docs/gallery.'
 }
 
@@ -98,6 +99,8 @@ for requested in "${scenes[@]}"; do
   output_path="${output_dir}/${stem}${suffix}.png"
   scene_spp="${spp}"
   scene_depth="${depth}"
+  scene_width="${width}"
+  scene_height="${height}"
   denoise_option="--denoise"
   if [[ "${stem}" == "ember-forge" ]]; then
     scene_depth=12
@@ -117,9 +120,22 @@ for requested in "${scenes[@]}"; do
       scene_spp=512
     fi
   fi
+  if [[ "${stem}" == "lava-temple-oracle" ]]; then
+    scene_depth=12
+    denoise_option="--denoise"
+    if [[ "${preset}" == "preview" ]]; then
+      scene_width=960
+      scene_height=540
+      scene_spp=256
+    else
+      scene_width=3840
+      scene_height=2160
+      scene_spp=2048
+    fi
+  fi
   echo "rendering ${stem} (${preset}, ${scene_spp} spp) -> ${output_path}"
   gpu_container "build/${BUILD_TYPE}/spectraldock" \
     --scene "${scene_path}" --output "${output_path}" \
-    --width "${width}" --height "${height}" --spp "${scene_spp}" \
+    --width "${scene_width}" --height "${scene_height}" --spp "${scene_spp}" \
     --max-depth "${scene_depth}" "${denoise_option}"
 done

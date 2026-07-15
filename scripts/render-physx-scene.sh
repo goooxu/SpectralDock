@@ -4,27 +4,31 @@ set -euo pipefail
 source "$(dirname "$0")/common.sh"
 
 preset=""
-scene="scenes/generated/kinetic-foundry.json"
+scene_name="kinetic-foundry"
 device=0
-seed=20260711
+seed=""
 
 usage() {
   printf '%s\n' \
     'Usage: ./scripts/render-physx-scene.sh --preset preview|final [options]' \
     '' \
     'Options:' \
-    '  --device N  Required CUDA device for PhysX generation (default: 0)' \
-    '  --seed N    Simulation seed (default: 20260711)' \
+    '  --scene NAME  kinetic-foundry (default) or lava-temple-oracle' \
+    '  --device N   Required CUDA device for PhysX generation (default: 0)' \
+    '  --seed N     Simulation seed (scene default when omitted)' \
     '' \
-    'preview writes output/examples/kinetic-foundry-preview.png' \
-    'final writes docs/gallery/kinetic-foundry.png, stats, and physics metadata'
+    'preview writes output/examples/<scene>-preview.png' \
+    'final writes docs/gallery/<scene>.png, stats, and same-run physics metadata' \
+    '' \
+    'Every render performs a fresh GPU PhysX simulation before optixLaunch.'
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --preset|--device|--seed)
+    --scene|--preset|--device|--seed)
       [[ $# -ge 2 ]] || die "$1 needs a value"
       case "$1" in
+        --scene) scene_name="$2" ;;
         --preset) preset="$2" ;;
         --device) device="$2" ;;
         --seed) seed="$2" ;;
@@ -41,16 +45,32 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+case "${scene_name}" in
+  kinetic-foundry)
+    default_seed=20260711
+    ;;
+  lava-temple-oracle)
+    default_seed=909
+    ;;
+  *)
+    die "--scene must be kinetic-foundry or lava-temple-oracle"
+    ;;
+esac
+if [[ -z "${seed}" ]]; then
+  seed="${default_seed}"
+fi
+
+scene="scenes/generated/${scene_name}.json"
+metadata="scenes/generated/${scene_name}.physics.json"
+
 case "${preset}" in
   preview)
-    metadata="scenes/generated/kinetic-foundry.physics.json"
-    expected="output/examples/kinetic-foundry-preview.png"
+    expected="output/examples/${scene_name}-preview.png"
     publish_metadata=""
     ;;
   final)
-    metadata="scenes/generated/kinetic-foundry.physics.json"
-    expected="docs/gallery/kinetic-foundry.png"
-    publish_metadata="docs/gallery/kinetic-foundry.physics.json"
+    expected="docs/gallery/${scene_name}.png"
+    publish_metadata="docs/gallery/${scene_name}.physics.json"
     ;;
   *)
     die "--preset must be preview or final"
@@ -58,7 +78,12 @@ case "${preset}" in
 esac
 
 require_optix_root
+cleanup_generated() {
+  rm -f "${ROOT}/${scene}" "${ROOT}/${metadata}"
+}
+trap cleanup_generated EXIT
 "$(dirname "$0")/generate-physx-scene.sh" \
+  --scene "${scene_name}" \
   --output "${scene}" --metadata "${metadata}" \
   --device "${device}" --seed "${seed}" --verify
 
@@ -70,13 +95,15 @@ export BUILD_TYPE=Release
 require_file "${ROOT}/${expected}"
 require_file "${ROOT}/${expected%.png}.stats.json"
 if [[ -n "${publish_metadata}" ]]; then
-  metadata_temporary="${ROOT}/docs/gallery/.kinetic-foundry.physics.json.tmp"
+  metadata_temporary="${ROOT}/docs/gallery/.${scene_name}.physics.json.tmp"
   cleanup_metadata() {
     rm -f "${metadata_temporary}"
   }
-  trap cleanup_metadata EXIT
+  trap 'cleanup_metadata; cleanup_generated' EXIT
   cp "${ROOT}/${metadata}" "${metadata_temporary}"
   mv -f "${metadata_temporary}" "${ROOT}/${publish_metadata}"
-  trap - EXIT
 fi
-printf 'rendered %s preset -> %s\n' "${preset}" "${expected}"
+cleanup_generated
+trap - EXIT
+printf 'rendered %s %s preset -> %s\n' \
+  "${scene_name}" "${preset}" "${expected}"

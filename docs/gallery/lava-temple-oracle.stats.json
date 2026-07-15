@@ -1,0 +1,68 @@
+{
+  "scene": "scenes/generated/lava-temple-oracle.json",
+  "output": "docs/gallery/lava-temple-oracle.png",
+  "hardware": {
+    "gpu": "NVIDIA GeForce RTX 5090",
+    "compute_capability": "12.0"
+  },
+  "versions": {
+    "driver": "615.36",
+    "cuda_driver_api": 13040,
+    "cuda_runtime": 13030,
+    "optix": 90100
+  },
+  "render": {
+    "width": 3840,
+    "height": 2160,
+    "spp": 2048,
+    "max_depth": 12,
+    "seed": 909,
+    "denoised": true,
+    "direct_light_sampling": "importance",
+    "clamp_direct": 64.0,
+    "clamp_indirect": 16.0
+  },
+  "timings_ms": {
+    "bvh_build": 66.21395111083984,
+    "render": 743705.1875,
+    "denoise": 22.633087158203125,
+    "total": 750371.02515
+  },
+  "memory": {
+    "peak_device_bytes": 4249157632,
+    "peak_tracked_device_bytes": 2898949240
+  },
+  "geometry": {
+    "objects": 450,
+    "instances": 450,
+    "unique_meshes": 0,
+    "mesh_triangles": 0,
+    "gas_count": 450
+  },
+  "performance": {
+    "traced_rays": 294345540582,
+    "rays_per_second": 395782556.7567391
+  },
+  "firefly": {
+    "direct_clamped_contributions": 30504182,
+    "indirect_clamped_contributions": 1360014
+  },
+  "volume": {
+    "volume_density_evaluations": 312207027302,
+    "volume_real_collisions": 5966434375,
+    "volume_light_samples": 57557356560,
+    "volume_majorant_violations": 0,
+    "volume_tracking_overflows": 0
+  },
+  "water": {
+    "water_height_evaluations": 308648046113,
+    "water_tile_tests": 37936343787,
+    "water_roots_reported": 7482772769,
+    "water_medium_segments": 2446684411,
+    "water_solver_overflows": 0,
+    "water_medium_errors": 0,
+    "water_rough_nee_attempts": 16658170907,
+    "water_rough_nee_contributions": 4816810187,
+    "water_delta_splits": 0
+  }
+}

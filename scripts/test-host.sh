@@ -16,4 +16,5 @@ ctest --test-dir "${BUILD_DIR}" --output-on-failure
 PYTHONDONTWRITEBYTECODE="${PYTHONDONTWRITEBYTECODE:-1}" \
   python3 -m pytest -q -p no:cacheprovider \
     tests/test_technical_report_snippets.py \
-    tests/test_hdr_environment_generator.py
+    tests/test_hdr_environment_generator.py \
+    tests/test_physx_lava_temple_oracle_contract.py

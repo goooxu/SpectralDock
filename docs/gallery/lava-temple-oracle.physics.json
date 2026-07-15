@@ -1,0 +1,4156 @@
+{
+  "actors": [
+    {
+      "angular_velocity": [
+        15.955403,
+        0.588407,
+        15.722044
+      ],
+      "category": "shell_plate",
+      "initial_position": [
+        0,
+        4.13,
+        -0.53
+      ],
+      "linear_velocity": [
+        -2.880696,
+        -9.985679,
+        8.928206
+      ],
+      "name": "shell_plate_00",
+      "position": [
+        -0.453365,
+        2.69114,
+        1.053373
+      ],
+      "rotation_xyzw": [
+        0.601004,
+        0.378902,
+        0.516699,
+        -0.477755
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        1.034343,
+        2.776469,
+        1.531273
+      ],
+      "category": "shell_plate",
+      "initial_position": [
+        0.883346,
+        4.13,
+        -1.04
+      ],
+      "linear_velocity": [
+        2.589023,
+        -2.608814,
+        1.506968
+      ],
+      "name": "shell_plate_01",
+      "position": [
+        1.383966,
+        3.798747,
+        -0.742394
+      ],
+      "rotation_xyzw": [
+        0.053558,
+        0.767755,
+        0.122736,
+        0.626594
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        1.067755,
+        -3.350411,
+        4.648174
+      ],
+      "category": "shell_plate",
+      "initial_position": [
+        0.883346,
+        4.13,
+        -2.06
+      ],
+      "linear_velocity": [
+        4.040321,
+        -2.431153,
+        -1.282434
+      ],
+      "name": "shell_plate_02",
+      "position": [
+        1.701953,
+        3.829951,
+        -2.320631
+      ],
+      "rotation_xyzw": [
+        -0.320615,
+        0.580997,
+        0.294495,
+        0.687693
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        8.298503,
+        -2.834444,
+        0.838045
+      ],
+      "category": "shell_plate",
+      "initial_position": [
+        0,
+        4.13,
+        -2.57
+      ],
+      "linear_velocity": [
+        0.437995,
+        -2.63744,
+        -3.325914
+      ],
+      "name": "shell_plate_03",
+      "position": [
+        0.087809,
+        3.789559,
+        -3.236779
+      ],
+      "rotation_xyzw": [
+        -0.073611,
+        0.633495,
+        0.728893,
+        0.24896
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -1.544245,
+        -8.045036,
+        1.534465
+      ],
+      "category": "shell_plate",
+      "initial_position": [
+        -0.883346,
+        4.13,
+        -2.06
+      ],
+      "linear_velocity": [
+        -2.368676,
+        -2.495753,
+        -1.48894
+      ],
+      "name": "shell_plate_04",
+      "position": [
+        -1.358846,
+        3.81755,
+        -2.31589
+      ],
+      "rotation_xyzw": [
+        -0.155878,
+        0.910906,
+        -0.101074,
+        0.368424
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        6.357801,
+        -9.030869,
+        9.148182
+      ],
+      "category": "shell_plate",
+      "initial_position": [
+        -0.883346,
+        4.13,
+        -1.04
+      ],
+      "linear_velocity": [
+        -5.891179,
+        -3.777204,
+        3.155271
+      ],
+      "name": "shell_plate_05",
+      "position": [
+        -2.032223,
+        3.581134,
+        -0.415657
+      ],
+      "rotation_xyzw": [
+        -0.685986,
+        0.574697,
+        -0.348621,
+        0.278588
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        3.61812,
+        10.320085,
+        5.684988
+      ],
+      "category": "shell_plate",
+      "initial_position": [
+        0.252965,
+        4.87,
+        -0.223912
+      ],
+      "linear_velocity": [
+        1.74905,
+        -4.133104,
+        7.775408
+      ],
+      "name": "shell_plate_06",
+      "position": [
+        0.578617,
+        4.307714,
+        1.198353
+      ],
+      "rotation_xyzw": [
+        0.311185,
+        0.784617,
+        0.259455,
+        0.469281
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -1.775968,
+        0.796827,
+        5.069731
+      ],
+      "category": "shell_plate",
+      "initial_position": [
+        1.274908,
+        4.87,
+        -1.10603
+      ],
+      "linear_velocity": [
+        3.072241,
+        -1.767121,
+        1.01731
+      ],
+      "name": "shell_plate_07",
+      "position": [
+        1.938129,
+        4.695284,
+        -0.898334
+      ],
+      "rotation_xyzw": [
+        -0.427329,
+        0.494205,
+        0.348099,
+        0.672293
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        1.250835,
+        0.449365,
+        1.476384
+      ],
+      "category": "shell_plate",
+      "initial_position": [
+        1.021943,
+        4.87,
+        -2.432118
+      ],
+      "linear_velocity": [
+        2.022135,
+        -1.831783,
+        -1.681115
+      ],
+      "name": "shell_plate_08",
+      "position": [
+        1.411852,
+        4.691967,
+        -2.758623
+      ],
+      "rotation_xyzw": [
+        -0.072826,
+        0.891288,
+        0.172245,
+        0.413079
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        5.889587,
+        -4.617158,
+        -1.380837
+      ],
+      "category": "shell_plate",
+      "initial_position": [
+        -0.252965,
+        4.87,
+        -2.876088
+      ],
+      "linear_velocity": [
+        -0.799544,
+        -1.71197,
+        -3.783133
+      ],
+      "name": "shell_plate_09",
+      "position": [
+        -0.413258,
+        4.715096,
+        -3.63453
+      ],
+      "rotation_xyzw": [
+        0.074609,
+        0.758177,
+        0.545023,
+        0.350073
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -1.068817,
+        -0.405898,
+        3.233523
+      ],
+      "category": "shell_plate",
+      "initial_position": [
+        -1.274908,
+        4.87,
+        -1.99397
+      ],
+      "linear_velocity": [
+        -3.508926,
+        -1.733035,
+        -0.94917
+      ],
+      "name": "shell_plate_10",
+      "position": [
+        -1.978378,
+        4.710874,
+        -2.18426
+      ],
+      "rotation_xyzw": [
+        -0.198547,
+        0.790399,
+        -0.270199,
+        -0.51268
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -3.740425,
+        -4.943735,
+        -8.440176
+      ],
+      "category": "shell_plate",
+      "initial_position": [
+        -1.021943,
+        4.87,
+        -0.667882
+      ],
+      "linear_velocity": [
+        -3.109636,
+        -2.518215,
+        2.376812
+      ],
+      "name": "shell_plate_11",
+      "position": [
+        -1.605064,
+        4.585253,
+        -0.210604
+      ],
+      "rotation_xyzw": [
+        0.581764,
+        0.501921,
+        0.5362,
+        -0.34945
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -0.919213,
+        4.988545,
+        -0.102496
+      ],
+      "category": "shell_plate",
+      "initial_position": [
+        0.496968,
+        5.63,
+        -0.294802
+      ],
+      "linear_velocity": [
+        0.105974,
+        -1.365709,
+        3.490512
+      ],
+      "name": "shell_plate_12",
+      "position": [
+        0.522904,
+        5.54848,
+        0.344399
+      ],
+      "rotation_xyzw": [
+        -0.069999,
+        0.551712,
+        -0.031248,
+        0.830504
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        4.853592,
+        -1.007159,
+        -12.213244
+      ],
+      "category": "shell_plate",
+      "initial_position": [
+        1.335518,
+        5.63,
+        -1.352788
+      ],
+      "linear_velocity": [
+        4.99972,
+        -1.705249,
+        1.644168
+      ],
+      "name": "shell_plate_13",
+      "position": [
+        2.26433,
+        5.480477,
+        -0.892691
+      ],
+      "rotation_xyzw": [
+        0.814936,
+        0.204549,
+        -0.426953,
+        0.334291
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -13.589885,
+        7.065527,
+        -9.729232
+      ],
+      "category": "shell_plate",
+      "initial_position": [
+        0.838549,
+        5.63,
+        -2.607986
+      ],
+      "linear_velocity": [
+        2.717055,
+        -0.918849,
+        -2.673567
+      ],
+      "name": "shell_plate_14",
+      "position": [
+        1.383264,
+        5.634103,
+        -3.143983
+      ],
+      "rotation_xyzw": [
+        0.251859,
+        -0.111097,
+        -0.855783,
+        -0.438019
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -5.535357,
+        -0.826312,
+        0.885224
+      ],
+      "category": "shell_plate",
+      "initial_position": [
+        -0.496968,
+        5.63,
+        -2.805198
+      ],
+      "linear_velocity": [
+        -1.722568,
+        -2.235744,
+        -4.920372
+      ],
+      "name": "shell_plate_15",
+      "position": [
+        -0.814833,
+        5.472824,
+        -3.670197
+      ],
+      "rotation_xyzw": [
+        -0.058122,
+        0.786524,
+        -0.614794,
+        -0.005575
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -1.20999,
+        3.647409,
+        -8.966786
+      ],
+      "category": "shell_plate",
+      "initial_position": [
+        -1.335518,
+        5.63,
+        -1.747212
+      ],
+      "linear_velocity": [
+        -3.255682,
+        -0.912502,
+        -1.148384
+      ],
+      "name": "shell_plate_16",
+      "position": [
+        -2.018011,
+        5.615658,
+        -1.935376
+      ],
+      "rotation_xyzw": [
+        0.518438,
+        0.249857,
+        0.478001,
+        -0.663558
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -3.773069,
+        0.563652,
+        -1.589898
+      ],
+      "category": "shell_plate",
+      "initial_position": [
+        -0.838549,
+        5.63,
+        -0.492014
+      ],
+      "linear_velocity": [
+        -1.694893,
+        -0.932212,
+        2.08207
+      ],
+      "name": "shell_plate_17",
+      "position": [
+        -1.197652,
+        5.669146,
+        -0.10161
+      ],
+      "rotation_xyzw": [
+        0.456344,
+        0.189465,
+        -0.015003,
+        -0.869269
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -5.777226,
+        -1.922925,
+        6.385087
+      ],
+      "category": "shell_plate",
+      "initial_position": [
+        0.546543,
+        6.37,
+        -0.688785
+      ],
+      "linear_velocity": [
+        2.794538,
+        0.65494,
+        4.484484
+      ],
+      "name": "shell_plate_18",
+      "position": [
+        1.063246,
+        6.661613,
+        0.181955
+      ],
+      "rotation_xyzw": [
+        -0.683712,
+        0.061067,
+        0.278993,
+        0.671545
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        2.34025,
+        2.31203,
+        -0.674716
+      ],
+      "category": "shell_plate",
+      "initial_position": [
+        1.019105,
+        6.37,
+        -1.592713
+      ],
+      "linear_velocity": [
+        10.267286,
+        1.081792,
+        1.400988
+      ],
+      "name": "shell_plate_19",
+      "position": [
+        3.028518,
+        6.679458,
+        -1.261804
+      ],
+      "rotation_xyzw": [
+        -0.136044,
+        0.768167,
+        0.586087,
+        0.218892
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -9.042682,
+        -8.69376,
+        -8.701345
+      ],
+      "category": "shell_plate",
+      "initial_position": [
+        0.472562,
+        6.37,
+        -2.453928
+      ],
+      "linear_velocity": [
+        1.92811,
+        1.176601,
+        -4.128996
+      ],
+      "name": "shell_plate_20",
+      "position": [
+        0.741018,
+        6.648723,
+        -3.066288
+      ],
+      "rotation_xyzw": [
+        0.050842,
+        0.904419,
+        -0.086112,
+        0.41476
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        49.818066,
+        2.551031,
+        -29.90387
+      ],
+      "category": "shell_plate",
+      "initial_position": [
+        -0.546543,
+        6.37,
+        -2.411214
+      ],
+      "linear_velocity": [
+        -4.57242,
+        1.978767,
+        -8.814343
+      ],
+      "name": "shell_plate_21",
+      "position": [
+        -1.455576,
+        6.951334,
+        -4.16489
+      ],
+      "rotation_xyzw": [
+        -0.124736,
+        0.850074,
+        -0.463899,
+        -0.215899
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -0.632646,
+        -1.828732,
+        -4.513609
+      ],
+      "category": "shell_plate",
+      "initial_position": [
+        -1.019105,
+        6.37,
+        -1.507287
+      ],
+      "linear_velocity": [
+        -3.616996,
+        0.418627,
+        -0.417516
+      ],
+      "name": "shell_plate_22",
+      "position": [
+        -1.800007,
+        6.659793,
+        -1.592734
+      ],
+      "rotation_xyzw": [
+        0.429618,
+        0.726649,
+        0.321678,
+        -0.428874
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -5.061514,
+        -14.905776,
+        -2.300507
+      ],
+      "category": "shell_plate",
+      "initial_position": [
+        -0.472562,
+        6.37,
+        -0.646072
+      ],
+      "linear_velocity": [
+        -4.102601,
+        0.826957,
+        5.320847
+      ],
+      "name": "shell_plate_23",
+      "position": [
+        -1.229313,
+        6.707734,
+        0.354338
+      ],
+      "rotation_xyzw": [
+        0.323374,
+        0.94353,
+        0.043919,
+        -0.057025
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -3.323914,
+        -1.264162,
+        -2.213842
+      ],
+      "category": "visor_panel",
+      "initial_position": [
+        -0.48,
+        5.67,
+        -0.13
+      ],
+      "linear_velocity": [
+        -1.494196,
+        -0.457929,
+        4.323117
+      ],
+      "name": "visor_panel_00",
+      "position": [
+        -0.726079,
+        5.724473,
+        0.709655
+      ],
+      "rotation_xyzw": [
+        -0.378834,
+        -0.410882,
+        -0.01745,
+        0.829069
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        0.091228,
+        4.706137,
+        -0.120525
+      ],
+      "category": "visor_panel",
+      "initial_position": [
+        0.48,
+        5.67,
+        -0.13
+      ],
+      "linear_velocity": [
+        1.283875,
+        -1.14088,
+        3.4367
+      ],
+      "name": "visor_panel_01",
+      "position": [
+        0.741324,
+        5.624241,
+        0.539917
+      ],
+      "rotation_xyzw": [
+        0.001874,
+        0.504515,
+        -0.008819,
+        0.863356
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        11.614045,
+        2.796708,
+        3.0334
+      ],
+      "category": "eye",
+      "initial_position": [
+        -0.42,
+        5.73,
+        -0.03
+      ],
+      "linear_velocity": [
+        -2.397524,
+        -0.314015,
+        6.136406
+      ],
+      "name": "eye_00",
+      "position": [
+        -0.778988,
+        5.743307,
+        1.208196
+      ],
+      "rotation_xyzw": [
+        0.823676,
+        0.384019,
+        0.175191,
+        0.378675
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        19.013182,
+        25.634533,
+        -13.12796
+      ],
+      "category": "eye",
+      "initial_position": [
+        0.42,
+        5.73,
+        -0.03
+      ],
+      "linear_velocity": [
+        2.282135,
+        -1.762797,
+        4.482176
+      ],
+      "name": "eye_01",
+      "position": [
+        0.792515,
+        5.595459,
+        0.926459
+      ],
+      "rotation_xyzw": [
+        -0.363612,
+        -0.50135,
+        0.249541,
+        -0.744422
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -13.978765,
+        20.883142,
+        8.519575
+      ],
+      "category": "limb",
+      "initial_position": [
+        -1.55,
+        5.63,
+        -1.55
+      ],
+      "linear_velocity": [
+        -8.972597,
+        0.875389,
+        -7.505249
+      ],
+      "name": "limb_00",
+      "position": [
+        -3.286907,
+        5.947379,
+        -3.111986
+      ],
+      "rotation_xyzw": [
+        -0.233554,
+        0.168559,
+        -0.189122,
+        -0.938762
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        8.622074,
+        -3.172707,
+        -0.799582
+      ],
+      "category": "limb",
+      "initial_position": [
+        1.55,
+        5.63,
+        -1.55
+      ],
+      "linear_velocity": [
+        3.191547,
+        -1.158028,
+        0.051087
+      ],
+      "name": "limb_01",
+      "position": [
+        2.220865,
+        5.577796,
+        -1.795761
+      ],
+      "rotation_xyzw": [
+        0.694188,
+        -0.408462,
+        -0.11855,
+        0.580696
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -1.51586,
+        -2.595867,
+        -0.775691
+      ],
+      "category": "limb",
+      "initial_position": [
+        -0.68,
+        3.53,
+        -1.55
+      ],
+      "linear_velocity": [
+        -2.182181,
+        -3.346372,
+        -0.826003
+      ],
+      "name": "limb_02",
+      "position": [
+        -1.128299,
+        3.045853,
+        -1.707323
+      ],
+      "rotation_xyzw": [
+        -0.294635,
+        -0.096319,
+        0.634106,
+        0.708394
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        0.660714,
+        10.256068,
+        2.541106
+      ],
+      "category": "limb",
+      "initial_position": [
+        0.68,
+        3.53,
+        -1.55
+      ],
+      "linear_velocity": [
+        2.322027,
+        -3.67044,
+        0.318939
+      ],
+      "name": "limb_03",
+      "position": [
+        1.164883,
+        2.942093,
+        -1.489328
+      ],
+      "rotation_xyzw": [
+        0.61877,
+        0.60358,
+        0.465252,
+        0.190673
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -1.437496,
+        -4.747316,
+        -1.357669
+      ],
+      "category": "antenna_part",
+      "initial_position": [
+        -0.17,
+        6.97,
+        -1.51
+      ],
+      "linear_velocity": [
+        -0.291775,
+        1.621903,
+        -0.321964
+      ],
+      "name": "antenna_part_00",
+      "position": [
+        -0.253039,
+        7.452018,
+        -1.57556
+      ],
+      "rotation_xyzw": [
+        -0.418921,
+        -0.23058,
+        0.508972,
+        0.715741
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -1.837763,
+        -8.89022,
+        -3.650721
+      ],
+      "category": "antenna_part",
+      "initial_position": [
+        0.17,
+        6.97,
+        -1.51
+      ],
+      "linear_velocity": [
+        0.370387,
+        2.840658,
+        0.774875
+      ],
+      "name": "antenna_part_01",
+      "position": [
+        0.266982,
+        7.683416,
+        -1.367133
+      ],
+      "rotation_xyzw": [
+        -0.652855,
+        -0.421578,
+        0.212499,
+        0.592365
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        11.994179,
+        -2.187609,
+        -1.318763
+      ],
+      "category": "antenna_part",
+      "initial_position": [
+        0,
+        7.43,
+        -1.51
+      ],
+      "linear_velocity": [
+        0.165678,
+        1.796005,
+        -0.109447
+      ],
+      "name": "antenna_part_02",
+      "position": [
+        0.035753,
+        8.016356,
+        -1.530915
+      ],
+      "rotation_xyzw": [
+        0.921783,
+        -0.162809,
+        -0.102603,
+        0.336573
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        3.777648,
+        7.947392,
+        9.199947
+      ],
+      "category": "compound_gear",
+      "initial_position": [
+        -0.55,
+        5.67,
+        -1.27
+      ],
+      "linear_velocity": [
+        0.708404,
+        -2.054377,
+        1.63605
+      ],
+      "name": "compound_gear_00",
+      "position": [
+        -0.415384,
+        5.568661,
+        -0.987301
+      ],
+      "rotation_xyzw": [
+        0.20424,
+        0.642015,
+        0.69068,
+        0.262799
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        6.031155,
+        -4.792367,
+        -5.500275
+      ],
+      "category": "compound_gear",
+      "initial_position": [
+        0.48,
+        5.83,
+        -1.37
+      ],
+      "linear_velocity": [
+        7.858286,
+        3.420658,
+        0.351505
+      ],
+      "name": "compound_gear_01",
+      "position": [
+        1.976736,
+        6.741374,
+        -1.261319
+      ],
+      "rotation_xyzw": [
+        0.542488,
+        -0.356303,
+        -0.540052,
+        0.535816
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        2.758678,
+        -6.606062,
+        -6.031976
+      ],
+      "category": "compound_gear",
+      "initial_position": [
+        -0.3,
+        4.95,
+        -1.13
+      ],
+      "linear_velocity": [
+        -3.172892,
+        -5.173799,
+        5.050983
+      ],
+      "name": "compound_gear_02",
+      "position": [
+        -0.975307,
+        3.906767,
+        -0.016238
+      ],
+      "rotation_xyzw": [
+        0.186499,
+        -0.682327,
+        -0.610843,
+        0.355695
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -1.313563,
+        -0.202502,
+        -1.033962
+      ],
+      "category": "compound_gear",
+      "initial_position": [
+        0.58,
+        4.83,
+        -1.43
+      ],
+      "linear_velocity": [
+        3.232357,
+        -1.959213,
+        -0.561396
+      ],
+      "name": "compound_gear_03",
+      "position": [
+        1.28903,
+        4.587111,
+        -1.566035
+      ],
+      "rotation_xyzw": [
+        -0.05399,
+        0.025207,
+        -0.144943,
+        0.987644
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -5.352768,
+        4.347352,
+        2.259233
+      ],
+      "category": "compound_gear",
+      "initial_position": [
+        -0.02,
+        5.28,
+        -1.85
+      ],
+      "linear_velocity": [
+        -2.510271,
+        0.117199,
+        -2.104154
+      ],
+      "name": "compound_gear_04",
+      "position": [
+        -0.573477,
+        5.401759,
+        -2.339972
+      ],
+      "rotation_xyzw": [
+        -0.624291,
+        0.427813,
+        0.245121,
+        0.605931
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -2.227185,
+        -1.763416,
+        17.477186
+      ],
+      "category": "compound_gear",
+      "initial_position": [
+        0.12,
+        6.2,
+        -1.77
+      ],
+      "linear_velocity": [
+        -2.184425,
+        5.906645,
+        -5.014123
+      ],
+      "name": "compound_gear_05",
+      "position": [
+        -0.211565,
+        7.667751,
+        -2.794527
+      ],
+      "rotation_xyzw": [
+        -0.057649,
+        -0.102771,
+        0.895723,
+        -0.428714
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -8.040781,
+        -27.205029,
+        -68.311844
+      ],
+      "category": "mechanical_part",
+      "initial_position": [
+        0.804463,
+        5.658139,
+        -1.493517
+      ],
+      "linear_velocity": [
+        4.582468,
+        -0.126251,
+        -2.116539
+      ],
+      "name": "mechanical_part_00",
+      "position": [
+        1.805262,
+        5.526466,
+        -1.795714
+      ],
+      "rotation_xyzw": [
+        -0.585068,
+        -0.624409,
+        -0.154688,
+        0.493843
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        38.528042,
+        84.909477,
+        -16.08902
+      ],
+      "category": "mechanical_part",
+      "initial_position": [
+        0.240085,
+        5.263245,
+        -1.495854
+      ],
+      "linear_velocity": [
+        1.708768,
+        0.271357,
+        -1.225341
+      ],
+      "name": "mechanical_part_01",
+      "position": [
+        0.627054,
+        5.446416,
+        -1.799393
+      ],
+      "rotation_xyzw": [
+        -0.284114,
+        0.435835,
+        0.673561,
+        -0.525017
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -8.610681,
+        -14.255095,
+        0.688375
+      ],
+      "category": "mechanical_part",
+      "initial_position": [
+        0.499266,
+        5.838974,
+        -1.269501
+      ],
+      "linear_velocity": [
+        7.206783,
+        0.950395,
+        4.307179
+      ],
+      "name": "mechanical_part_02",
+      "position": [
+        1.966218,
+        6.821219,
+        -0.419693
+      ],
+      "rotation_xyzw": [
+        0.338216,
+        0.002544,
+        -0.896433,
+        0.286378
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        19.754717,
+        7.064229,
+        -22.156437
+      ],
+      "category": "mechanical_part",
+      "initial_position": [
+        0.60248,
+        5.974093,
+        -1.096213
+      ],
+      "linear_velocity": [
+        3.138014,
+        0.66206,
+        4.00758
+      ],
+      "name": "mechanical_part_03",
+      "position": [
+        1.210683,
+        6.499787,
+        -0.060232
+      ],
+      "rotation_xyzw": [
+        0.678808,
+        -0.160126,
+        -0.459157,
+        -0.550231
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -5.193417,
+        8.228346,
+        2.625344
+      ],
+      "category": "mechanical_part",
+      "initial_position": [
+        0.398415,
+        5.639393,
+        -1.138772
+      ],
+      "linear_velocity": [
+        -3.2251,
+        -0.276483,
+        2.957152
+      ],
+      "name": "mechanical_part_04",
+      "position": [
+        -0.531475,
+        5.665969,
+        0.226412
+      ],
+      "rotation_xyzw": [
+        -0.513071,
+        0.290026,
+        0.226464,
+        0.775472
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        36.715191,
+        -75.364052,
+        9.787938
+      ],
+      "category": "mechanical_part",
+      "initial_position": [
+        0.141766,
+        5.843445,
+        -1.31907
+      ],
+      "linear_velocity": [
+        -0.818707,
+        5.007712,
+        15.801926
+      ],
+      "name": "mechanical_part_05",
+      "position": [
+        -0.172918,
+        7.218831,
+        2.150969
+      ],
+      "rotation_xyzw": [
+        0.432611,
+        -0.080455,
+        0.639228,
+        -0.630684
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        9.459122,
+        -43.432648,
+        -43.665565
+      ],
+      "category": "mechanical_part",
+      "initial_position": [
+        0.063056,
+        4.92288,
+        -1.172448
+      ],
+      "linear_velocity": [
+        -4.398834,
+        -8.436484,
+        3.370932
+      ],
+      "name": "mechanical_part_06",
+      "position": [
+        -1.516043,
+        1.24244,
+        -1.211388
+      ],
+      "rotation_xyzw": [
+        0.601368,
+        0.374269,
+        -0.593394,
+        0.382312
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        42.544872,
+        -38.354858,
+        -40.823765
+      ],
+      "category": "mechanical_part",
+      "initial_position": [
+        0.031495,
+        5.652617,
+        -1.076236
+      ],
+      "linear_velocity": [
+        7.316008,
+        3.237269,
+        1.822626
+      ],
+      "name": "mechanical_part_07",
+      "position": [
+        1.045655,
+        6.270988,
+        -0.51107
+      ],
+      "rotation_xyzw": [
+        -0.792647,
+        0.5056,
+        0.093154,
+        0.327723
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -52.114189,
+        14.814996,
+        -5.164033
+      ],
+      "category": "mechanical_part",
+      "initial_position": [
+        -0.146273,
+        5.295257,
+        -0.949189
+      ],
+      "linear_velocity": [
+        -0.975042,
+        -2.968706,
+        7.8157
+      ],
+      "name": "mechanical_part_08",
+      "position": [
+        -0.462682,
+        4.816643,
+        1.096847
+      ],
+      "rotation_xyzw": [
+        -0.016157,
+        -0.098764,
+        -0.161914,
+        0.981717
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        22.661915,
+        2.110676,
+        64.029121
+      ],
+      "category": "mechanical_part",
+      "initial_position": [
+        -0.230876,
+        4.692266,
+        -1.093489
+      ],
+      "linear_velocity": [
+        -8.314342,
+        -5.244795,
+        7.148031
+      ],
+      "name": "mechanical_part_09",
+      "position": [
+        -2.062039,
+        3.421344,
+        0.417714
+      ],
+      "rotation_xyzw": [
+        0.570832,
+        -0.471861,
+        0.307695,
+        0.597345
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -10.139167,
+        -15.63197,
+        -50.332497
+      ],
+      "category": "mechanical_part",
+      "initial_position": [
+        -0.425367,
+        5.329351,
+        -0.992099
+      ],
+      "linear_velocity": [
+        5.50916,
+        12.832957,
+        -2.009621
+      ],
+      "name": "mechanical_part_10",
+      "position": [
+        1.215249,
+        7.710468,
+        -1.508879
+      ],
+      "rotation_xyzw": [
+        -0.809777,
+        -0.243427,
+        -0.476481,
+        0.240771
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -20.730204,
+        25.143318,
+        -23.244028
+      ],
+      "category": "mechanical_part",
+      "initial_position": [
+        -0.358043,
+        5.509416,
+        -1.132828
+      ],
+      "linear_velocity": [
+        -3.480721,
+        -8.58003,
+        9.662007
+      ],
+      "name": "mechanical_part_11",
+      "position": [
+        -0.894431,
+        3.797811,
+        1.209028
+      ],
+      "rotation_xyzw": [
+        0.80803,
+        -0.340342,
+        0.010072,
+        0.480784
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        36.382065,
+        41.521774,
+        26.886772
+      ],
+      "category": "mechanical_part",
+      "initial_position": [
+        -0.352744,
+        4.355507,
+        -1.353736
+      ],
+      "linear_velocity": [
+        -2.330214,
+        -4.403569,
+        1.998752
+      ],
+      "name": "mechanical_part_12",
+      "position": [
+        -1.034368,
+        3.698927,
+        -0.932301
+      ],
+      "rotation_xyzw": [
+        0.283845,
+        -0.05539,
+        0.400153,
+        0.869621
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -41.933693,
+        -33.75338,
+        12.511627
+      ],
+      "category": "mechanical_part",
+      "initial_position": [
+        -0.789064,
+        5.784268,
+        -1.352385
+      ],
+      "linear_velocity": [
+        -2.476882,
+        -4.822633,
+        0.280875
+      ],
+      "name": "mechanical_part_13",
+      "position": [
+        -1.086684,
+        5.567128,
+        -1.365531
+      ],
+      "rotation_xyzw": [
+        0.937485,
+        0.309265,
+        -0.128594,
+        0.094555
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        27.373156,
+        -11.338898,
+        -3.591884
+      ],
+      "category": "mechanical_part",
+      "initial_position": [
+        -0.586436,
+        4.445675,
+        -1.44351
+      ],
+      "linear_velocity": [
+        -4.082499,
+        -1.958699,
+        0.053492
+      ],
+      "name": "mechanical_part_14",
+      "position": [
+        -1.393567,
+        4.240762,
+        -1.436847
+      ],
+      "rotation_xyzw": [
+        -0.053962,
+        0.441052,
+        -0.894958,
+        -0.040149
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        27.593613,
+        -14.895669,
+        -52.442566
+      ],
+      "category": "mechanical_part",
+      "initial_position": [
+        -0.644094,
+        5.673702,
+        -1.553057
+      ],
+      "linear_velocity": [
+        -2.414932,
+        -4.418941,
+        2.891348
+      ],
+      "name": "mechanical_part_15",
+      "position": [
+        -1.399164,
+        5.166585,
+        -0.962626
+      ],
+      "rotation_xyzw": [
+        0.575131,
+        0.167521,
+        -0.380576,
+        0.704502
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        55.245689,
+        37.044827,
+        -53.227032
+      ],
+      "category": "mechanical_part",
+      "initial_position": [
+        -0.5087,
+        4.381303,
+        -1.680742
+      ],
+      "linear_velocity": [
+        -4.27473,
+        -3.005785,
+        1.076415
+      ],
+      "name": "mechanical_part_16",
+      "position": [
+        -1.363199,
+        3.967948,
+        -1.797682
+      ],
+      "rotation_xyzw": [
+        0.264966,
+        -0.282736,
+        -0.326965,
+        -0.861944
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        7.044692,
+        -39.657719,
+        -27.671623
+      ],
+      "category": "mechanical_part",
+      "initial_position": [
+        -0.687305,
+        5.519897,
+        -1.920568
+      ],
+      "linear_velocity": [
+        -5.684758,
+        -2.252248,
+        -3.780492
+      ],
+      "name": "mechanical_part_17",
+      "position": [
+        -1.910091,
+        5.581422,
+        -2.643656
+      ],
+      "rotation_xyzw": [
+        0.304085,
+        -0.247967,
+        -0.153542,
+        0.906901
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -17.05134,
+        -17.515448,
+        5.356683
+      ],
+      "category": "mechanical_part",
+      "initial_position": [
+        -0.501826,
+        4.855071,
+        -2.076958
+      ],
+      "linear_velocity": [
+        -2.523597,
+        -1.745155,
+        -2.251208
+      ],
+      "name": "mechanical_part_18",
+      "position": [
+        -1.00456,
+        4.695481,
+        -2.540408
+      ],
+      "rotation_xyzw": [
+        0.128318,
+        0.288757,
+        0.866665,
+        -0.386065
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -4.611926,
+        -11.395253,
+        -7.281988
+      ],
+      "category": "mechanical_part",
+      "initial_position": [
+        -0.368319,
+        5.936481,
+        -2.141446
+      ],
+      "linear_velocity": [
+        -4.457896,
+        -0.14994,
+        -3.762143
+      ],
+      "name": "mechanical_part_19",
+      "position": [
+        -1.047591,
+        5.66024,
+        -3.305754
+      ],
+      "rotation_xyzw": [
+        0.797292,
+        -0.091423,
+        -0.203379,
+        0.560896
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -9.49799,
+        27.988525,
+        32.903976
+      ],
+      "category": "mechanical_part",
+      "initial_position": [
+        -0.171716,
+        4.907585,
+        -2.14138
+      ],
+      "linear_velocity": [
+        -1.398773,
+        -2.781663,
+        -3.266873
+      ],
+      "name": "mechanical_part_20",
+      "position": [
+        -0.470496,
+        4.482582,
+        -2.852969
+      ],
+      "rotation_xyzw": [
+        -0.169038,
+        0.141712,
+        -0.357214,
+        -0.907602
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        15.101976,
+        -18.984062,
+        -71.623619
+      ],
+      "category": "mechanical_part",
+      "initial_position": [
+        -0.066968,
+        5.300385,
+        -1.802812
+      ],
+      "linear_velocity": [
+        -1.218046,
+        3.996714,
+        -3.046276
+      ],
+      "name": "mechanical_part_21",
+      "position": [
+        -0.348413,
+        6.527317,
+        -2.32774
+      ],
+      "rotation_xyzw": [
+        0.063329,
+        -0.805484,
+        0.012392,
+        0.589094
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -3.050814,
+        21.210325,
+        19.43787
+      ],
+      "category": "mechanical_part",
+      "initial_position": [
+        0.055416,
+        6.040881,
+        -2.037231
+      ],
+      "linear_velocity": [
+        -2.506215,
+        1.124669,
+        -7.096788
+      ],
+      "name": "mechanical_part_22",
+      "position": [
+        -0.455643,
+        6.422477,
+        -3.401231
+      ],
+      "rotation_xyzw": [
+        0.477566,
+        -0.413931,
+        -0.100399,
+        -0.768448
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        7.21174,
+        1.989537,
+        2.655058
+      ],
+      "category": "mechanical_part",
+      "initial_position": [
+        0.057237,
+        5.163298,
+        -1.789752
+      ],
+      "linear_velocity": [
+        1.040699,
+        -0.668723,
+        -2.244453
+      ],
+      "name": "mechanical_part_23",
+      "position": [
+        0.158783,
+        5.305367,
+        -1.8408
+      ],
+      "rotation_xyzw": [
+        0.844416,
+        0.357203,
+        0.350047,
+        -0.191925
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -1.227629,
+        -14.049482,
+        -3.53415
+      ],
+      "category": "mechanical_part",
+      "initial_position": [
+        0.298584,
+        4.708987,
+        -2.01639
+      ],
+      "linear_velocity": [
+        2.967774,
+        -1.367656,
+        -3.392681
+      ],
+      "name": "mechanical_part_24",
+      "position": [
+        0.887712,
+        4.61872,
+        -2.710078
+      ],
+      "rotation_xyzw": [
+        -0.0673,
+        -0.950261,
+        0.143499,
+        -0.268111
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        0.063856,
+        -10.271641,
+        10.581593
+      ],
+      "category": "mechanical_part",
+      "initial_position": [
+        0.232669,
+        5.826135,
+        -1.875622
+      ],
+      "linear_velocity": [
+        -4.494155,
+        2.271795,
+        -7.530396
+      ],
+      "name": "mechanical_part_25",
+      "position": [
+        -0.775435,
+        6.433239,
+        -3.959919
+      ],
+      "rotation_xyzw": [
+        0.939313,
+        -0.237223,
+        0.112151,
+        0.220995
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        3.704053,
+        -3.870401,
+        3.523392
+      ],
+      "category": "mechanical_part",
+      "initial_position": [
+        0.684381,
+        4.421054,
+        -2.08538
+      ],
+      "linear_velocity": [
+        -0.420853,
+        -2.397702,
+        -2.154757
+      ],
+      "name": "mechanical_part_26",
+      "position": [
+        0.566098,
+        4.131637,
+        -2.51012
+      ],
+      "rotation_xyzw": [
+        0.256434,
+        -0.65374,
+        0.226953,
+        0.674802
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -6.642861,
+        5.43916,
+        4.779919
+      ],
+      "category": "mechanical_part",
+      "initial_position": [
+        0.550156,
+        5.142129,
+        -1.739221
+      ],
+      "linear_velocity": [
+        3.232201,
+        -0.071641,
+        -2.446038
+      ],
+      "name": "mechanical_part_27",
+      "position": [
+        1.226984,
+        5.194488,
+        -2.241221
+      ],
+      "rotation_xyzw": [
+        -0.769061,
+        -0.247449,
+        -0.545697,
+        0.222551
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -12.498736,
+        12.100453,
+        3.390993
+      ],
+      "category": "mechanical_part",
+      "initial_position": [
+        0.795912,
+        4.913393,
+        -1.689504
+      ],
+      "linear_velocity": [
+        4.245657,
+        -1.299877,
+        0.197067
+      ],
+      "name": "mechanical_part_28",
+      "position": [
+        1.898939,
+        4.792771,
+        -1.854993
+      ],
+      "rotation_xyzw": [
+        0.682809,
+        -0.207276,
+        0.696655,
+        -0.074031
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        1.513074,
+        0.080186,
+        -0.848095
+      ],
+      "category": "roof_stone",
+      "initial_position": [
+        -3.701317,
+        10.201221,
+        -2.38065
+      ],
+      "linear_velocity": [
+        -0.118444,
+        -4.150434,
+        0.076263
+      ],
+      "name": "roof_stone_00",
+      "position": [
+        -3.712289,
+        9.575749,
+        -2.354921
+      ],
+      "rotation_xyzw": [
+        0.108533,
+        -0.051912,
+        -0.086674,
+        0.988946
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -0.367203,
+        -0.060539,
+        0.129701
+      ],
+      "category": "roof_stone",
+      "initial_position": [
+        -2.301432,
+        10.346462,
+        -2.309129
+      ],
+      "linear_velocity": [
+        0.108818,
+        -4.36165,
+        0.004453
+      ],
+      "name": "roof_stone_01",
+      "position": [
+        -2.293644,
+        9.605235,
+        -2.327267
+      ],
+      "rotation_xyzw": [
+        0.033913,
+        0.019442,
+        0.003745,
+        0.999229
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -0.464082,
+        0.674224,
+        0.989221
+      ],
+      "category": "roof_stone",
+      "initial_position": [
+        -1.20845,
+        10.336966,
+        -2.499261
+      ],
+      "linear_velocity": [
+        0.074608,
+        -4.263192,
+        0.027222
+      ],
+      "name": "roof_stone_02",
+      "position": [
+        -1.143264,
+        9.652045,
+        -2.541261
+      ],
+      "rotation_xyzw": [
+        -0.117639,
+        -0.025284,
+        0.072242,
+        0.990102
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        0.85156,
+        0.552554,
+        0.805084
+      ],
+      "category": "roof_stone",
+      "initial_position": [
+        -0.032567,
+        10.250469,
+        -2.484464
+      ],
+      "linear_velocity": [
+        0.245762,
+        -4.474632,
+        -0.187814
+      ],
+      "name": "roof_stone_03",
+      "position": [
+        0.008899,
+        9.544483,
+        -2.520296
+      ],
+      "rotation_xyzw": [
+        0.057048,
+        0.100335,
+        0.123804,
+        0.985571
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        0.303015,
+        0.413326,
+        0.436844
+      ],
+      "category": "roof_stone",
+      "initial_position": [
+        -3.517269,
+        10.757557,
+        -1.566267
+      ],
+      "linear_velocity": [
+        -0.012873,
+        -4.462248,
+        -0.004824
+      ],
+      "name": "roof_stone_04",
+      "position": [
+        -3.568561,
+        10.05757,
+        -1.570039
+      ],
+      "rotation_xyzw": [
+        -0.067296,
+        0.091732,
+        -0.003928,
+        0.993499
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        1.588816,
+        0.41563,
+        0.070939
+      ],
+      "category": "roof_stone",
+      "initial_position": [
+        -2.44905,
+        10.707609,
+        -1.771542
+      ],
+      "linear_velocity": [
+        -0.12132,
+        -4.199484,
+        0.158478
+      ],
+      "name": "roof_stone_05",
+      "position": [
+        -2.467567,
+        10.120101,
+        -1.721138
+      ],
+      "rotation_xyzw": [
+        0.218512,
+        0.076816,
+        0.000215,
+        0.972806
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        0.356467,
+        0.597005,
+        -0.637085
+      ],
+      "category": "roof_stone",
+      "initial_position": [
+        -1.139345,
+        10.712004,
+        -1.844639
+      ],
+      "linear_velocity": [
+        -0.069506,
+        -4.663331,
+        0.171968
+      ],
+      "name": "roof_stone_06",
+      "position": [
+        -1.147306,
+        9.983105,
+        -1.764459
+      ],
+      "rotation_xyzw": [
+        0.068457,
+        -0.009095,
+        0.009095,
+        0.997571
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -0.364909,
+        0.547049,
+        1.04415
+      ],
+      "category": "roof_stone",
+      "initial_position": [
+        -0.003431,
+        10.822988,
+        -1.774715
+      ],
+      "linear_velocity": [
+        0.098952,
+        -4.6159,
+        0.00971
+      ],
+      "name": "roof_stone_07",
+      "position": [
+        0.019283,
+        10.080232,
+        -1.774777
+      ],
+      "rotation_xyzw": [
+        0.013124,
+        0.175719,
+        0.161511,
+        0.971012
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        0.395699,
+        0.390945,
+        0.211224
+      ],
+      "category": "roof_stone",
+      "initial_position": [
+        -3.623673,
+        11.389746,
+        -1.00802
+      ],
+      "linear_velocity": [
+        0.142459,
+        -4.68476,
+        -0.069362
+      ],
+      "name": "roof_stone_08",
+      "position": [
+        -3.586228,
+        10.620339,
+        -1.018867
+      ],
+      "rotation_xyzw": [
+        0.072903,
+        0.1054,
+        0.030018,
+        0.9913
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -1.853301,
+        -0.711055,
+        -1.044475
+      ],
+      "category": "roof_stone",
+      "initial_position": [
+        -2.290797,
+        11.256771,
+        -0.79247
+      ],
+      "linear_velocity": [
+        0.102516,
+        -5.021535,
+        -0.163185
+      ],
+      "name": "roof_stone_09",
+      "position": [
+        -2.270245,
+        10.438367,
+        -0.825186
+      ],
+      "rotation_xyzw": [
+        -0.201093,
+        0.025566,
+        -0.186188,
+        0.961375
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        1.460302,
+        0.861533,
+        -0.488387
+      ],
+      "category": "roof_stone",
+      "initial_position": [
+        -1.060151,
+        11.332235,
+        -1.015065
+      ],
+      "linear_velocity": [
+        -0.250759,
+        -5.101038,
+        -0.100388
+      ],
+      "name": "roof_stone_10",
+      "position": [
+        -1.12411,
+        10.499023,
+        -1.03704
+      ],
+      "rotation_xyzw": [
+        0.183444,
+        0.121892,
+        0.003189,
+        0.975439
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        0.540528,
+        0.284484,
+        0.134986
+      ],
+      "category": "roof_stone",
+      "initial_position": [
+        0.073173,
+        11.304291,
+        -0.808648
+      ],
+      "linear_velocity": [
+        -0.10769,
+        -5.283998,
+        0.018804
+      ],
+      "name": "roof_stone_11",
+      "position": [
+        0.063455,
+        10.43378,
+        -0.798811
+      ],
+      "rotation_xyzw": [
+        0.089155,
+        0.005142,
+        -0.007567,
+        0.995976
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -0.241463,
+        3.576734,
+        3.118546
+      ],
+      "category": "spark",
+      "initial_position": [
+        -0.383008,
+        1.907429,
+        -1.6899
+      ],
+      "linear_velocity": [
+        -1.899168,
+        10.687975,
+        -0.651527
+      ],
+      "name": "spark_00",
+      "position": [
+        -0.763754,
+        4.238467,
+        -1.820518
+      ],
+      "rotation_xyzw": [
+        -0.02334,
+        0.345735,
+        0.301446,
+        0.888286
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -89.765068,
+        11.192566,
+        41.561314
+      ],
+      "category": "spark",
+      "initial_position": [
+        -0.390708,
+        2.211342,
+        -1.364701
+      ],
+      "linear_velocity": [
+        1.366103,
+        1.891957,
+        11.10094
+      ],
+      "name": "spark_01",
+      "position": [
+        -0.402807,
+        3.501037,
+        0.089991
+      ],
+      "rotation_xyzw": [
+        -0.162975,
+        0.17012,
+        0.036332,
+        0.971174
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -2.481602,
+        -1.881447,
+        -3.75162
+      ],
+      "category": "spark",
+      "initial_position": [
+        0.244235,
+        1.918984,
+        -1.487949
+      ],
+      "linear_velocity": [
+        1.108715,
+        10.803569,
+        -0.176636
+      ],
+      "name": "spark_02",
+      "position": [
+        0.466119,
+        4.273303,
+        -1.522456
+      ],
+      "rotation_xyzw": [
+        -0.24306,
+        -0.181347,
+        -0.36382,
+        0.880721
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -2.126961,
+        -0.669509,
+        2.303908
+      ],
+      "category": "spark",
+      "initial_position": [
+        -0.0839,
+        2.110698,
+        -2.241103
+      ],
+      "linear_velocity": [
+        0.323241,
+        7.283536,
+        -1.394889
+      ],
+      "name": "spark_03",
+      "position": [
+        -0.019097,
+        3.759214,
+        -2.520751
+      ],
+      "rotation_xyzw": [
+        -0.209939,
+        -0.066083,
+        0.227404,
+        0.948602
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        2.21663,
+        -3.544249,
+        0.524601
+      ],
+      "category": "spark",
+      "initial_position": [
+        0.601935,
+        2.036451,
+        -2.154133
+      ],
+      "linear_velocity": [
+        0.879912,
+        9.269475,
+        -1.672756
+      ],
+      "name": "spark_04",
+      "position": [
+        0.77834,
+        4.083107,
+        -2.489487
+      ],
+      "rotation_xyzw": [
+        0.216036,
+        -0.345427,
+        0.051128,
+        0.911808
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        1.96825,
+        1.353173,
+        -3.1909
+      ],
+      "category": "spark",
+      "initial_position": [
+        -0.307481,
+        1.859468,
+        -1.750363
+      ],
+      "linear_velocity": [
+        -2.057158,
+        9.612521,
+        -0.81695
+      ],
+      "name": "spark_05",
+      "position": [
+        -0.7199,
+        3.974898,
+        -1.914145
+      ],
+      "rotation_xyzw": [
+        0.192437,
+        0.1323,
+        -0.311976,
+        0.920943
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        2.69169,
+        1.401738,
+        -1.816824
+      ],
+      "category": "spark",
+      "initial_position": [
+        0.699691,
+        2.016612,
+        -1.081788
+      ],
+      "linear_velocity": [
+        2.067688,
+        6.589162,
+        1.284636
+      ],
+      "name": "spark_06",
+      "position": [
+        1.114221,
+        3.525919,
+        -0.824244
+      ],
+      "rotation_xyzw": [
+        0.264679,
+        0.137835,
+        -0.178652,
+        0.937566
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -2.223883,
+        1.860137,
+        -3.738312
+      ],
+      "category": "spark",
+      "initial_position": [
+        -0.359863,
+        2.340399,
+        -1.005451
+      ],
+      "linear_velocity": [
+        -0.918473,
+        8.162065,
+        2.098157
+      ],
+      "name": "spark_07",
+      "position": [
+        -0.543998,
+        4.165042,
+        -0.584812
+      ],
+      "rotation_xyzw": [
+        -0.215039,
+        0.179866,
+        -0.361477,
+        0.889236
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -3.230274,
+        0.183278,
+        0.325846
+      ],
+      "category": "spark",
+      "initial_position": [
+        0.165102,
+        2.184161,
+        -1.693204
+      ],
+      "linear_velocity": [
+        1.884202,
+        7.883731,
+        -0.602869
+      ],
+      "name": "spark_08",
+      "position": [
+        0.542846,
+        3.953003,
+        -1.814067
+      ],
+      "rotation_xyzw": [
+        -0.318681,
+        0.018081,
+        0.032146,
+        0.947144
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        2.216267,
+        1.990914,
+        -1.619489
+      ],
+      "category": "spark",
+      "initial_position": [
+        0.299847,
+        2.715577,
+        -1.19454
+      ],
+      "linear_velocity": [
+        0.374183,
+        7.780423,
+        0.890284
+      ],
+      "name": "spark_09",
+      "position": [
+        0.374863,
+        4.463709,
+        -1.016056
+      ],
+      "rotation_xyzw": [
+        0.218304,
+        0.196106,
+        -0.159521,
+        0.942571
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -1.920706,
+        -2.372714,
+        2.256967
+      ],
+      "category": "spark",
+      "initial_position": [
+        -0.229493,
+        2.456897,
+        -1.313358
+      ],
+      "linear_velocity": [
+        -1.905911,
+        11.12379,
+        1.69535
+      ],
+      "name": "spark_10",
+      "position": [
+        -0.61159,
+        4.875307,
+        -0.973475
+      ],
+      "rotation_xyzw": [
+        -0.188261,
+        -0.232566,
+        0.221221,
+        0.928188
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        1.332468,
+        0.87157,
+        3.627126
+      ],
+      "category": "spark",
+      "initial_position": [
+        0.07966,
+        2.258831,
+        -2.34027
+      ],
+      "linear_velocity": [
+        -0.207292,
+        7.249894,
+        -1.094736
+      ],
+      "name": "spark_11",
+      "position": [
+        0.038102,
+        3.900602,
+        -2.559745
+      ],
+      "rotation_xyzw": [
+        0.130319,
+        0.085242,
+        0.354742,
+        0.921905
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        0.371171,
+        3.081895,
+        2.229973
+      ],
+      "category": "spark",
+      "initial_position": [
+        -0.045092,
+        2.092564,
+        -1.739915
+      ],
+      "linear_velocity": [
+        -1.198179,
+        7.760363,
+        -2.534943
+      ],
+      "name": "spark_12",
+      "position": [
+        -0.285303,
+        3.836673,
+        -2.24812
+      ],
+      "rotation_xyzw": [
+        0.036368,
+        0.301967,
+        0.218494,
+        0.927229
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        70.206207,
+        -30.030891,
+        -15.539351
+      ],
+      "category": "spark",
+      "initial_position": [
+        -0.440377,
+        2.775856,
+        -1.566623
+      ],
+      "linear_velocity": [
+        -4.467766,
+        1.645216,
+        -4.479138
+      ],
+      "name": "spark_13",
+      "position": [
+        -1.139144,
+        3.604382,
+        -2.34762
+      ],
+      "rotation_xyzw": [
+        0.008871,
+        -0.134937,
+        0.573104,
+        0.808248
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -0.828021,
+        -0.603065,
+        -0.721689
+      ],
+      "category": "spark",
+      "initial_position": [
+        -0.411341,
+        2.528861,
+        -1.369175
+      ],
+      "linear_velocity": [
+        -1.738813,
+        10.65168,
+        0.832082
+      ],
+      "name": "spark_14",
+      "position": [
+        -0.773616,
+        4.859133,
+        -1.218374
+      ],
+      "rotation_xyzw": [
+        0.063094,
+        -0.086714,
+        -0.199523,
+        0.974007
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -0.459109,
+        -2.366725,
+        -2.971961
+      ],
+      "category": "spark",
+      "initial_position": [
+        -0.254489,
+        2.211298,
+        -1.730327
+      ],
+      "linear_velocity": [
+        -0.855088,
+        10.703851,
+        -1.453015
+      ],
+      "name": "spark_15",
+      "position": [
+        -0.425917,
+        4.545518,
+        -2.021627
+      ],
+      "rotation_xyzw": [
+        -0.044983,
+        -0.231891,
+        -0.291192,
+        0.927044
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        0.943445,
+        3.864208,
+        -3.037848
+      ],
+      "category": "spark",
+      "initial_position": [
+        0.074179,
+        1.81054,
+        -2.193862
+      ],
+      "linear_velocity": [
+        0.912793,
+        10.081994,
+        -2.333052
+      ],
+      "name": "spark_16",
+      "position": [
+        0.257175,
+        4.02009,
+        -2.661592
+      ],
+      "rotation_xyzw": [
+        0.090812,
+        0.371952,
+        -0.29241,
+        0.8763
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -85.181206,
+        8.649823,
+        50.35112
+      ],
+      "category": "spark",
+      "initial_position": [
+        -0.67179,
+        2.497307,
+        -1.449274
+      ],
+      "linear_velocity": [
+        -0.306914,
+        -0.964194,
+        4.358165
+      ],
+      "name": "spark_17",
+      "position": [
+        -0.763208,
+        2.820758,
+        -0.703733
+      ],
+      "rotation_xyzw": [
+        -0.75204,
+        0.147346,
+        0.476042,
+        -0.431403
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        1.84976,
+        0.235275,
+        -1.549055
+      ],
+      "category": "spark",
+      "initial_position": [
+        0.128431,
+        1.995686,
+        -1.128935
+      ],
+      "linear_velocity": [
+        0.641007,
+        10.678442,
+        2.29367
+      ],
+      "name": "spark_18",
+      "position": [
+        0.25694,
+        4.324812,
+        -0.6691
+      ],
+      "rotation_xyzw": [
+        0.183939,
+        0.023396,
+        -0.154037,
+        0.970511
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        1.96763,
+        -2.348127,
+        -3.894985
+      ],
+      "category": "spark",
+      "initial_position": [
+        -0.062475,
+        2.142446,
+        -1.119467
+      ],
+      "linear_velocity": [
+        0.309569,
+        9.059296,
+        1.447276
+      ],
+      "name": "spark_19",
+      "position": [
+        -0.000413,
+        4.146966,
+        -0.829317
+      ],
+      "rotation_xyzw": [
+        0.189555,
+        -0.226211,
+        -0.375231,
+        0.878692
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        2.634085,
+        -0.518042,
+        -3.679018
+      ],
+      "category": "spark",
+      "initial_position": [
+        -0.220201,
+        2.428802,
+        -1.662016
+      ],
+      "linear_velocity": [
+        -2.199389,
+        11.103334,
+        -1.027744
+      ],
+      "name": "spark_20",
+      "position": [
+        -0.661134,
+        4.843111,
+        -1.868057
+      ],
+      "rotation_xyzw": [
+        0.255417,
+        -0.050233,
+        -0.35674,
+        0.897204
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        38.213463,
+        -26.339128,
+        -64.466492
+      ],
+      "category": "spark",
+      "initial_position": [
+        -0.694087,
+        2.142518,
+        -1.815556
+      ],
+      "linear_velocity": [
+        -7.403428,
+        5.842058,
+        -2.665393
+      ],
+      "name": "spark_21",
+      "position": [
+        -1.374539,
+        4.309927,
+        -2.132704
+      ],
+      "rotation_xyzw": [
+        0.508101,
+        -0.521937,
+        -0.673927,
+        0.12344
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        0.142724,
+        -3.509662,
+        -1.914995
+      ],
+      "category": "spark",
+      "initial_position": [
+        -0.041342,
+        2.133832,
+        -1.211399
+      ],
+      "linear_velocity": [
+        0.098256,
+        10.591065,
+        1.384691
+      ],
+      "name": "spark_22",
+      "position": [
+        -0.021644,
+        4.445441,
+        -0.933796
+      ],
+      "rotation_xyzw": [
+        0.013951,
+        -0.343072,
+        -0.187192,
+        0.920362
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -2.140791,
+        -1.362093,
+        -2.437952
+      ],
+      "category": "spark",
+      "initial_position": [
+        0.558378,
+        1.872662,
+        -0.983829
+      ],
+      "linear_velocity": [
+        1.178548,
+        9.133468,
+        1.093566
+      ],
+      "name": "spark_23",
+      "position": [
+        0.794654,
+        3.892052,
+        -0.764591
+      ],
+      "rotation_xyzw": [
+        -0.210554,
+        -0.133966,
+        -0.239781,
+        0.938203
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -42.845497,
+        18.058687,
+        88.025818
+      ],
+      "category": "spark",
+      "initial_position": [
+        -0.307478,
+        2.039203,
+        -1.466519
+      ],
+      "linear_velocity": [
+        9.182422,
+        -7.711451,
+        9.910819
+      ],
+      "name": "spark_24",
+      "position": [
+        0.564648,
+        2.129325,
+        -0.230915
+      ],
+      "rotation_xyzw": [
+        -0.254708,
+        0.156055,
+        0.327719,
+        0.89631
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -11.305159,
+        -4.839984,
+        -25.966909
+      ],
+      "category": "spark",
+      "initial_position": [
+        -0.709624,
+        2.759763,
+        -1.514547
+      ],
+      "linear_velocity": [
+        -3.394955,
+        0.981394,
+        5.618634
+      ],
+      "name": "spark_25",
+      "position": [
+        -1.378761,
+        2.905791,
+        -0.674737
+      ],
+      "rotation_xyzw": [
+        0.387591,
+        0.283269,
+        0.862567,
+        0.159719
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        2.192406,
+        -1.153159,
+        0.187929
+      ],
+      "category": "spark",
+      "initial_position": [
+        0.684116,
+        2.748805,
+        -1.236727
+      ],
+      "linear_velocity": [
+        1.046977,
+        6.614734,
+        0.879359
+      ],
+      "name": "spark_26",
+      "position": [
+        0.893292,
+        4.263554,
+        -1.059822
+      ],
+      "rotation_xyzw": [
+        0.220989,
+        -0.114269,
+        0.022958,
+        0.968287
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        2.006189,
+        0.997287,
+        -1.805264
+      ],
+      "category": "spark",
+      "initial_position": [
+        0.055744,
+        2.478053,
+        -2.081659
+      ],
+      "linear_velocity": [
+        0.005846,
+        7.967503,
+        -2.132606
+      ],
+      "name": "spark_27",
+      "position": [
+        0.056916,
+        4.26369,
+        -2.509204
+      ],
+      "rotation_xyzw": [
+        0.198684,
+        0.098767,
+        -0.178786,
+        0.958543
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -0.156869,
+        1.616629,
+        -0.233391
+      ],
+      "category": "spark",
+      "initial_position": [
+        -0.442628,
+        2.32621,
+        -1.650837
+      ],
+      "linear_velocity": [
+        -1.705757,
+        6.077023,
+        -0.11459
+      ],
+      "name": "spark_28",
+      "position": [
+        -0.784599,
+        3.732844,
+        -1.67381
+      ],
+      "rotation_xyzw": [
+        -0.015682,
+        0.161616,
+        -0.023332,
+        0.986453
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -2.707141,
+        -2.969614,
+        -2.714624
+      ],
+      "category": "spark",
+      "initial_position": [
+        -0.26612,
+        1.74468,
+        -1.951349
+      ],
+      "linear_velocity": [
+        -0.684329,
+        10.81062,
+        -1.776203
+      ],
+      "name": "spark_29",
+      "position": [
+        -0.403314,
+        4.100305,
+        -2.307442
+      ],
+      "rotation_xyzw": [
+        -0.261261,
+        -0.286592,
+        -0.261983,
+        0.883727
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -65.960785,
+        11.619158,
+        -26.138699
+      ],
+      "category": "spark",
+      "initial_position": [
+        -0.861909,
+        1.831286,
+        -1.40574
+      ],
+      "linear_velocity": [
+        -4.009727,
+        -1.739713,
+        3.092233
+      ],
+      "name": "spark_30",
+      "position": [
+        -1.42141,
+        2.62367,
+        -1.08782
+      ],
+      "rotation_xyzw": [
+        0.805739,
+        -0.08514,
+        0.480196,
+        -0.336077
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -1.680559,
+        -3.041119,
+        -2.963939
+      ],
+      "category": "spark",
+      "initial_position": [
+        -0.235898,
+        2.562706,
+        -2.211025
+      ],
+      "linear_velocity": [
+        -0.844565,
+        8.308537,
+        -1.826236
+      ],
+      "name": "spark_31",
+      "position": [
+        -0.405216,
+        4.416714,
+        -2.577148
+      ],
+      "rotation_xyzw": [
+        -0.162925,
+        -0.294827,
+        -0.287345,
+        0.896641
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -3.652774,
+        -3.633825,
+        0.370087
+      ],
+      "category": "spark",
+      "initial_position": [
+        0.211209,
+        1.788407,
+        -0.773125
+      ],
+      "linear_velocity": [
+        1.147293,
+        6.644015,
+        2.165705
+      ],
+      "name": "spark_32",
+      "position": [
+        0.441219,
+        3.308711,
+        -0.338945
+      ],
+      "rotation_xyzw": [
+        -0.35062,
+        -0.348801,
+        0.035524,
+        0.868414
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -0.158358,
+        2.283268,
+        2.922335
+      ],
+      "category": "spark",
+      "initial_position": [
+        -0.384438,
+        2.455433,
+        -1.889387
+      ],
+      "linear_velocity": [
+        -0.622722,
+        8.705896,
+        -1.617248
+      ],
+      "name": "spark_33",
+      "position": [
+        -0.509281,
+        4.389103,
+        -2.213613
+      ],
+      "rotation_xyzw": [
+        -0.015538,
+        0.224036,
+        0.286742,
+        0.931314
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -2.605226,
+        2.519399,
+        -0.620418
+      ],
+      "category": "spark",
+      "initial_position": [
+        0.513754,
+        2.281473,
+        -1.772323
+      ],
+      "linear_velocity": [
+        2.37935,
+        9.478521,
+        -1.171666
+      ],
+      "name": "spark_34",
+      "position": [
+        0.990767,
+        4.370039,
+        -2.007219
+      ],
+      "rotation_xyzw": [
+        -0.255739,
+        0.247314,
+        -0.060903,
+        0.93259
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -3.402493,
+        -0.198708,
+        0.752819
+      ],
+      "category": "spark",
+      "initial_position": [
+        0.433504,
+        2.388191,
+        -1.962005
+      ],
+      "linear_velocity": [
+        1.191278,
+        10.339211,
+        -0.566992
+      ],
+      "name": "spark_35",
+      "position": [
+        0.672332,
+        4.649309,
+        -2.075676
+      ],
+      "rotation_xyzw": [
+        -0.334759,
+        -0.01955,
+        0.074067,
+        0.939185
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -2.417301,
+        -2.877643,
+        -0.052278
+      ],
+      "category": "spark",
+      "initial_position": [
+        0.099882,
+        2.109309,
+        -1.889874
+      ],
+      "linear_velocity": [
+        0.076608,
+        10.916059,
+        -1.063519
+      ],
+      "name": "spark_36",
+      "position": [
+        0.115241,
+        4.486073,
+        -2.103088
+      ],
+      "rotation_xyzw": [
+        -0.237047,
+        -0.28219,
+        -0.005127,
+        0.929597
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        3.339069,
+        -0.736381,
+        1.807726
+      ],
+      "category": "spark",
+      "initial_position": [
+        0.480763,
+        2.767226,
+        -0.978121
+      ],
+      "linear_velocity": [
+        0.683267,
+        7.189216,
+        1.598043
+      ],
+      "name": "spark_37",
+      "position": [
+        0.617745,
+        4.396832,
+        -0.657746
+      ],
+      "rotation_xyzw": [
+        0.326977,
+        -0.07211,
+        0.177021,
+        0.9255
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        2.279082,
+        -2.639412,
+        -2.503088
+      ],
+      "category": "spark",
+      "initial_position": [
+        0.561886,
+        2.31673,
+        -1.281433
+      ],
+      "linear_velocity": [
+        1.904456,
+        7.896775,
+        1.405555
+      ],
+      "name": "spark_38",
+      "position": [
+        0.943691,
+        4.088187,
+        -0.999647
+      ],
+      "rotation_xyzw": [
+        0.221864,
+        -0.256942,
+        -0.243671,
+        0.908505
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        0.151131,
+        3.195941,
+        -2.33757
+      ],
+      "category": "spark",
+      "initial_position": [
+        -0.107293,
+        2.398161,
+        -1.250761
+      ],
+      "linear_velocity": [
+        -1.392957,
+        8.050371,
+        2.1753
+      ],
+      "name": "spark_39",
+      "position": [
+        -0.386553,
+        4.200411,
+        -0.814657
+      ],
+      "rotation_xyzw": [
+        0.014781,
+        0.312568,
+        -0.228618,
+        0.921855
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -18.807947,
+        4.189774,
+        -63.113308
+      ],
+      "category": "spark",
+      "initial_position": [
+        0.476627,
+        1.957628,
+        -2.307238
+      ],
+      "linear_velocity": [
+        -5.631567,
+        4.754347,
+        -0.48474
+      ],
+      "name": "spark_40",
+      "position": [
+        0.441688,
+        4.134869,
+        -2.6057
+      ],
+      "rotation_xyzw": [
+        -0.338107,
+        0.28724,
+        -0.725331,
+        0.526375
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -2.787537,
+        -0.248409,
+        2.944907
+      ],
+      "category": "spark",
+      "initial_position": [
+        0.814858,
+        2.296519,
+        -1.928651
+      ],
+      "linear_velocity": [
+        2.013877,
+        8.317531,
+        -0.652516
+      ],
+      "name": "spark_41",
+      "position": [
+        1.218601,
+        4.152329,
+        -2.059467
+      ],
+      "rotation_xyzw": [
+        -0.272254,
+        -0.024262,
+        0.287624,
+        0.917911
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        39.78569,
+        -11.60026,
+        35.344173
+      ],
+      "category": "spark",
+      "initial_position": [
+        -0.567259,
+        2.346934,
+        -1.733797
+      ],
+      "linear_velocity": [
+        -0.534336,
+        6.087877,
+        -6.263895
+      ],
+      "name": "spark_42",
+      "position": [
+        -0.770612,
+        3.981052,
+        -2.582819
+      ],
+      "rotation_xyzw": [
+        -0.816071,
+        0.118214,
+        -0.360824,
+        -0.435729
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        0.605068,
+        -1.388704,
+        3.416261
+      ],
+      "category": "spark",
+      "initial_position": [
+        0.051909,
+        1.943157,
+        -1.372318
+      ],
+      "linear_velocity": [
+        -0.139619,
+        10.430768,
+        1.618302
+      ],
+      "name": "spark_43",
+      "position": [
+        0.023918,
+        4.22263,
+        -1.047881
+      ],
+      "rotation_xyzw": [
+        0.059351,
+        -0.136218,
+        0.3351,
+        0.930392
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -2.659076,
+        3.232576,
+        2.768151
+      ],
+      "category": "spark",
+      "initial_position": [
+        0.390399,
+        2.443544,
+        -0.900123
+      ],
+      "linear_velocity": [
+        1.380527,
+        6.202297,
+        2.090535
+      ],
+      "name": "spark_44",
+      "position": [
+        0.667167,
+        3.875293,
+        -0.481013
+      ],
+      "rotation_xyzw": [
+        -0.255892,
+        0.311082,
+        0.266389,
+        0.875662
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -2.270827,
+        2.025595,
+        -0.795904
+      ],
+      "category": "spark",
+      "initial_position": [
+        0.267083,
+        1.906676,
+        -1.536938
+      ],
+      "linear_velocity": [
+        1.867758,
+        7.90771,
+        -0.320311
+      ],
+      "name": "spark_45",
+      "position": [
+        0.642168,
+        3.680151,
+        -1.60263
+      ],
+      "rotation_xyzw": [
+        -0.230924,
+        0.198431,
+        -0.079397,
+        0.949208
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        -1.125957,
+        2.868435,
+        1.289504
+      ],
+      "category": "spark",
+      "initial_position": [
+        -0.036586,
+        1.909922,
+        -1.743469
+      ],
+      "linear_velocity": [
+        0.267655,
+        7.920098,
+        -1.525926
+      ],
+      "name": "spark_46",
+      "position": [
+        0.017074,
+        3.686056,
+        -2.049387
+      ],
+      "rotation_xyzw": [
+        -0.110972,
+        0.282708,
+        0.127091,
+        0.944251
+      ],
+      "sleeping": false
+    },
+    {
+      "angular_velocity": [
+        4.201834,
+        -2.948479,
+        3.547542
+      ],
+      "category": "spark",
+      "initial_position": [
+        0.721759,
+        2.738306,
+        -1.270305
+      ],
+      "linear_velocity": [
+        1.147578,
+        9.057001,
+        0.228504
+      ],
+      "name": "spark_47",
+      "position": [
+        0.952716,
+        4.741977,
+        -1.225247
+      ],
+      "rotation_xyzw": [
+        0.396796,
+        -0.276319,
+        0.338825,
+        0.807093
+      ],
+      "sleeping": false
+    }
+  ],
+  "backend": {
+    "cpu_fallback": false,
+    "cuda_context_valid": true,
+    "device_name": "NVIDIA GeForce RTX 5090",
+    "device_ordinal": 0,
+    "mode": "gpu",
+    "name": "NVIDIA PhysX",
+    "physx_commit": "fc1018a3745664a1db2b95ce03fb5e91eb585f2e",
+    "physx_version": "5.8.0"
+  },
+  "contract": {
+    "dynamic_center_bounds": {
+      "max": [
+        12,
+        15,
+        8
+      ],
+      "min": [
+        -12,
+        -0.2,
+        -10
+      ]
+    },
+    "minimum_moving_dynamic_actors": 120,
+    "minimum_radial_displacement": 0.08
+  },
+  "generator": "spectraldock-physx-lava-temple-oracle/1.0",
+  "geometry": {
+    "actor_order": [
+      {
+        "category": "shell_plate",
+        "count": 24
+      },
+      {
+        "category": "visor_panel",
+        "count": 2
+      },
+      {
+        "category": "eye",
+        "count": 2
+      },
+      {
+        "category": "limb",
+        "count": 4
+      },
+      {
+        "category": "antenna_part",
+        "count": 3
+      },
+      {
+        "category": "compound_gear",
+        "count": 6
+      },
+      {
+        "category": "mechanical_part",
+        "count": 29
+      },
+      {
+        "category": "roof_stone",
+        "count": 12
+      },
+      {
+        "category": "spark",
+        "count": 48
+      }
+    ],
+    "antenna_parts": 3,
+    "compound_gears": 6,
+    "dynamic_actors": 130,
+    "eyes": 2,
+    "limbs": 4,
+    "mechanical_parts": 29,
+    "prefractured": true,
+    "roof_stones": 12,
+    "shell_plates": 24,
+    "sparks": 48,
+    "visor_panels": 2
+  },
+  "results": {
+    "actors_beyond_minimum_radial_displacement": 130,
+    "maximum_upward_displacement": 2.41841,
+    "moving_dynamic_actors": 130,
+    "occupied_explosion_quadrants": 4,
+    "rotating_dynamic_actors": 130,
+    "sleeping_dynamic_actors": 0
+  },
+  "scene_features": {
+    "analytic_water_surface": true,
+    "ancient_blackstone_temple": true,
+    "collapsed_roof_opening": true,
+    "compound_gear_actors": true,
+    "directional_dawn_light": true,
+    "emissive_runes": true,
+    "external_meshes": false,
+    "external_textures": false,
+    "opaque_frost_visual_proxy": true,
+    "prefractured_mechanical_oracle": true,
+    "procedural_fire_and_absorbing_smoke": true
+  },
+  "schema_version": 1,
+  "simulation": {
+    "broad_phase": "gpu",
+    "capture_seconds": 0.2,
+    "determinism_limitation": "enhanced_determinism_unsupported_on_gpu",
+    "fixed_dt": 0.008333,
+    "fixed_dt_denominator": 120,
+    "fixed_dt_numerator": 1,
+    "flags": {
+      "enhanced_determinism": false,
+      "gpu_dynamics": true,
+      "pcm": true,
+      "stabilization": true
+    },
+    "gravity": [
+      0,
+      -9.81,
+      0
+    ],
+    "seed": 909,
+    "solver": "tgs",
+    "steps": 24
+  }
+}
