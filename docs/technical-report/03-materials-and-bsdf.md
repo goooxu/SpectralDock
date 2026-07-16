@@ -20,6 +20,17 @@ $$
 
 *图 3：黄色箭头是入射方向，青色箭头是可能的出射方向，轮廓表示 BSDF 的相对集中程度。图中的介电箭头画的是 `roughness = 0` 的离散 delta 情形；非零粗糙度会把反射与折射都展开成连续 GGX 瓣。*
 
+### 1.1 几何法线与有效着色法线
+
+一个平滑网格交点同时保留两根单位法线：
+
+- $\mathbf n_g$ 是朝当前射线一侧的**定向几何法线**，由真实 primitive 表面决定；
+- $\mathbf n_s^{\mathrm{eff}}$ 是绕 $\mathbf n_g$ 与出射方向 $\boldsymbol\omega_o$ 定向的**有效着色法线**，mesh 可由顶点法线重心插值得到；没有独立着色法线时它与 $\mathbf n_g$ 相同。
+
+$\mathbf n_s^{\mathrm{eff}}$ 建立 Lambert 和 GGX 的局部坐标、法线分布、BSDF/PDF 与 PBRT 风格的 `AbsDot` 余弦；因此本章后续连续 BSDF 公式中未加下标的 $\mathbf n$ 都表示 $\mathbf n_s^{\mathrm{eff}}$。$\mathbf n_g$ 另外负责 `front_face`、真实反射/透射半空间、介质栈转换和所有表面射线偏移。粗糙介电的微表面瓣由 $\mathbf n_s^{\mathrm{eff}}$ 塑形，但方向必须同时通过 $\mathbf n_g$ 的物理侧别；光滑 delta dielectric/water 的 Fresnel、Snell 反射/折射方向则完全使用 $\mathbf n_g$，不受顶点法线扭曲。
+
+这个实现不乘 Veach 的 shading-normal adjoint correction。它保持相机辐亮路径的一致 `AbsDot` 约定，但不对极端倾斜的插值法线承诺严格互易性或能量守恒。
+
 ## 2. Lambert 漫反射
 
 理想漫反射假设表面把光均匀送往上方所有观察方向。BRDF 为
@@ -44,7 +55,7 @@ $$
 
 $$
 p_B(\boldsymbol\omega_i)=
-\frac{\max(0,\mathbf n\cdot\boldsymbol\omega_i)}{\pi}.
+\frac{\max(0,\mathbf n_s^{\mathrm{eff}}\cdot\boldsymbol\omega_i)}{\pi}.
 $$
 
 一次随机样本的路径权重便化简为
@@ -55,7 +66,7 @@ $$
 =\boldsymbol\rho.
 $$
 
-这就是 [`sample_bsdf`](../../src/device_programs.cu) 的 Lambert 分支直接令 `sample.weight = base_color` 的原因。代码不是漏掉了 BRDF、余弦或 PDF；它们在代数上已经约掉。
+这就是 [`sample_bsdf`](../../src/device_programs.cu) 的 Lambert 分支把 `evaluation.f_cos / evaluation.pdf` 化简为 `base_color` 的原因。代码不是漏掉了 BRDF、余弦或 PDF；它们在代数上已经约掉。
 
 ### 源码对照：Lambert 采样与化简后的权重
 
@@ -69,19 +80,23 @@ $$
     const float3 local =
         f3(radius * cosf(phi), radius * sinf(phi), sqrtf(1.0f - r1));
     sample.wi = local_to_world(local, n);
-    sample.pdf = fmaxf(dot3(n, sample.wi), 0.0f) * kInvPi;
-    sample.weight = base_color;
-    sample.valid = sample.pdf > 0.0f;
+    const BsdfEvaluation evaluation = evaluate_bsdf(
+        material, base_color, n, geometric_n, wo, sample.wi, 1.0f, 1.0f);
+    sample.pdf = evaluation.pdf;
+    if (sample.pdf > 0.0f) {
+      sample.weight = divv(evaluation.f_cos, sample.pdf);
+      sample.valid = max_component(sample.weight) > 0.0f ? 1 : 0;
+    }
     sample.delta = 0;
     return sample;
   }
 ```
 
-`r1`、`r2` 是两个均匀随机数，局部方向的 $z=\sqrt{1-r_1}$ 产生余弦加权半球分布；`local_to_world` 再把它绕法线 `n` 旋转到世界坐标。`sample.pdf` 逐字对应 $p_B=(\mathbf n\cdot\boldsymbol\omega_i)/\pi$，而 `sample.weight = base_color` 对应化简后的 $\boldsymbol\rho$。`delta = 0` 明确它是连续分布。
+`r1`、`r2` 是两个均匀随机数，局部方向的 $z=\sqrt{1-r_1}$ 产生余弦加权半球分布；`local_to_world` 再把它绕有效着色法线 `n` 旋转到世界坐标。`evaluate_bsdf` 返回融合余弦的 `f_cos` 和同一方向 PDF，二者相除对应化简后的 $\boldsymbol\rho$。$\mathbf n_g$ 的半空间检查仍会拒绝穿到真实表面背后的样本；`delta = 0` 明确它是连续分布。
 
 ## 3. GGX 粗糙金属
 
-粗糙金属可想成大量方向不同的微小镜面。宏观法线是 $\mathbf n$，真正完成一次镜面反射的微表面法线是半程向量
+粗糙金属可想成大量方向不同的微小镜面。BSDF 局部宏观法线是 $\mathbf n=\mathbf n_s^{\mathrm{eff}}$，真正完成一次镜面反射的微表面法线是半程向量
 
 $$
 \mathbf h=
@@ -177,30 +192,33 @@ $$
 
 <!-- source-snippet id="ggx-brdf-direction-pdf" path="src/device_programs.cu" anchor="half_vector" -->
 ```cpp
-    const float3 half_vector = normalize3(add(wo, wi));
-    const float no_h = fmaxf(dot3(n, half_vector), 0.0f);
-    const float vo_h = fmaxf(dot3(wo, half_vector), 0.0f);
-    if (no_h <= 0.0f || vo_h <= 0.0f) {
-      return;
+    const float3 half_vector = mul(add(wo, wi), rsqrtf(half_length2));
+    const float no_h = abs_dot(n, half_vector);
+    const float vo_h = abs_dot(wo, half_vector);
+    if (!(no_h > 0.0f) || !(vo_h > 0.0f)) {
+      return result;
     }
     const float alpha =
         fmaxf(material.roughness * material.roughness, 0.001f);
     const float d = ggx_distribution(no_h, alpha);
-    const float g = ggx_g1(no_v, alpha) * ggx_g1(no_l, alpha);
+    const float g = ggx_g1(no_v, alpha) * ggx_g1(fabsf(no_l), alpha);
     const float3 dielectric_f0 = f3(0.04f, 0.04f, 0.04f);
     const float3 f0 =
         lerp3(dielectric_f0, base_color,
               fminf(fmaxf(material.metallic, 0.0f), 1.0f));
     const float3 fresnel = fresnel_schlick(vo_h, f0);
-    value = mul(fresnel, d * g / fmaxf(4.0f * no_v * no_l, 1.0e-20f));
-    const float half_pdf = ggx_visible_normal_pdf(
-        n, wo, half_vector, alpha);
-    pdf = half_pdf / fmaxf(4.0f * vo_h, 1.0e-20f);
-    return;
-  }
+    // Multiplying by abs(dot(ns, wi)) analytically cancels the same factor in
+    // the microfacet denominator, including shading-back light directions.
+    result.f_cos = mul(
+        fresnel, d * g / fmaxf(4.0f * no_v, 1.0e-20f));
+    if (no_l > 0.0f) {
+      const float half_pdf = ggx_visible_normal_pdf(
+          n, wo, half_vector, alpha);
+      result.pdf = half_pdf / fmaxf(4.0f * vo_h, 1.0e-20f);
+    }
 ```
 
-`wo`、`wi`、`n` 分别对应 $\boldsymbol\omega_o$、$\boldsymbol\omega_i$、$\mathbf n$，而 `no_v`、`no_l` 是 BRDF 分母中的两个余弦。`value` 实现 $\mathbf F D G/(4n_on_i)$；`half_pdf` 是观察方向条件下的可见法线密度，最后除以反射映射的 $4|\boldsymbol\omega_o\cdot\mathbf h|$ Jacobian。粗糙度下限与极小分母共同保护近 delta 情况下的数值稳定性。
+`wo`、`wi`、`n` 分别对应 $\boldsymbol\omega_o$、$\boldsymbol\omega_i$、$\mathbf n_s^{\mathrm{eff}}$，而 `no_v`、`no_l` 是两个着色余弦。`result.f_cos` 已把 PBRT 风格的 $|n_i|$ 乘进 BRDF，因此它与微表面分母中的同一项解析约消；`half_pdf` 是观察方向条件下的可见法线密度，最后除以反射映射的 $4|\boldsymbol\omega_o\cdot\mathbf h|$ Jacobian。着色法线负半球上的物理有效灯方向仍可求值，但余弦半球 BSDF 采样不能生成它，所以此时 PDF 为零。粗糙度下限与极小分母共同保护近 delta 情况下的数值稳定性。
 
 ### 3.3 GGX 采样密度
 
@@ -347,19 +365,22 @@ static __forceinline__ __device__ float rough_reflection_probability(
 ```cpp
   const float denominator = wo_h + eta_path * wi_h;
   const float denominator2 = denominator * denominator;
-  if (!(denominator2 > 1.0e-20f)) return;
+  if (!(denominator2 > 1.0e-20f)) return result;
   // Radiance transport carries the eta_i^2/eta_t^2 factor. It appears in the
   // sample weight through the solid-angle Jacobian below, matching the delta
   // transmission convention used by this renderer.
-  value = mul(base_color,
-              (1.0f - fresnel) * d * g * fabsf(wi_h * wo_h) /
-                  fmaxf(no_v * fabsf(no_l) * denominator2, 1.0e-20f));
+  result.f_cos = mul(
+      base_color,
+      (1.0f - fresnel) * d * g * fabsf(wi_h * wo_h) /
+          fmaxf(no_v * denominator2, 1.0e-20f));
   const float jacobian =
       fabsf(eta_path * eta_path * wi_h / denominator2);
-  pdf = (1.0f - reflection_probability) * half_pdf * jacobian;
+  result.pdf =
+      (1.0f - reflection_probability) * half_pdf * jacobian;
+  return result;
 ```
 
-`eta_path` 就是 $\eta_p$，`denominator` 是 $o_h+\eta_p i_h$；`value` 仍使用物理的 $1-F$，`pdf` 则使用实际分支概率 $s_T=1-s_R$。实现保留绝对值和极小分母保护，避免掠射或接近退化半程向量时产生负 PDF、除零或非有限数。
+`eta_path` 就是 $\eta_p$，`denominator` 是 $o_h+\eta_p i_h$；`result.f_cos` 仍使用物理的 $1-F$ 并已融合 $|\mathbf n_s^{\mathrm{eff}}\cdot\boldsymbol\omega_i|$，`result.pdf` 则使用实际分支概率 $s_T=1-s_R$。实现保留绝对值和极小分母保护，避免掠射或接近退化半程向量时产生负 PDF、除零或非有限数。
 
 <!-- source-snippet id="rough-dielectric-vndf-pdf" path="src/device_programs.cu" anchor="ggx_visible_normal_pdf" -->
 ```cpp
@@ -376,7 +397,7 @@ static __forceinline__ __device__ float ggx_visible_normal_pdf(
 }
 ```
 
-这段 PDF 与 metal 和粗糙介电采样器使用同一可见法线测度。`sample_ggx_vndf` 先把观察方向按 $\alpha$ 拉伸，在投影圆盘上取样并混合地平线区域，再反拉伸回宏观法线坐标；这样显著减少掠射角生成不可见微表面的拒绝。当网格插值着色法线与真实几何法线不同时，着色法线只塑造 GGX 波瓣；反射/透射的物理介质侧别和射线起点偏移由定向几何法线决定，两种法线对样本的侧别不一致时拒绝该样本，防止错误修改介质栈。对应实现见[第 12 章第 6 节](12-runtime-analytic-water.md#6-粗糙水面的-nee只连接当前散射事件)。
+这段 PDF 与 metal 和粗糙介电采样器使用同一可见法线测度。`sample_ggx_vndf` 先把观察方向按 $\alpha$ 拉伸，在投影圆盘上取样并混合地平线区域，再反拉伸回宏观法线坐标；这样显著减少掠射角生成不可见微表面的拒绝。当网格插值着色法线与真实几何法线不同时，$\mathbf n_s^{\mathrm{eff}}$ 只塑造 GGX 波瓣并提供 `AbsDot` 余弦；反射/透射的物理介质侧别和所有射线起点偏移由定向 $\mathbf n_g$ 决定。对于粗糙介电，两种法线对样本的侧别不一致时拒绝该样本，防止错误修改介质栈。对应实现见[第 12 章第 6 节](12-runtime-analytic-water.md#6-粗糙水面的-nee只连接当前散射事件)。
 
 ### 4.2 光滑兼容分支
 
@@ -387,7 +408,8 @@ static __forceinline__ __device__ float ggx_visible_normal_pdf(
     const float eta_i = front_face ? 1.0f : fmaxf(material.ior, 1.0e-3f);
     const float eta_t = front_face ? fmaxf(material.ior, 1.0e-3f) : 1.0f;
     const float eta = eta_i / eta_t;
-    const float cos_theta = fminf(dot3(wo, n), 1.0f);
+    const float cos_theta =
+        fminf(fmaxf(dot3(wo, geometric_n), 0.0f), 1.0f);
     const float sin2_theta = fmaxf(0.0f, 1.0f - cos_theta * cos_theta);
     const float r0_base = (eta_i - eta_t) / (eta_i + eta_t);
     const float r0 = r0_base * r0_base;
@@ -395,22 +417,21 @@ static __forceinline__ __device__ float ggx_visible_normal_pdf(
     const float reflectance = r0 + (1.0f - r0) * m * m * m * m * m;
     bool transmitted = false;
     if (eta * eta * sin2_theta > 1.0f || rng.next() < reflectance) {
-      sample.wi = normalize3(reflect3(neg(wo), n));
+      sample.wi = normalize3(reflect3(neg(wo), geometric_n));
     } else {
       const float3 perpendicular =
-          mul(add(neg(wo), mul(n, cos_theta)), eta);
+          mul(add(neg(wo), mul(geometric_n, cos_theta)), eta);
       const float3 parallel =
-          mul(n, -sqrtf(fmaxf(0.0f, 1.0f - length2(perpendicular))));
+          mul(geometric_n,
+              -sqrtf(fmaxf(0.0f, 1.0f - length2(perpendicular))));
       sample.wi = normalize3(add(perpendicular, parallel));
       transmitted = true;
     }
     sample.weight = transmitted ? mul(base_color, eta * eta) : base_color;
     sample.pdf = 1.0f;
-    sample.valid = 1;
-    sample.delta = 1;
 ```
 
-这段代码只在 `params.water_surface_count == 0` 时执行。`front_face` 决定空气侧和材质侧折射率，`eta` 就是 $\eta_i/\eta_t$。条件 `eta * eta * sin2_theta > 1` 是全反射判定，否则 `rng.next() < reflectance` 以 Schlick 反射率选择离散反射事件；折射方向拆成法向平行与垂直分量，以 `fmaxf` 保护平方根。`sample.weight` 只在 `transmitted` 为真时乘 `eta * eta`，正好对应测度变换 $(\eta_i/\eta_t)^2$；最后三行把有效的反射或折射标记为 delta 事件，并用占位 PDF 1 记账。
+这段代码只在 `params.water_surface_count == 0` 时执行。`sample_bsdf` 同时收到着色参数 `n` 和几何参数 `geometric_n`，这个光滑分支只使用后者求反射/折射方向。`front_face` 决定空气侧和材质侧折射率，`eta` 就是 $\eta_i/\eta_t$。条件 `eta * eta * sin2_theta > 1` 是全反射判定，否则 `rng.next() < reflectance` 以 Schlick 反射率选择离散反射事件；折射方向拆成法向平行与垂直分量，以 `fmaxf` 保护平方根。`sample.weight` 只在 `transmitted` 为真时乘 `eta * eta`，正好对应测度变换 $(\eta_i/\eta_t)^2$；紧随摘录的实现再把样本标记为有效 delta 事件并记录是否透射。因此改变 mesh 顶点法线不会改变理想界面的反射或折射方向。
 
 代码中的 `sample.pdf = 1` 只是 delta 分支的占位记账值，绝不表示“在整个球面均匀采样”。理想反射和折射只出现在一个方向上，应从离散事件理解。
 
@@ -421,6 +442,7 @@ static __forceinline__ __device__ float ggx_visible_normal_pdf(
 - 无 `water_surface` 的兼容路径把外部介质固定为空气，不维护嵌套介质栈，也没有 Beer–Lambert 距离吸收；
 - 含水路径维护最多四层严格 LIFO 介质栈，用 RGB Beer 吸收处理水段，并只允许普通 dielectric 绑定闭合 sphere，详见[第 12 章第 4、5 节](12-runtime-analytic-water.md#4-介质栈与严格嵌套)；
 - `base_color` 会乘到每次介电散射事件（反射或折射），透射权重还包含 $(\eta_i/\eta_t)^2$；它是界面着色，不等同于含水路径按传播距离累计的吸收。
+- 插值着色法线未实现 adjoint correction；极端 $\mathbf n_s^{\mathrm{eff}}$ 与 $\mathbf n_g$ 偏差下不保证严格能量守恒。
 
 ## 5. 发光材质
 
@@ -445,5 +467,7 @@ $$
 - `ggx_distribution`、`ggx_g1`、`sample_ggx_vndf`、`dielectric_fresnel`：微表面分布、可见法线采样和精确介电 Fresnel。
 
 Python API 与原生 SceneBuilder 只要求 `base_color` 非负，没有强制每个通道不超过 1。物理上要保持被动表面能量守恒，场景作者仍应让普通反射率处于合理范围。大于 1 的 `emission` 则很常见，因为 HDR 光源本来就需要比显示白色更亮。
+
+上述几何/着色法线分工可对照 [PBRT v4 的 `SurfaceInteraction`](https://www.pbr-book.org/4ed/Geometry_and_Transformations/Interactions)；路径吞吐量中的着色法线 `AbsDot` 见 [PBRT v4 的 Simple Path Tracer](https://www.pbr-book.org/4ed/Light_Transport_I_Surface_Reflection/A_Simple_Path_Tracer)。着色法线为什么可以破坏对称性与能量守恒，以及严格 adjoint BSDF 如何构造，见 Eric Veach 博士论文[ *Robust Monte Carlo Methods for Light Transport Simulation* 第 5 章](https://graphics.stanford.edu/papers/veach_thesis/)。SpectralDock 明确只采用前两项中的法线分工与 `AbsDot` 形式，没有实现 Veach correction。
 
 [上一章：光的度量与渲染方程](02-light-and-rendering-equation.md) · [返回目录](README.md) · [下一章：Monte Carlo 路径追踪](04-monte-carlo-path-tracing.md)

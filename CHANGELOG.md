@@ -36,6 +36,12 @@ commit 列表仍以 Git 历史为准。发布新版本时，应把 `Unreleased` 
   静态示例预览和两个物理预览；可用 `SPECTRALDOCK_BUILD_PHYSX=OFF` 显式
   跳过 PhysX SDK、worker 与物理预览，host 检查统一由 `scripts/test.sh` 进入。
 
+### 修复
+
+- 修正平滑网格的着色法线语义：连续 Lambert/GGX 按有效着色法线及 `AbsDot`
+  求值，定向几何法线统一负责物理半空间、介质栈和所有表面射线偏移；光滑
+  dielectric/water 的 Fresnel 与 Snell 方向不再被顶点法线扭曲。
+
 ### 移除
 
 - 移除 schema v6、全部场景 JSON、C++ JSON loader、`--scene` 主程序及临时

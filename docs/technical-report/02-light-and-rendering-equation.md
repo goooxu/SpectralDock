@@ -58,27 +58,27 @@ point 和 directional 在方向测度上都是 delta 分布：它们没有可抽
 
 ## 2. 表面接收的光：半球积分
 
-在表面点 $\mathbf x$ 上，只有法线 $\mathbf n$ 上方的方向能从外部照到表面。把这个半球记为 $\mathcal H^2(\mathbf n)$。表面接收到的辐照度为
+在理想几何表面点 $\mathbf x$ 上，只有几何法线 $\mathbf n_g$ 上方的方向能从外部照到表面。把这个半球记为 $\mathcal H^2(\mathbf n_g)$。表面接收到的辐照度为
 
 $$
 E(\mathbf x)=
-\int_{\mathcal H^2(\mathbf n)}
+\int_{\mathcal H^2(\mathbf n_g)}
 L_i(\mathbf x,\boldsymbol\omega_i)
-\max(0,\mathbf n\cdot\boldsymbol\omega_i)
+\max(0,\mathbf n_g\cdot\boldsymbol\omega_i)
 \,d\omega_i.
 $$
 
 这里：
 
 - $L_i$ 是从方向 $\boldsymbol\omega_i$ 到达表面的入射辐亮度；
-- $\max(0,\mathbf n\cdot\boldsymbol\omega_i)$ 是入射方向的余弦；
+- $\max(0,\mathbf n_g\cdot\boldsymbol\omega_i)$ 是真实几何表面的入射余弦；
 - $d\omega_i$ 是一个无限小的方向区域。
 
 积分可先理解成“把半球切成许多很小的方向格子，再把每格贡献相加”。格子越小，离散和越接近连续积分：
 
 $$
 E\approx\sum_j L_i(\boldsymbol\omega_{i,j})
-\max(0,\mathbf n\cdot\boldsymbol\omega_{i,j})\,\Delta\omega_j.
+\max(0,\mathbf n_g\cdot\boldsymbol\omega_{i,j})\,\Delta\omega_j.
 $$
 
 余弦项来自投影面积。它不是为了让物体看起来立体而添加的经验效果，而是几何测量本身的一部分。
@@ -104,7 +104,7 @@ L_o(\mathbf x,\boldsymbol\omega_o)
 +\int_{\mathcal S^2}
 f_s(\mathbf x,\boldsymbol\omega_i,\boldsymbol\omega_o)
 L_i(\mathbf x,\boldsymbol\omega_i)
-|\mathbf n\cdot\boldsymbol\omega_i|
+|\mathbf n_g\cdot\boldsymbol\omega_i|
 \,d\omega_i
 }
 $$
@@ -114,7 +114,7 @@ $$
 | 符号 | 含义 |
 |---|---|
 | $\mathbf x$ | 当前交点 |
-| $\mathbf n$ | 朝当前射线一侧的单位法线 |
+| $\mathbf n_g$ | 朝当前射线一侧的单位几何法线 |
 | $L_e$ | 表面自己发出的辐亮度 |
 | $L_i$ | 某方向到达表面的入射辐亮度 |
 | $L_o$ | 沿观察方向离开表面的出射辐亮度 |
@@ -252,7 +252,7 @@ $$
 
 有限灯、HDR 环境和 delta 灯是三个独立 NEE 域。普通表面在有限灯域取一个样本；粗糙 water 在该域确定性地各取一个全局功率样本和均匀索引样本，二者的选灯密度相加为 $q_G+q_U$，不乘 0.5。若绑定表面灯还可由下一条 BSDF 射线命中，direct 与 emitter-hit 再用 $p_L+p_B$ 的 balance 权重分配同一路径；否则两份灯样本独自覆盖有限灯域。环境域仍只取一个方向样本并与 BSDF miss 做 power MIS；point/directional 则逐灯求值且权重为 1。因此普通顶点最多尝试“两份随机域连接 + delta 灯数”，粗糙 water 再多一份有限灯连接；PDF、余弦或遮挡检查仍可提前返回。最后一个表面事件仍计算直接光，之后才停止。
 
-`wo` 对应 $\boldsymbol\omega_o$；各域结果乘当前 $\boldsymbol\beta$ 后才加入 `radiance`。需要拆分时，每份策略贡献独立进入 `accumulate_path_contribution`；没有 delta 灯且各项都不触发 clamp 时，紧邻这段之前的 `preserve_grouped_add` 分支仍使用旧加法树。随后 `sample_bsdf` 选出新的 $\boldsymbol\omega_i$：对 Lambert/GGX 连续分支（包括 metal 与粗糙 dielectric/water），`weight` 包含 $f_s|\mathbf n\cdot\boldsymbol\omega_i|/p_B$；只有 `roughness = 0` 的 dielectric/water 使用离散 delta 反射或折射事件权重，透射时还包含 $(\eta_i/\eta_t)^2$。因此两类分支都只需一次乘法即可更新吞吐量。无下一跳、无效样本或零吞吐量都会尽早结束路径，避免无贡献追踪。
+`wo` 对应 $\boldsymbol\omega_o$；各域结果乘当前 $\boldsymbol\beta$ 后才加入 `radiance`。需要拆分时，每份策略贡献独立进入 `accumulate_path_contribution`；没有 delta 灯且各项都不触发 clamp 时，紧邻这段之前的 `preserve_grouped_add` 分支仍使用旧加法树。实现为平滑网格保留一根有效着色法线 $\mathbf n_s^{\mathrm{eff}}$：Lambert/GGX 连续分支的路径权重按 PBRT 风格使用 $f_s|\mathbf n_s^{\mathrm{eff}}\!\cdot\boldsymbol\omega_i|/p_B$。几何法线 $\mathbf n_g$ 仍独立负责真实反射/透射侧、介质栈转换与射线起点偏移。`roughness = 0` 的 dielectric/water 是离散 delta 界面，Fresnel、Snell 方向与侧别全部使用 $\mathbf n_g$，透射权重还包含 $(\eta_i/\eta_t)^2$。无下一跳、无效样本或零吞吐量都会尽早结束路径，避免无贡献追踪。
 
 下一章先研究方程中的材质项 $f_s$，再讨论如何用随机样本估计整个积分。
 

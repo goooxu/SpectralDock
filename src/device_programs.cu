@@ -47,6 +47,9 @@ static __forceinline__ __device__ float3 divv(float3 a, float b) {
 static __forceinline__ __device__ float dot3(float3 a, float3 b) {
   return a.x * b.x + a.y * b.y + a.z * b.z;
 }
+static __forceinline__ __device__ float abs_dot(float3 a, float3 b) {
+  return fabsf(dot3(a, b));
+}
 static __forceinline__ __device__ float3 cross3(float3 a, float3 b) {
   return f3(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z,
             a.x * b.y - a.y * b.x);
@@ -573,6 +576,17 @@ struct BsdfSample {
   int delta;
   int valid;
   int transmitted;
+};
+
+// BSDF values are kept in the same solid-angle measure as their PDFs, but the
+// shading-normal cosine is folded into f_cos. This avoids forming the
+// potentially singular cos(ns, wi) / cos(ng, wi) shading-normal correction:
+// the geometric-measure cosine cancels analytically before either estimator
+// uses the value. A light-sampled direction can have f_cos > 0 and pdf == 0
+// when it is physically reflective but lies behind the shading normal.
+struct BsdfEvaluation {
+  float3 f_cos;
+  float pdf;
 };
 
 struct MediumLayer {
@@ -1210,12 +1224,63 @@ static __forceinline__ __device__ float3 object_shading_normal(
     return geometric;
   }
   const float3 w = mesh_barycentric_weights();
-  float3 shading = normalize3(add(
+  const float3 interpolated = add(
       add(mul(hitgroup.mesh.normals[triangle.x], w.x),
           mul(hitgroup.mesh.normals[triangle.y], w.y)),
-      mul(hitgroup.mesh.normals[triangle.z], w.z)));
+      mul(hitgroup.mesh.normals[triangle.z], w.z));
+  const float interpolated_length2 = length2(interpolated);
+  if (!(interpolated_length2 > 1.0e-20f) ||
+      !isfinite(interpolated_length2)) {
+    return geometric;
+  }
+  float3 shading = mul(interpolated, rsqrtf(interpolated_length2));
   if (dot3(shading, geometric) < 0.0f) shading = neg(shading);
   return shading;
+}
+
+// Preserve ordinary interpolated normals exactly. Only when the outgoing
+// direction falls behind (or extremely close to) the shading tangent plane do
+// we continuously bend ns toward the oriented geometric normal. This keeps
+// the scattering frame usable at silhouettes without changing the physical
+// side of the surface, which is always determined by ng.
+static __forceinline__ __device__ float3 effective_shading_normal(
+    float3 shading_normal, float3 geometric_normal, float3 wo) {
+  constexpr float kMinimumShadingCosine = 1.0e-5f;
+  constexpr float kMinimumGeometricCosine = 1.0e-7f;
+  const float shading_cosine = dot3(shading_normal, wo);
+  if (shading_cosine > kMinimumShadingCosine &&
+      isfinite(shading_cosine)) {
+    return shading_normal;
+  }
+  const float geometric_cosine = dot3(geometric_normal, wo);
+  if (!(geometric_cosine > kMinimumGeometricCosine) ||
+      !isfinite(geometric_cosine) || !isfinite(shading_cosine)) {
+    return geometric_normal;
+  }
+  const float bend = fmaxf(
+      (kMinimumShadingCosine - shading_cosine) / geometric_cosine, 0.0f);
+  const float3 corrected = add(shading_normal, mul(geometric_normal, bend));
+  const float corrected_length2 = length2(corrected);
+  if (!(corrected_length2 > 1.0e-20f) ||
+      !isfinite(corrected_length2)) {
+    return geometric_normal;
+  }
+  const float3 normalized = mul(corrected, rsqrtf(corrected_length2));
+  return dot3(normalized, wo) > 0.0f ? normalized : geometric_normal;
+}
+
+static __forceinline__ __device__ float3 offset_ray_origin(
+    float3 position, float3 geometric_normal, float3 direction,
+    float distance) {
+  const float side = dot3(geometric_normal, direction) >= 0.0f
+      ? 1.0f : -1.0f;
+  return add(position, mul(geometric_normal, side * distance));
+}
+
+static __forceinline__ __device__ float3 offset_ray_origin(
+    float3 position, float3 geometric_normal, float3 direction) {
+  return offset_ray_origin(position, geometric_normal, direction,
+                           params.scene_epsilon * 2.0f);
 }
 
 static __forceinline__ __device__ SurfaceHit trace_radiance(
@@ -1317,23 +1382,42 @@ static __forceinline__ __device__ bool supports_direct_lighting(
          is_rough_dielectric(material);
 }
 
-// Shading normals shape the lobe, but only the oriented geometric normal can
-// decide which physical medium a direction occupies. Reject a rough
-// dielectric direction when those two classifications disagree; otherwise a
-// reflected sample could mutate the medium stack (or a transmitted one could
-// stay on the incident side).
-static __forceinline__ __device__ bool rough_macro_sides_agree(
-    float3 shading_normal, float3 geometric_normal, float3 direction,
-    bool& transmitted) {
-  const float shading_side = dot3(shading_normal, direction);
-  const float geometric_side = dot3(geometric_normal, direction);
-  if (!(fabsf(shading_side) > 0.0f) ||
-      !(fabsf(geometric_side) > 0.0f) ||
-      (shading_side > 0.0f) != (geometric_side > 0.0f)) {
+// Only ng decides whether an event is reflection or transmission. Both
+// directions point away from the vertex, so equal signs mean reflection.
+static __forceinline__ __device__ bool classify_geometric_event(
+    float3 geometric_normal, float3 wo, float3 wi, bool& transmitted) {
+  const float outgoing_side = dot3(geometric_normal, wo);
+  const float incident_side = dot3(geometric_normal, wi);
+  if (!(fabsf(outgoing_side) > 0.0f) ||
+      !(fabsf(incident_side) > 0.0f) ||
+      !isfinite(outgoing_side) || !isfinite(incident_side)) {
     return false;
   }
-  transmitted = geometric_side < 0.0f;
+  transmitted = (outgoing_side > 0.0f) != (incident_side > 0.0f);
   return true;
+}
+
+// Shading normals shape a rough dielectric lobe, but cannot change which
+// medium a direction occupies. Reject events for which the shading and
+// geometric frames disagree instead of silently mutating the medium stack.
+static __forceinline__ __device__ bool rough_macro_sides_agree(
+    float3 shading_normal, float3 geometric_normal, float3 wo, float3 wi,
+    bool& transmitted) {
+  if (!classify_geometric_event(
+          geometric_normal, wo, wi, transmitted)) {
+    return false;
+  }
+  const float shading_outgoing_side = dot3(shading_normal, wo);
+  const float shading_incident_side = dot3(shading_normal, wi);
+  if (!(fabsf(shading_outgoing_side) > 0.0f) ||
+      !(fabsf(shading_incident_side) > 0.0f) ||
+      !isfinite(shading_outgoing_side) ||
+      !isfinite(shading_incident_side)) {
+    return false;
+  }
+  const bool shading_transmitted =
+      (shading_outgoing_side > 0.0f) != (shading_incident_side > 0.0f);
+  return shading_transmitted == transmitted;
 }
 
 static __forceinline__ __device__ void dielectric_eta_pair(
@@ -1402,70 +1486,95 @@ static __forceinline__ __device__ float ggx_visible_normal_pdf(
          no_v;
 }
 
-static __forceinline__ __device__ void evaluate_bsdf(
-    const MaterialData& material, float3 base_color, float3 n, float3 wo,
-    float3 wi, float eta_i, float eta_t, float3& value, float& pdf) {
-  value = f3(0.0f, 0.0f, 0.0f);
-  pdf = 0.0f;
+static __forceinline__ __device__ BsdfEvaluation evaluate_bsdf(
+    const MaterialData& material, float3 base_color, float3 n,
+    float3 geometric_n, float3 wo, float3 wi, float eta_i, float eta_t) {
+  BsdfEvaluation result{};
+  result.f_cos = f3(0.0f, 0.0f, 0.0f);
+
+  bool transmitted = false;
+  if (!classify_geometric_event(geometric_n, wo, wi, transmitted)) {
+    return result;
+  }
+
   const float no_l = dot3(n, wi);
   const float no_v = dot3(n, wo);
-  if (no_v <= 0.0f) {
-    return;
+  if (!(no_v > 0.0f) || !isfinite(no_l) || !isfinite(no_v)) {
+    return result;
   }
   if (material.type == spectraldock::kMaterialLambertian) {
-    if (no_l <= 0.0f) return;
-    value = mul(base_color, kInvPi);
-    pdf = no_l * kInvPi;
-    return;
+    if (transmitted) return result;
+    const float abs_no_l = fabsf(no_l);
+    result.f_cos = mul(base_color, abs_no_l * kInvPi);
+    // Cosine-hemisphere sampling cannot generate a direction behind ns. The
+    // light estimator may still evaluate it because ng says it reflects.
+    result.pdf = no_l > 0.0f ? no_l * kInvPi : 0.0f;
+    return result;
   }
   if (material.type == spectraldock::kMaterialMetal) {
-    if (no_l <= 0.0f) return;
-    const float3 half_vector = normalize3(add(wo, wi));
-    const float no_h = fmaxf(dot3(n, half_vector), 0.0f);
-    const float vo_h = fmaxf(dot3(wo, half_vector), 0.0f);
-    if (no_h <= 0.0f || vo_h <= 0.0f) {
-      return;
+    if (transmitted) return result;
+    const float half_length2 = length2(add(wo, wi));
+    if (!(half_length2 > 1.0e-20f) || !isfinite(half_length2)) {
+      return result;
+    }
+    const float3 half_vector = mul(add(wo, wi), rsqrtf(half_length2));
+    const float no_h = abs_dot(n, half_vector);
+    const float vo_h = abs_dot(wo, half_vector);
+    if (!(no_h > 0.0f) || !(vo_h > 0.0f)) {
+      return result;
     }
     const float alpha =
         fmaxf(material.roughness * material.roughness, 0.001f);
     const float d = ggx_distribution(no_h, alpha);
-    const float g = ggx_g1(no_v, alpha) * ggx_g1(no_l, alpha);
+    const float g = ggx_g1(no_v, alpha) * ggx_g1(fabsf(no_l), alpha);
     const float3 dielectric_f0 = f3(0.04f, 0.04f, 0.04f);
     const float3 f0 =
         lerp3(dielectric_f0, base_color,
               fminf(fmaxf(material.metallic, 0.0f), 1.0f));
     const float3 fresnel = fresnel_schlick(vo_h, f0);
-    value = mul(fresnel, d * g / fmaxf(4.0f * no_v * no_l, 1.0e-20f));
-    const float half_pdf = ggx_visible_normal_pdf(
-        n, wo, half_vector, alpha);
-    pdf = half_pdf / fmaxf(4.0f * vo_h, 1.0e-20f);
-    return;
+    // Multiplying by abs(dot(ns, wi)) analytically cancels the same factor in
+    // the microfacet denominator, including shading-back light directions.
+    result.f_cos = mul(
+        fresnel, d * g / fmaxf(4.0f * no_v, 1.0e-20f));
+    if (no_l > 0.0f) {
+      const float half_pdf = ggx_visible_normal_pdf(
+          n, wo, half_vector, alpha);
+      result.pdf = half_pdf / fmaxf(4.0f * vo_h, 1.0e-20f);
+    }
+    return result;
   }
-  if (!is_rough_dielectric(material)) {
-    return;
+  if (!is_rough_dielectric(material) ||
+      !rough_macro_sides_agree(
+          n, geometric_n, wo, wi, transmitted)) {
+    return result;
   }
 
   const float alpha =
       fmaxf(material.roughness * material.roughness, 0.001f);
-  const bool reflection = no_l > 0.0f;
-  float3 half_vector;
+  const bool reflection = !transmitted;
+  float3 half_sum;
   float eta_path = 1.0f;
   if (reflection) {
-    half_vector = normalize3(add(wo, wi));
+    half_sum = add(wo, wi);
   } else {
     // etap is eta_t / eta_i. With both directions pointing away from the
     // interface, h is proportional to wo + etap*wi (Walter et al. 2007).
     eta_path = eta_t / fmaxf(eta_i, 1.0e-20f);
-    half_vector = normalize3(add(wo, mul(wi, eta_path)));
+    half_sum = add(wo, mul(wi, eta_path));
   }
+  const float half_length2 = length2(half_sum);
+  if (!(half_length2 > 1.0e-20f) || !isfinite(half_length2)) {
+    return result;
+  }
+  float3 half_vector = mul(half_sum, rsqrtf(half_length2));
   if (dot3(half_vector, n) < 0.0f) half_vector = neg(half_vector);
   const float no_h = fmaxf(dot3(n, half_vector), 0.0f);
   const float wo_h = dot3(wo, half_vector);
   const float wi_h = dot3(wi, half_vector);
-  if (!(no_h > 0.0f) || !(wo_h > 0.0f)) return;
+  if (!(no_h > 0.0f) || !(wo_h > 0.0f)) return result;
   if ((reflection && !(wi_h > 0.0f)) ||
       (!reflection && !(wi_h < 0.0f))) {
-    return;
+    return result;
   }
   const float d = ggx_distribution(no_h, alpha);
   const float g = ggx_g1(no_v, alpha) *
@@ -1476,25 +1585,28 @@ static __forceinline__ __device__ void evaluate_bsdf(
   const float half_pdf = ggx_visible_normal_pdf(
       n, wo, half_vector, alpha);
   if (reflection) {
-    value = mul(base_color,
-                fresnel * d * g /
-                    fmaxf(4.0f * no_v * no_l, 1.0e-20f));
-    pdf = reflection_probability * half_pdf /
-          fmaxf(4.0f * fabsf(wo_h), 1.0e-20f);
-    return;
+    result.f_cos = mul(
+        base_color,
+        fresnel * d * g / fmaxf(4.0f * no_v, 1.0e-20f));
+    result.pdf = reflection_probability * half_pdf /
+                 fmaxf(4.0f * fabsf(wo_h), 1.0e-20f);
+    return result;
   }
   const float denominator = wo_h + eta_path * wi_h;
   const float denominator2 = denominator * denominator;
-  if (!(denominator2 > 1.0e-20f)) return;
+  if (!(denominator2 > 1.0e-20f)) return result;
   // Radiance transport carries the eta_i^2/eta_t^2 factor. It appears in the
   // sample weight through the solid-angle Jacobian below, matching the delta
   // transmission convention used by this renderer.
-  value = mul(base_color,
-              (1.0f - fresnel) * d * g * fabsf(wi_h * wo_h) /
-                  fmaxf(no_v * fabsf(no_l) * denominator2, 1.0e-20f));
+  result.f_cos = mul(
+      base_color,
+      (1.0f - fresnel) * d * g * fabsf(wi_h * wo_h) /
+          fmaxf(no_v * denominator2, 1.0e-20f));
   const float jacobian =
       fabsf(eta_path * eta_path * wi_h / denominator2);
-  pdf = (1.0f - reflection_probability) * half_pdf * jacobian;
+  result.pdf =
+      (1.0f - reflection_probability) * half_pdf * jacobian;
+  return result;
 }
 
 static __forceinline__ __device__ BsdfSample sample_bsdf(
@@ -1511,9 +1623,13 @@ static __forceinline__ __device__ BsdfSample sample_bsdf(
     const float3 local =
         f3(radius * cosf(phi), radius * sinf(phi), sqrtf(1.0f - r1));
     sample.wi = local_to_world(local, n);
-    sample.pdf = fmaxf(dot3(n, sample.wi), 0.0f) * kInvPi;
-    sample.weight = base_color;
-    sample.valid = sample.pdf > 0.0f;
+    const BsdfEvaluation evaluation = evaluate_bsdf(
+        material, base_color, n, geometric_n, wo, sample.wi, 1.0f, 1.0f);
+    sample.pdf = evaluation.pdf;
+    if (sample.pdf > 0.0f) {
+      sample.weight = divv(evaluation.f_cos, sample.pdf);
+      sample.valid = max_component(sample.weight) > 0.0f ? 1 : 0;
+    }
     sample.delta = 0;
     return sample;
   }
@@ -1523,12 +1639,11 @@ static __forceinline__ __device__ BsdfSample sample_bsdf(
     const float3 half_vector = sample_ggx_vndf(
         n, wo, alpha, rng.next(), rng.next());
     sample.wi = normalize3(reflect3(neg(wo), half_vector));
-    float3 value;
-    evaluate_bsdf(material, base_color, n, wo, sample.wi,
-                  1.0f, 1.0f, value, sample.pdf);
-    const float no_l = fmaxf(dot3(n, sample.wi), 0.0f);
-    if (sample.pdf > 0.0f && no_l > 0.0f) {
-      sample.weight = mul(value, no_l / sample.pdf);
+    const BsdfEvaluation evaluation = evaluate_bsdf(
+        material, base_color, n, geometric_n, wo, sample.wi, 1.0f, 1.0f);
+    sample.pdf = evaluation.pdf;
+    if (sample.pdf > 0.0f) {
+      sample.weight = divv(evaluation.f_cos, sample.pdf);
       sample.valid = 1;
     }
     sample.delta = 0;
@@ -1567,16 +1682,16 @@ static __forceinline__ __device__ BsdfSample sample_bsdf(
       }
       bool macro_transmitted = false;
       if (!rough_macro_sides_agree(
-              n, geometric_n, sample.wi, macro_transmitted) ||
+              n, geometric_n, wo, sample.wi, macro_transmitted) ||
           (sample.transmitted != 0) != macro_transmitted) {
         return sample;
       }
-      float3 value;
-      evaluate_bsdf(material, base_color, n, wo, sample.wi,
-                    eta_i, eta_t, value, sample.pdf);
-      const float no_l = fabsf(dot3(n, sample.wi));
-      if (sample.pdf > 0.0f && no_l > 0.0f) {
-        sample.weight = mul(value, no_l / sample.pdf);
+      const BsdfEvaluation evaluation = evaluate_bsdf(
+          material, base_color, n, geometric_n, wo, sample.wi,
+          eta_i, eta_t);
+      sample.pdf = evaluation.pdf;
+      if (sample.pdf > 0.0f) {
+        sample.weight = divv(evaluation.f_cos, sample.pdf);
         sample.valid = max_component(sample.weight) > 0.0f ? 1 : 0;
       }
       sample.delta = 0;
@@ -1596,17 +1711,18 @@ static __forceinline__ __device__ BsdfSample sample_bsdf(
           ? fmaxf(material.ior, 1.0e-3f)
           : exit_ior(*media, material_index, water_counters);
       const float eta = eta_i / eta_t;
-      const float cos_theta = fminf(fmaxf(dot3(wo, n), 0.0f), 1.0f);
+      const float cos_theta =
+          fminf(fmaxf(dot3(wo, geometric_n), 0.0f), 1.0f);
       float cos_transmitted = 0.0f;
       const float reflectance = dielectric_fresnel(
           cos_theta, eta_i, eta_t, &cos_transmitted);
       if (reflectance >= 1.0f || rng.next() < reflectance) {
-        sample.wi = normalize3(reflect3(neg(wo), n));
+        sample.wi = normalize3(reflect3(neg(wo), geometric_n));
         sample.weight = base_color;
       } else {
         const float3 perpendicular =
-            mul(add(neg(wo), mul(n, cos_theta)), eta);
-        const float3 parallel = mul(n, -cos_transmitted);
+            mul(add(neg(wo), mul(geometric_n, cos_theta)), eta);
+        const float3 parallel = mul(geometric_n, -cos_transmitted);
         sample.wi = normalize3(add(perpendicular, parallel));
         sample.weight = mul(base_color, eta * eta);
         sample.transmitted = 1;
@@ -1625,7 +1741,8 @@ static __forceinline__ __device__ BsdfSample sample_bsdf(
     const float eta_i = front_face ? 1.0f : fmaxf(material.ior, 1.0e-3f);
     const float eta_t = front_face ? fmaxf(material.ior, 1.0e-3f) : 1.0f;
     const float eta = eta_i / eta_t;
-    const float cos_theta = fminf(dot3(wo, n), 1.0f);
+    const float cos_theta =
+        fminf(fmaxf(dot3(wo, geometric_n), 0.0f), 1.0f);
     const float sin2_theta = fmaxf(0.0f, 1.0f - cos_theta * cos_theta);
     const float r0_base = (eta_i - eta_t) / (eta_i + eta_t);
     const float r0 = r0_base * r0_base;
@@ -1633,12 +1750,13 @@ static __forceinline__ __device__ BsdfSample sample_bsdf(
     const float reflectance = r0 + (1.0f - r0) * m * m * m * m * m;
     bool transmitted = false;
     if (eta * eta * sin2_theta > 1.0f || rng.next() < reflectance) {
-      sample.wi = normalize3(reflect3(neg(wo), n));
+      sample.wi = normalize3(reflect3(neg(wo), geometric_n));
     } else {
       const float3 perpendicular =
-          mul(add(neg(wo), mul(n, cos_theta)), eta);
+          mul(add(neg(wo), mul(geometric_n, cos_theta)), eta);
       const float3 parallel =
-          mul(n, -sqrtf(fmaxf(0.0f, 1.0f - length2(perpendicular))));
+          mul(geometric_n,
+              -sqrtf(fmaxf(0.0f, 1.0f - length2(perpendicular))));
       sample.wi = normalize3(add(perpendicular, parallel));
       transmitted = true;
     }
@@ -1947,28 +2065,19 @@ static __forceinline__ __device__ float3 sample_finite_direct_light(
     }
     const float distance = sqrtf(distance2);
     const float3 wi = divv(displacement, distance);
-    const float signed_no_l = dot3(hit.normal, wi);
-    bool transmitted_connection = signed_no_l < 0.0f;
-    if (is_rough_dielectric(material) &&
-        !rough_macro_sides_agree(
-            hit.normal, hit.geometric_normal, wi,
-            transmitted_connection)) {
+    bool transmitted_connection = false;
+    if (!classify_geometric_event(
+            hit.geometric_normal, wo, wi, transmitted_connection)) {
       return f3(0.0f, 0.0f, 0.0f);
     }
-    const float no_l = is_rough_dielectric(material)
-        ? fabsf(signed_no_l) : signed_no_l;
-    if (no_l <= 0.0f) return f3(0.0f, 0.0f, 0.0f);
-    float3 bsdf;
-    float bsdf_pdf;
-    evaluate_bsdf(material, base_color, hit.normal, wo, wi,
-                  eta_i, eta_t, bsdf, bsdf_pdf);
-    if (!(bsdf_pdf > 0.0f)) return f3(0.0f, 0.0f, 0.0f);
-    const float3 offset_normal = is_rough_dielectric(material)
-        ? hit.geometric_normal : hit.normal;
-    const float side = transmitted_connection ? -1.0f : 1.0f;
-    const float3 shadow_origin =
-        add(hit.position,
-            mul(offset_normal, side * params.scene_epsilon * 2.0f));
+    const BsdfEvaluation evaluation = evaluate_bsdf(
+        material, base_color, hit.normal, hit.geometric_normal, wo, wi,
+        eta_i, eta_t);
+    if (!(max_component(evaluation.f_cos) > 0.0f)) {
+      return f3(0.0f, 0.0f, 0.0f);
+    }
+    const float3 shadow_origin = offset_ray_origin(
+        hit.position, hit.geometric_normal, wi);
     const float3 shadow_displacement = sub(light_point, shadow_origin);
     const float shadow_distance = length3(shadow_displacement);
     if (!(shadow_distance > params.scene_epsilon * 2.0f)) {
@@ -1994,8 +2103,9 @@ static __forceinline__ __device__ float3 sample_finite_direct_light(
     const float3 emission_coefficient =
         mul(flame_source(light, axial), sigma);
     const float3 contribution =
-        mul(mul(mul(bsdf, emission_coefficient), surface_transmittance),
-            no_l * support_volume /
+        mul(mul(mul(evaluation.f_cos, emission_coefficient),
+                    surface_transmittance),
+            support_volume /
                 (selection_pdf * distance2));
     if (count_rough_water && max_component(contribution) > 0.0f) {
       ++water_counters.rough_nee_contributions;
@@ -2034,17 +2144,9 @@ static __forceinline__ __device__ float3 sample_finite_direct_light(
   if (!sample_sphere_solid_angle) {
     wi = divv(displacement, distance);
   }
-  const float signed_no_l = dot3(hit.normal, wi);
-  bool transmitted_connection = signed_no_l < 0.0f;
-  if (is_rough_dielectric(material) &&
-      !rough_macro_sides_agree(
-          hit.normal, hit.geometric_normal, wi,
-          transmitted_connection)) {
-    return f3(0.0f, 0.0f, 0.0f);
-  }
-  const float no_l = is_rough_dielectric(material)
-      ? fabsf(signed_no_l) : signed_no_l;
-  if (no_l <= 0.0f) {
+  bool transmitted_connection = false;
+  if (!classify_geometric_event(
+          hit.geometric_normal, wo, wi, transmitted_connection)) {
     return f3(0.0f, 0.0f, 0.0f);
   }
   float cos_light = dot3(light_normal, neg(wi));
@@ -2062,19 +2164,14 @@ static __forceinline__ __device__ float3 sample_finite_direct_light(
   if (sample_sphere_solid_angle) {
     light_pdf = selection_pdf * sphere_solid_angle_pdf;
   }
-  float3 bsdf;
-  float bsdf_pdf;
-  evaluate_bsdf(material, base_color, hit.normal, wo, wi,
-                eta_i, eta_t, bsdf, bsdf_pdf);
-  if (bsdf_pdf <= 0.0f) {
+  const BsdfEvaluation evaluation = evaluate_bsdf(
+      material, base_color, hit.normal, hit.geometric_normal, wo, wi,
+      eta_i, eta_t);
+  if (!(max_component(evaluation.f_cos) > 0.0f)) {
     return f3(0.0f, 0.0f, 0.0f);
   }
-  const float3 offset_normal = is_rough_dielectric(material)
-      ? hit.geometric_normal : hit.normal;
-  const float side = transmitted_connection ? -1.0f : 1.0f;
-  const float3 shadow_origin =
-      add(hit.position,
-          mul(offset_normal, side * params.scene_epsilon * 2.0f));
+  const float3 shadow_origin = offset_ray_origin(
+      hit.position, hit.geometric_normal, wi);
   const float3 shadow_displacement = sub(light_point, shadow_origin);
   const float shadow_distance = length3(shadow_displacement);
   if (shadow_distance <= params.scene_epsilon * 2.0f) {
@@ -2101,15 +2198,16 @@ static __forceinline__ __device__ float3 sample_finite_direct_light(
       is_water_finite_light_mode(light_mode) &&
       light.geometry_index >= 0 && next_bsdf_ray_exists;
   const float mis = water_bsdf_competes
-      ? balance_heuristic(light_pdf, bsdf_pdf)
+      ? balance_heuristic(light_pdf, evaluation.pdf)
       : direct_light_mis_weight(
-            light_pdf, bsdf_pdf,
+            light_pdf, evaluation.pdf,
             !is_water_finite_light_mode(light_mode) &&
                 light.geometry_index >= 0,
             next_bsdf_ray_exists);
   const float3 contribution =
-      mul(mul(mul(bsdf, light.emission), surface_transmittance),
-          no_l * mis / light_pdf);
+      mul(mul(mul(evaluation.f_cos, light.emission),
+                  surface_transmittance),
+          mis / light_pdf);
   if (count_rough_water && max_component(contribution) > 0.0f) {
     ++water_counters.rough_nee_contributions;
   }
@@ -2172,34 +2270,22 @@ static __forceinline__ __device__ void accumulate_delta_direct_lights(
       wi = normalize3(light.axis);
     }
 
-    const float signed_no_l = dot3(hit.normal, wi);
-    bool transmitted_connection = signed_no_l < 0.0f;
-    if (is_rough_dielectric(material) &&
-        !rough_macro_sides_agree(
-            hit.normal, hit.geometric_normal, wi,
-            transmitted_connection)) {
+    bool transmitted_connection = false;
+    if (!classify_geometric_event(
+            hit.geometric_normal, wo, wi, transmitted_connection)) {
       continue;
     }
-    const float no_l = is_rough_dielectric(material)
-        ? fabsf(signed_no_l) : signed_no_l;
-    if (!(no_l > 0.0f)) continue;
+    const BsdfEvaluation evaluation = evaluate_bsdf(
+        material, base_color, hit.normal, hit.geometric_normal, wo, wi,
+        eta_i, eta_t);
+    if (!(max_component(evaluation.f_cos) > 0.0f)) continue;
 
-    float3 bsdf;
-    float bsdf_pdf;
-    evaluate_bsdf(material, base_color, hit.normal, wo, wi,
-                  eta_i, eta_t, bsdf, bsdf_pdf);
-    if (!(bsdf_pdf > 0.0f)) continue;
-
-    const float3 offset_normal = is_rough_dielectric(material)
-        ? hit.geometric_normal : hit.normal;
-    const float side = transmitted_connection ? -1.0f : 1.0f;
     const float offset_distance = is_point
         ? fminf(params.scene_epsilon * 2.0f,
                 radiometric_distance * 0.25f)
         : params.scene_epsilon * 2.0f;
-    const float3 shadow_origin = add(
-        hit.position,
-        mul(offset_normal, side * offset_distance));
+    const float3 shadow_origin = offset_ray_origin(
+        hit.position, hit.geometric_normal, wi, offset_distance);
     float3 shadow_direction = wi;
     if (is_point) {
       const float3 shadow_displacement = sub(light.p0, shadow_origin);
@@ -2240,8 +2326,8 @@ static __forceinline__ __device__ void accumulate_delta_direct_lights(
     const float attenuation =
         is_point ? 1.0f / radiometric_distance2 : 1.0f;
     const float3 contribution = mul(
-        mul(mul(bsdf, light.emission), surface_transmittance),
-        no_l * attenuation);
+        mul(mul(evaluation.f_cos, light.emission), surface_transmittance),
+        attenuation);
     if (count_rough_water && max_component(contribution) > 0.0f) {
       ++water_counters.rough_nee_contributions;
     }
@@ -2438,29 +2524,20 @@ static __forceinline__ __device__ float3 sample_environment_direct_light(
   const float3 wi =
       sample_environment_direction(rng.next_cdf(), rng.next_cdf(), light_pdf);
   if (!(light_pdf > 0.0f)) return f3(0.0f, 0.0f, 0.0f);
-  const float signed_no_l = dot3(hit.normal, wi);
-  bool transmitted_connection = signed_no_l < 0.0f;
-  if (is_rough_dielectric(material) &&
-      !rough_macro_sides_agree(
-          hit.normal, hit.geometric_normal, wi,
-          transmitted_connection)) {
+  bool transmitted_connection = false;
+  if (!classify_geometric_event(
+          hit.geometric_normal, wo, wi, transmitted_connection)) {
     return f3(0.0f, 0.0f, 0.0f);
   }
-  const float no_l = is_rough_dielectric(material)
-      ? fabsf(signed_no_l) : signed_no_l;
-  if (!(no_l > 0.0f)) return f3(0.0f, 0.0f, 0.0f);
-  float3 bsdf;
-  float bsdf_pdf;
-  evaluate_bsdf(material, base_color, hit.normal, wo, wi,
-                eta_i, eta_t, bsdf, bsdf_pdf);
-  if (!(bsdf_pdf > 0.0f)) return f3(0.0f, 0.0f, 0.0f);
+  const BsdfEvaluation evaluation = evaluate_bsdf(
+      material, base_color, hit.normal, hit.geometric_normal, wo, wi,
+      eta_i, eta_t);
+  if (!(max_component(evaluation.f_cos) > 0.0f)) {
+    return f3(0.0f, 0.0f, 0.0f);
+  }
 
-  const float3 offset_normal = is_rough_dielectric(material)
-      ? hit.geometric_normal : hit.normal;
-  const float side = transmitted_connection ? -1.0f : 1.0f;
-  const float3 shadow_origin =
-      add(hit.position,
-          mul(offset_normal, side * params.scene_epsilon * 2.0f));
+  const float3 shadow_origin = offset_ray_origin(
+      hit.position, hit.geometric_normal, wi);
   const float3 surface_transmittance = direct_segment_transmittance(
       hit, material, shadow_origin, wi, kInfinity, -1,
       transmitted_connection, media,
@@ -2473,11 +2550,11 @@ static __forceinline__ __device__ float3 sample_environment_direct_light(
     return f3(0.0f, 0.0f, 0.0f);
   }
   const float mis = direct_light_mis_weight(
-      light_pdf, bsdf_pdf, true, next_bsdf_ray_exists);
+      light_pdf, evaluation.pdf, true, next_bsdf_ray_exists);
   const float3 contribution =
-      mul(mul(mul(bsdf, environment_radiance(wi)),
+      mul(mul(mul(evaluation.f_cos, environment_radiance(wi)),
                   surface_transmittance),
-          no_l * mis / light_pdf);
+          mis / light_pdf);
   if (count_rough_water && max_component(contribution) > 0.0f) {
     ++water_counters.rough_nee_contributions;
   }
@@ -2676,7 +2753,8 @@ extern "C" __global__ void __raygen__pathtrace() {
             ? &params.firefly_counters->direct_clamped_contributions
             : &params.firefly_counters->indirect_clamped_contributions;
       }
-      const SurfaceHit hit = trace_radiance(ray_origin, ray_direction, traced_rays);
+      const SurfaceHit hit = trace_radiance(
+          ray_origin, ray_direction, traced_rays);
       if (params.water_surface_count != 0u && hit.hit != 0) {
         infer_base_water_incident_medium(hit, media);
       }
@@ -2723,12 +2801,19 @@ extern "C" __global__ void __raygen__pathtrace() {
       }
       const MaterialData material = params.materials[hit.material_index];
       const float3 base_color = material_color(material, hit.uv);
+      const float3 wo = neg(ray_direction);
       if (guide_written == 0) {
         albedo_sum = add(albedo_sum, base_color);
+        const bool smooth_dielectric =
+            (material.type == spectraldock::kMaterialDielectric ||
+             material.type == spectraldock::kMaterialWater) &&
+            material.roughness <= 0.0f;
+        const float3 guide_normal = smooth_dielectric
+            ? hit.geometric_normal : hit.normal;
         const float3 camera_normal =
-            f3(dot3(hit.normal, params.camera.u),
-               dot3(hit.normal, params.camera.v),
-               dot3(hit.normal, params.camera.w));
+            f3(dot3(guide_normal, params.camera.u),
+               dot3(guide_normal, params.camera.v),
+               dot3(guide_normal, params.camera.w));
         normal_sum = add(normal_sum, camera_normal);
         guide_written = 1;
       }
@@ -2763,7 +2848,6 @@ extern "C" __global__ void __raygen__pathtrace() {
         break;
       }
 
-      const float3 wo = neg(ray_direction);
       const bool next_bsdf_ray_exists = bounce + 1u < params.max_depth;
       const FiniteLightMode current_light_mode =
           finite_light_mode(material, media);
@@ -2845,12 +2929,12 @@ extern "C" __global__ void __raygen__pathtrace() {
                             &media, water_counters, eta_i, eta_t);
         const float eta = eta_i / eta_t;
         const float cos_theta =
-            fminf(fmaxf(dot3(wo, hit.normal), 0.0f), 1.0f);
+            fminf(fmaxf(dot3(wo, hit.geometric_normal), 0.0f), 1.0f);
         float cos_transmitted = 0.0f;
         const float reflectance = dielectric_fresnel(
             cos_theta, eta_i, eta_t, &cos_transmitted);
         const float3 reflected = normalize3(
-            reflect3(neg(wo), hit.normal));
+            reflect3(neg(wo), hit.geometric_normal));
         if (!(reflectance < 1.0f)) {
           throughput = clamp_nonnegative(mul(throughput, base_color));
           if (!(max_component(throughput) > 0.0f)) break;
@@ -2858,17 +2942,16 @@ extern "C" __global__ void __raygen__pathtrace() {
           previous_delta = 1;
           previous_light_mode = current_light_mode;
           previous_position = hit.position;
-          ray_origin = add(
-              hit.position,
-              mul(hit.normal, params.scene_epsilon * 2.0f));
+          ray_origin = offset_ray_origin(
+              hit.position, hit.geometric_normal, reflected);
           ray_direction = reflected;
           continue;
         }
 
         const float3 perpendicular =
-            mul(add(neg(wo), mul(hit.normal, cos_theta)), eta);
+            mul(add(neg(wo), mul(hit.geometric_normal, cos_theta)), eta);
         const float3 transmitted = normalize3(add(
-            perpendicular, mul(hit.normal, -cos_transmitted)));
+            perpendicular, mul(hit.geometric_normal, -cos_transmitted)));
 
         Pcg32 reflected_rng = rng;
         fork_rng(reflected_rng,
@@ -2878,9 +2961,8 @@ extern "C" __global__ void __raygen__pathtrace() {
                  0x7472616eu ^ bounce ^
                      static_cast<unsigned int>(hit.material_index));
         pending_path = 1;
-        pending_origin = add(
-            hit.position,
-            mul(hit.normal, params.scene_epsilon * 2.0f));
+        pending_origin = offset_ray_origin(
+            hit.position, hit.geometric_normal, reflected);
         pending_direction = reflected;
         pending_throughput = clamp_nonnegative(
             mul(mul(throughput, base_color), reflectance));
@@ -2901,9 +2983,8 @@ extern "C" __global__ void __raygen__pathtrace() {
         previous_delta = 1;
         previous_light_mode = current_light_mode;
         previous_position = hit.position;
-        ray_origin = add(
-            hit.position,
-            mul(hit.normal, -params.scene_epsilon * 2.0f));
+        ray_origin = offset_ray_origin(
+            hit.position, hit.geometric_normal, transmitted);
         ray_direction = transmitted;
         if (!update_medium_after_transmission(
                 media, hit.material_index, material, hit.front_face,
@@ -2943,13 +3024,8 @@ extern "C" __global__ void __raygen__pathtrace() {
         }
         throughput = mul(throughput, continuation.throughput_scale);
       }
-      const float3 offset_normal = is_rough_dielectric(material)
-          ? hit.geometric_normal : hit.normal;
-      const float side =
-          dot3(scatter.wi, offset_normal) >= 0.0f ? 1.0f : -1.0f;
-      ray_origin =
-          add(hit.position, mul(offset_normal,
-                                side * params.scene_epsilon * 2.0f));
+      ray_origin = offset_ray_origin(
+          hit.position, hit.geometric_normal, scatter.wi);
       ray_direction = scatter.wi;
       }
       if (pending_path == 0) break;
@@ -3021,8 +3097,14 @@ extern "C" __global__ void __closesthit__radiance() {
       object_shading_normal(*record, object_point);
   const float3 world_outward = normalize3(
       optixTransformNormalFromObjectToWorldSpace(object_geometric));
-  float3 world_shading = normalize3(
-      optixTransformNormalFromObjectToWorldSpace(object_shading));
+  const float3 transformed_shading =
+      optixTransformNormalFromObjectToWorldSpace(object_shading);
+  const float transformed_shading_length2 = length2(transformed_shading);
+  float3 world_shading =
+      transformed_shading_length2 > 1.0e-20f &&
+              isfinite(transformed_shading_length2)
+          ? mul(transformed_shading, rsqrtf(transformed_shading_length2))
+          : world_outward;
   if (dot3(world_shading, world_outward) < 0.0f)
     world_shading = neg(world_shading);
   const bool front_face =
@@ -3035,7 +3117,10 @@ extern "C" __global__ void __closesthit__radiance() {
   hit->distance = t;
   hit->position = world_point;
   hit->geometric_normal = front_face ? world_outward : neg(world_outward);
-  hit->normal = front_face ? world_shading : neg(world_shading);
+  const float3 oriented_shading =
+      front_face ? world_shading : neg(world_shading);
+  hit->normal = effective_shading_normal(
+      oriented_shading, hit->geometric_normal, neg(world_direction));
   hit->uv = geometry_uv(*record, object_point);
 }
 

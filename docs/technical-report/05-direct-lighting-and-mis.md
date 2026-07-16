@@ -119,11 +119,11 @@ $$
 V(\mathbf x,\mathbf y)
 \,\mathbf L_e(\mathbf y\rightarrow\mathbf x)
 \odot f_s(\mathbf x,\boldsymbol\omega_i,\boldsymbol\omega_o)
-\,c_s(\mathbf n,\boldsymbol\omega_i)\,w_L
+\,c_s(\mathbf n_s^{\mathrm{eff}},\boldsymbol\omega_i)\,w_L
 }{p_L(\boldsymbol\omega_i)}.
 $$
 
-对 Lambert/metal，$c_s=\max(0,\mathbf n\cdot\boldsymbol\omega_i)$；粗糙介电质允许透射到法线另一侧，所以 $c_s=|\mathbf n\cdot\boldsymbol\omega_i|$。BSDF 自身再按方向符号选择反射或透射公式。
+对所有连续表面散射，实现按 PBRT 风格使用 $c_s=|\mathbf n_s^{\mathrm{eff}}\!\cdot\boldsymbol\omega_i|$，并把 $f_s c_s$ 一起保存为 `f_cos`。定向几何法线 $\mathbf n_g$ 独立决定这条连接是真实反射还是透射：Lambert/metal 不允许穿过几何背面，粗糙介电则按 $\mathbf n_g$ 选反射或透射公式。因此一个物理上有效、但位于着色法线负半球的灯方向仍可有有限 `f_cos`；它的 BSDF 方向 PDF 可以是零，此时灯采样策略自然获得完整 MIS 权重。
 
 一个公式同时解释了几个常见现象：
 
@@ -132,9 +132,9 @@ $$
 - $r^2$ 出现在 PDF 分母的倒数中，自然产生距离平方衰减；
 - 普通顶点只选一盏有限灯；粗糙 water 各取一份 $q_G$ 与 $q_U$ 样本，并在分母中用 $q_G+q_U$ 补偿。
 
-可见性始终是二值的：从当前顶点完成一次 BSDF 散射后，连接线上任何后续有效表面——包括 dielectric 或 water——都把 $V$ 置零；alpha cutoff 裁掉的纹素仍不遮挡。粗糙介电 NEE 可以在**当前界面**连接反射侧或透射侧的灯：透射连接把起点偏移到另一侧，并在介质栈副本中切换一次当前边界，再沿同介质段乘 RGB Beer 衰减。它不会让一条未弯折 shadow ray 穿过下一层透明界面。完整介质语义见[第 12 章第 6 节](12-runtime-analytic-water.md#6-粗糙水面的-nee只连接当前散射事件)。
+可见性始终是二值的：从当前顶点完成一次 BSDF 散射后，连接线上任何后续有效表面——包括 dielectric 或 water——都把 $V$ 置零；alpha cutoff 裁掉的纹素仍不遮挡。粗糙介电 NEE 可以在**当前界面**连接反射侧或透射侧的灯：侧别由 $\mathbf n_g\cdot\boldsymbol\omega_i$ 决定，透射连接把起点沿 $-\mathbf n_g$ 偏移到另一侧，并在介质栈副本中切换一次当前边界，再沿同介质段乘 RGB Beer 衰减。它不会让一条未弯折 shadow ray 穿过下一层透明界面。完整介质语义见[第 12 章第 6 节](12-runtime-analytic-water.md#6-粗糙水面的-nee只连接当前散射事件)。
 
-直接光函数的末尾把公式各项接在一起：先从表面沿法线偏移起点，再向灯点发有限阴影射线；不可见时贡献为零。可见时返回值依次相乘 $f_s$、$L_e$、$\cos\theta$ 与策略权重，最后除以 $p_L$。普通有限灯与 BSDF-hit 使用 power heuristic；粗糙 water 的两份灯样本与 BSDF-hit 使用第 4 节的三技术 balance。
+直接光函数的末尾把公式各项接在一起：所有表面都先沿定向 $\mathbf n_g$ 的出射一侧偏移起点，再向灯点发有限阴影射线；不可见时贡献为零。可见时返回值依次相乘 `f_cos`、$L_e$ 与策略权重，最后除以 $p_L$。普通有限灯与 BSDF-hit 使用 power heuristic；粗糙 water 的两份灯样本与 BSDF-hit 使用第 4 节的三技术 balance。
 
 <!-- source-snippet id="direct-light-visibility-and-estimator" path="src/device_programs.cu" anchor="const float3 contribution =" -->
 ```cpp
@@ -146,15 +146,16 @@ $$
       is_water_finite_light_mode(light_mode) &&
       light.geometry_index >= 0 && next_bsdf_ray_exists;
   const float mis = water_bsdf_competes
-      ? balance_heuristic(light_pdf, bsdf_pdf)
+      ? balance_heuristic(light_pdf, evaluation.pdf)
       : direct_light_mis_weight(
-            light_pdf, bsdf_pdf,
+            light_pdf, evaluation.pdf,
             !is_water_finite_light_mode(light_mode) &&
                 light.geometry_index >= 0,
             next_bsdf_ray_exists);
   const float3 contribution =
-      mul(mul(mul(bsdf, light.emission), surface_transmittance),
-          no_l * mis / light_pdf);
+      mul(mul(mul(evaluation.f_cos, light.emission),
+                  surface_transmittance),
+          mis / light_pdf);
   if (count_rough_water && max_component(contribution) > 0.0f) {
     ++water_counters.rough_nee_contributions;
   }
@@ -321,9 +322,9 @@ $$
       is_water_finite_light_mode(light_mode) &&
       light.geometry_index >= 0 && next_bsdf_ray_exists;
   const float mis = water_bsdf_competes
-      ? balance_heuristic(light_pdf, bsdf_pdf)
+      ? balance_heuristic(light_pdf, evaluation.pdf)
       : direct_light_mis_weight(
-            light_pdf, bsdf_pdf,
+            light_pdf, evaluation.pdf,
             !is_water_finite_light_mode(light_mode) &&
                 light.geometry_index >= 0,
             next_bsdf_ray_exists);

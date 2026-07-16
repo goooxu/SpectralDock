@@ -178,8 +178,9 @@ $$
     const float3 emission_coefficient =
         mul(flame_source(light, axial), sigma);
     const float3 contribution =
-        mul(mul(mul(bsdf, emission_coefficient), surface_transmittance),
-            no_l * support_volume /
+        mul(mul(mul(evaluation.f_cos, emission_coefficient),
+                    surface_transmittance),
+            support_volume /
                 (selection_pdf * distance2));
 ```
 
