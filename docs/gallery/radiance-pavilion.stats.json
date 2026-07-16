@@ -23,14 +23,14 @@
     "clamp_indirect": 16.0
   },
   "timings_ms": {
-    "bvh_build": 5.849055767059326,
-    "render": 2752.326416015625,
-    "denoise": 13.52569580078125,
-    "total": 3184.918503
+    "bvh_build": 6.020991802215576,
+    "render": 2687.8125,
+    "denoise": 15.302847862243652,
+    "total": 2998.371673
   },
   "memory": {
     "peak_device_bytes": 1908736000,
-    "peak_tracked_device_bytes": 565425728
+    "peak_tracked_device_bytes": 565733772
   },
   "geometry": {
     "objects": 38,
@@ -40,8 +40,8 @@
     "gas_count": 38
   },
   "performance": {
-    "traced_rays": 2440153048,
-    "rays_per_second": 886578362.8718212
+    "traced_rays": 2440153756,
+    "rays_per_second": 907858623.3228694
   },
   "firefly": {
     "direct_clamped_contributions": 3000460,

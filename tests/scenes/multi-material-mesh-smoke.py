@@ -3,13 +3,42 @@
 
 from pathlib import Path
 
+from PIL import Image
+
 from spectraldock import Renderer
 
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def _write_screen_fixture() -> Path:
+    """Create a deterministic dark, saturated sRGB screen pattern."""
+    output_dir = ROOT / "output/tests"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    path = output_dir / "multi-material-srgb-fixture.png"
+
+    size = 16
+    pixels = []
+    for y in range(size):
+        for x in range(size):
+            if x in (2, 7, 13):
+                color = (3, 96, 132)
+            elif y in (3, 10) or (x + y) % 11 == 0:
+                color = (128, 3, 78)
+            elif (x // 4 + y // 4) % 5 == 0:
+                color = (104, 35, 3)
+            else:
+                shade = 4 + ((5 * x + 3 * y) % 7)
+                color = (shade, shade + 2, shade + 5)
+            pixels.append(color)
+    image = Image.new("RGB", (size, size))
+    image.putdata(pixels)
+    image.save(path)
+    return path
+
+
 def create_renderer() -> Renderer:
+    screen_path = _write_screen_fixture()
     renderer = Renderer()
     renderer.integrator(
         direct_light_sampling="importance", clamp_direct=0.0, clamp_indirect=0.0
@@ -27,7 +56,7 @@ def create_renderer() -> Renderer:
     screen_texture = renderer.texture(
         name="screen_texture",
         type="image",
-        path=ROOT / "assets/examples/textures/circuit-panel.png",
+        path=screen_path,
         color_space="srgb",
     )
     red = renderer.material(

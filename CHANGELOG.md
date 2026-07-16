@@ -29,6 +29,8 @@ commit 列表仍以 Git 历史为准。发布新版本时，应把 `Unreleased` 
   12.8/PhysX 5.8 worker 保持进程隔离。
 - Radiance Pavilion 改为 capsule mascot 与 Sparky 并列的双主角展台，同时
   保持 HDR 环境贴图是唯一光源。
+- Neon Koi 改为纯几何霓虹装置：用锦鲤线稿、电路折线和 PBR
+  墙板替代原有图像纹理，保留湿地反射、彩色间接光与景深。
 - OBJ 导入器会丢弃 corner 解析到完全重复 position 的零面积导出器残留，
   但仍拒绝三点不同的共线退化面；Sparky 源面与可渲染面统计分别锁定。
 - Python API 收敛到单一规范写法：相机使用 `vfov`，mesh 使用平铺变换，
@@ -59,6 +61,8 @@ commit 列表仍以 Git 历史为准。发布新版本时，应把 `Unreleased` 
   `alpha_texture`/`alpha_cutoff`。同时删除独立 sanitizer 矩阵、Moonlit
   time-to-error、Radiance Pavilion 场景级 A/B 和粗糙介电 8192 spp full
   profile 等高成本维护流程。
+- 移除 `koi-mask.png` 与 `circuit-panel.png` 两张生成式示例纹理及其
+  来源记录；纹理 smoke 改用测试运行时构造的小型确定性 fixture。
 
 ## [0.1.0] - 2026-07-15
 

@@ -1,6 +1,6 @@
 CC0 1.0 Universal
 
-The following twenty assets, and only these assets, are dedicated under
+The following eighteen assets, and only these assets, are dedicated under
 Creative Commons CC0 1.0 Universal:
 
 - assets/examples/models/capsule-mascot.obj
@@ -9,8 +9,6 @@ Creative Commons CC0 1.0 Universal:
 - assets/examples/models/sparky/sparky_albedo.png
 - assets/examples/model-manifest.json
 - assets/examples/environments/radiance-pavilion.hdr
-- assets/examples/textures/circuit-panel.png
-- assets/examples/textures/koi-mask.png
 - assets/examples/textures/planet-azure.png
 - assets/examples/textures/planet-ember.png
 - docs/gallery/benchmark-harbor.png

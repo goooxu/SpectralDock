@@ -11,13 +11,13 @@
 | 场景 | BVH build (ms) | Path trace (ms) | Denoise (ms) | Total (ms) | Traced rays | G rays/s | Observed peak (MiB) | Tracked peak (MiB) |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | material-cathedral | 3.034 | 6,237.360 | 16.234 | 6,577.212 | 5,696,721,189 | 0.913 | 1,774.3 | 494.3 |
-| neon-koi | 2.856 | 3,114.284 | 11.513 | 9,317.566 | 4,844,789,609 | 1.556 | 1,786.3 | 506.3 |
-| celestial-archive | 2.744 | 2,115.082 | 11.435 | 8,239.103 | 3,368,104,545 | 1.592 | 1,790.3 | 506.3 |
+| neon-koi | 12.695 | 5,353.791 | 16.996 | 5,721.009 | 4,727,050,301 | 0.883 | 1,774.3 | 494.5 |
+| celestial-archive | 2.577 | 3,710.213 | 16.409 | 4,092.125 | 3,368,104,543 | 0.908 | 1,790.3 | 506.3 |
 | reflector-laboratory | 2.769 | 3,241.696 | 11.627 | 9,354.175 | 4,471,049,788 | 1.379 | 1,774.3 | 494.3 |
 | benchmark-harbor | 160.853 | 752.120 | 11.835 | 7,028.149 | 1,584,200,149 | 2.106 | 1,776.3 | 496.2 |
 | ember-forge | 12.265 | 29,789.141 | 0.000 | 35,893.152 | 23,740,617,759 | 0.797 | 1,468.3 | 190.6 |
 | moonlit-stepwell | 6.722 | 6,628.836 | 11.920 | 12,742.227 | 4,250,011,154 | 0.641 | 1,902.3 | 621.0 |
-| radiance-pavilion | 5.849 | 2,752.326 | 13.526 | 3,184.919 | 2,440,153,048 | 0.887 | 1,820.3 | 539.2 |
+| radiance-pavilion | 6.021 | 2,687.813 | 15.303 | 2,998.372 | 2,440,153,756 | 0.908 | 1,820.3 | 539.5 |
 
 `Path trace` 对应统计 JSON 的 `timings_ms.render`，只计一次 `optixLaunch`。`Total` 在 `render_optix()` 完成参数与像素数检查后开始，到返回前结束，包含 CUDA/OptiX 初始化、纹理解码与上传、BVH、追踪、可选降噪、后处理、设备到主机回传和设备信息查询；不含此前的 Python SceneBuilder 构造与 OBJ 解析、之后的 PNG/stats 写盘及函数局部 RAII 资源析构，因此不等于前三项简单相加。显存按 1 MiB = 1,048,576 bytes 换算。
 
@@ -26,13 +26,17 @@
 | 场景 | Objects | Instances | Unique meshes | Unique mesh triangles | GAS |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | material-cathedral | 15 | 15 | 1 | 5,816 | 13 |
-| neon-koi | 9 | 9 | 1 | 5,816 | 9 |
+| neon-koi | 75 | 75 | 1 | 5,816 | 75 |
 | celestial-archive | 9 | 9 | 1 | 5,816 | 9 |
 | reflector-laboratory | 10 | 10 | 1 | 5,816 | 10 |
 | benchmark-harbor | 1,040 | 1,040 | 1 | 5,816 | 1,025 |
 | ember-forge | 87 | 87 | 1 | 5,816 | 87 |
 | moonlit-stepwell | 36 | 36 | 1 | 5,816 | 36 |
 | radiance-pavilion | 38 | 38 | 2 | 12,204 | 38 |
+
+Neon Koi 的两条锦鲤线稿由 44 个面向相机的细长 rectangle 构成，
+背景电路再使用 20 个折线段；加上墙板、房间表面、两条侧边发光条和
+mascot 实例，合计 75 个 object/instance/GAS。场景不再加载图像纹理。
 
 Harbor 的 16 个胶囊吉祥物共享一份 mascot GAS，另有 1,024 个 sphere GAS；`mesh_triangles` 不按实例数重复计数。
 Ember Forge 的三段 flame 不注册为几何，因此不增加 object、instance、GAS 或 SBT 数量；87 个几何对象来自砖砌锻炉、烟罩、铁砧、胶囊铁匠与锤子、工具墙、风箱、淬火桶、钢材和工坊结构。其密度求值、真实碰撞和体积选灯次数由独立 volume stats 记录。当前正式 stats 记录 27,243,478,786 次密度求值、728,682,772 次真实体积碰撞和 15,403,178,792 次 flame NEE 选灯；majorant violation 与 tracking overflow 均为 0。场景使用纯黑 constant background，不含 emitter、面积灯或隐藏补光，全部可见照明只来自三段 flame。体积求值是 raygen 中的纯 CUDA 工作，不计入 `traced_rays`，所以该场景的 rays/s 不应与纯表面场景直接比较。
@@ -104,7 +108,7 @@ rotating、四个水平象限全部占用、0 个 sleeping dynamic actors，且
 
 ## 定向 GPU fixture
 
-综合 GPU fixture 使用 64×64、1 spp、depth 6、seed 1 和无降噪输出，覆盖带 UV/平滑法线/alpha 的 mesh、两个共享 GAS 且使用不同变换/材质的实例，以及 custom primitives。其 RTX 5090 SHA-256 为 `8b287db4976f07f6dc401e8fe67c3cd8f678e900c274eec2286e03d2e06fd965`；`acceptance.sh` 在 Release smoke 后调用 `check_mesh_smoke.py` 验证它。
+综合 GPU fixture 使用 64×64、1 spp、depth 6、seed 1 和无降噪输出，覆盖带 UV/平滑法线/alpha 的 mesh、两个共享 GAS 且使用不同变换/材质的实例，以及 custom primitives。其 RTX 5090 SHA-256 为 `43650d358dac4202a3fdf2761d715a39d72bcfd610a80f96b9e97fa033fca28f`；`acceptance.sh` 在 Release smoke 后调用 `check_mesh_smoke.py` 验证它。
 
 多材质 mesh fixture 使用 64×64、1 spp、depth 4、seed 211 和无降噪输出，
 把同一份六三角形 OBJ 的 `RedPanel`、`ScreenPanel`、`MetalPanel` 显式绑定

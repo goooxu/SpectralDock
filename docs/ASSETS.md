@@ -5,11 +5,11 @@
 | 范围 | 许可证 |
 | --- | --- |
 | 代码、脚本、Python 场景程序、C++ worker、文档、SVG、测试 fixture、图像与 Sparky manifest、gallery stats 与物理 sidecar | Apache-2.0 |
-| capsule mascot、Sparky OBJ/MTL/albedo、`model-manifest.json`、四张 imagegen PNG、程序化 HDR 环境和正式 gallery PNG | CC0-1.0 |
+| capsule mascot、Sparky OBJ/MTL/albedo、`model-manifest.json`、两张 imagegen PNG、程序化 HDR 环境和正式 gallery PNG | CC0-1.0 |
 | third_party/tinyobjloader 下的 vendored 文件 | MIT |
 | third_party/mikktspace 下 vendored 的 `mikktspace.c`/`.h` | zlib-style license |
 
-CC0 只覆盖 assets/examples/models/CC0-1.0.txt 逐项列出的二十个文件。
+CC0 只覆盖 assets/examples/models/CC0-1.0.txt 逐项列出的十八个文件。
 tools/generate_mascot.py、tools/generate_hdr_environment.py、
 scenes/kinetic-foundry.py、scenes/lava-temple-oracle.py、
 python/spectraldock/physics.py 与 tools/physx_worker.cpp 均为 Apache-2.0，
@@ -39,27 +39,19 @@ vendored 第三方源码，不适用仓库级 Apache-2.0；两个文件顶部保
 | --- | --- | --- |
 | `planet-azure.png` | 1774×887 RGB | `813e73e7b89e28098d7926093268365037fd97bc68ff91f108aad1a4099096a3` |
 | `planet-ember.png` | 1774×887 RGB | `14cb336904b10e18758aa1923ad786a2651e326e4f92dd116fd689675d1d5d52` |
-| `koi-mask.png` | 1024×1536 RGBA | `fd4376986b5622043fdb63386bc02450f9ec162d7f4517ebb154e45e3052bf60` |
-| `circuit-panel.png` | 1536×1024 RGB | `9361c04d5fab6098676cee2f65efb8d222246ddba0b1828a7ab4088f9f05f0be` |
 | `models/sparky/sparky_albedo.png` | 1024×1024 RGBA（全不透明） | `e0c5f6b728a53d3cfbc1ef6f29bd55417170d5f02c53305a7a4b1a9f931e22f0` |
 | `environments/radiance-pavilion.hdr` | 2048×1024 Radiance RGBE，modern RLE | `33b6e651abbacbf7458aac0c2610f96705a763251a1699e5548615ca36dbf6d7` |
 
-上述四张 PNG 为本项目通过 AI 图像生成工作流生成，按现状提供，不保证
+上述两张星球 PNG 为本项目通过 AI 图像生成工作流生成，按现状提供，不保证
 唯一性或排他性；仅在贡献者拥有相关权利的范围内作 CC0 dedication。
 两张星球图先把经度边界滚动到中央，由 imagegen 修复中央接缝，再滚回
-并令首末像素列严格相同；锦鲤先生成在平坦绿幕上，再生成透明 PNG。
-仓库不收录原始生成图和处理中间图；prompt、尺寸、处理步骤及
-SHA-256 均保留在图像素材清单中。
+并令首末像素列严格相同。仓库不收录原始生成图和处理中间图；prompt、
+尺寸、处理步骤及 SHA-256 均保留在图像素材清单中。
 
 `sparky_albedo.png` 是项目所有者直接贡献的原创 Sparky 资产组成部分，
 不是上述 imagegen 工作流的输出。它与同目录 OBJ、MTL 一起按 CC0-1.0
 提供；其来源声明、精确字节数和摘要记录在独立 Sparky manifest 中。该
-`manifest.json` 是 Apache-2.0 文档 sidecar，不计入二十项 CC0 文件。
-
-只有 circuit-panel.png 保留内嵌 caBX/JUMBF C2PA 结构，其中标识
-OpenAI Media Service；仓库保留该结构，但不验证其密码学有效性。另外
-三张后处理纹理不含 C2PA。manifest.md 是普通的未签名
-sidecar，不应解释为签名来源声明。
+`manifest.json` 是 Apache-2.0 文档 sidecar，不计入十八项 CC0 文件。
 
 `radiance-pavilion.hdr` 不是 AI 生成图。它由 Python 标准库生成器按固定
 球面解析公式构造冷色天顶、暖色分层云、低角度金色夕阳、暗青海面、太阳
@@ -94,8 +86,8 @@ handle，逐三角形材质索引仍由一份共享 mesh GAS 使用。
 ## Gallery
 
 docs/gallery 下十张 PNG 按 CC0-1.0 提供；同名 *.stats.json 是正式
-RTX 5090 运行记录，按 Apache-2.0 提供。gallery 图像是渲染器输出，
-不含 C2PA 来源凭据。Kinetic Foundry 与 Lava Temple Oracle 还各带有
+RTX 5090 运行记录，按 Apache-2.0 提供。gallery 图像是渲染器输出。
+Kinetic Foundry 与 Lava Temple Oracle 还各带有
 同 stem 的 `.physics.json`，用于记录 PhysX 版本、设备、模拟参数和刚体
 结果摘要；这些 sidecar 按
 Apache-2.0 提供，不属于 CC0。运行过程不生成中间场景 JSON。

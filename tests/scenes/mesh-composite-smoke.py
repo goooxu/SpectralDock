@@ -3,13 +3,55 @@
 
 from pathlib import Path
 
+from PIL import Image
+
 from spectraldock import Renderer
 
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def _write_fixture_textures() -> tuple[Path, Path]:
+    """Create compact deterministic textures without relying on example assets."""
+    output_dir = ROOT / "output/tests"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    srgb_path = output_dir / "mesh-srgb-fixture.png"
+    size = 16
+    srgb_pixels = []
+    for y in range(size):
+        for x in range(size):
+            if x in (3, 12) or y in (4, 11):
+                color = (4, 112, 148) if (x + y) % 2 else (142, 4, 88)
+            elif (x // 4 + y // 4) % 4 == 0:
+                color = (112, 42, 5)
+            else:
+                shade = 5 + ((3 * x + 5 * y) % 8)
+                color = (shade, shade + 2, shade + 4)
+            srgb_pixels.append(color)
+    srgb_image = Image.new("RGB", (size, size))
+    srgb_image.putdata(srgb_pixels)
+    srgb_image.save(srgb_path)
+
+    alpha_path = output_dir / "mesh-alpha-fixture.png"
+    alpha_pixels = []
+    for y in range(size):
+        for x in range(size):
+            centered_x = abs(2 * x + 1 - size)
+            centered_y = abs(2 * y + 1 - size)
+            inside_diamond = centered_x + centered_y <= size
+            punched_hole = 6 <= x <= 9 and 6 <= y <= 9
+            alpha = 255 if inside_diamond and not punched_hole else 0
+            alpha_pixels.append((255, 255, 255, alpha))
+    alpha_image = Image.new("RGBA", (size, size))
+    alpha_image.putdata(alpha_pixels)
+    alpha_image.save(alpha_path)
+
+    return srgb_path, alpha_path
+
+
 def create_renderer() -> Renderer:
+    srgb_path, alpha_path = _write_fixture_textures()
     renderer = Renderer()
     renderer.integrator(
         direct_light_sampling="uniform", clamp_direct=0.0, clamp_indirect=0.0
@@ -23,19 +65,19 @@ def create_renderer() -> Renderer:
         focus_distance=7.0,
     )
     renderer.background(type="constant", color=(0.01, 0.015, 0.025), exposure=0.0)
-    circuit = renderer.texture(
-        name="circuit",
+    pattern = renderer.texture(
+        name="srgb_pattern",
         type="image",
-        path=ROOT / "assets/examples/textures/circuit-panel.png",
+        path=srgb_path,
         color_space="srgb",
     )
-    koi_alpha = renderer.texture(
-        name="koi_alpha",
+    cutout_alpha = renderer.texture(
+        name="cutout_alpha",
         type="image",
-        path=ROOT / "assets/examples/textures/koi-mask.png",
+        path=alpha_path,
         color_space="linear",
     )
-    textured = renderer.material(name="textured", type="lambertian", texture=circuit)
+    textured = renderer.material(name="textured", type="lambertian", texture=pattern)
     blue_metal = renderer.material(
         name="blue_metal", type="metal", base_color=(0.1, 0.45, 0.9), roughness=0.18
     )
@@ -54,7 +96,7 @@ def create_renderer() -> Renderer:
         rotate_degrees=(0.0, 18.0, 0.0),
         scale=(0.8, 0.8, 0.8),
         material=textured,
-        alpha_texture=koi_alpha,
+        alpha_texture=cutout_alpha,
         alpha_cutoff=0.5,
     )
     renderer.object(

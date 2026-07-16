@@ -1,5 +1,5 @@
 {
-  "scene": "scenes/celestial-archive.json",
+  "scene": "celestial-archive",
   "output": "docs/gallery/celestial-archive.png",
   "hardware": {
     "gpu": "NVIDIA GeForce RTX 5090",
@@ -23,14 +23,14 @@
     "clamp_indirect": 16.0
   },
   "timings_ms": {
-    "bvh_build": 2.744256019592285,
-    "render": 2115.082275390625,
-    "denoise": 11.435135841369629,
-    "total": 8239.102505
+    "bvh_build": 2.5765440464019775,
+    "render": 3710.21337890625,
+    "denoise": 16.40889549255371,
+    "total": 4092.125102
   },
   "memory": {
     "peak_device_bytes": 1877278720,
-    "peak_tracked_device_bytes": 530931396
+    "peak_tracked_device_bytes": 530931768
   },
   "geometry": {
     "objects": 9,
@@ -40,8 +40,8 @@
     "gas_count": 9
   },
   "performance": {
-    "traced_rays": 3368104545,
-    "rays_per_second": 1592422471.7820776
+    "traced_rays": 3368104543,
+    "rays_per_second": 907792679.0272365
   },
   "firefly": {
     "direct_clamped_contributions": 0,

@@ -1,5 +1,5 @@
 {
-  "scene": "scenes/neon-koi.json",
+  "scene": "neon-koi",
   "output": "docs/gallery/neon-koi.png",
   "hardware": {
     "gpu": "NVIDIA GeForce RTX 5090",
@@ -23,29 +23,29 @@
     "clamp_indirect": 16.0
   },
   "timings_ms": {
-    "bvh_build": 2.855520009994507,
-    "render": 3114.2841796875,
-    "denoise": 11.51318359375,
-    "total": 9317.56577
+    "bvh_build": 12.695072174072266,
+    "render": 5353.791015625,
+    "denoise": 16.996063232421875,
+    "total": 5721.00913
   },
   "memory": {
-    "peak_device_bytes": 1873084416,
-    "peak_tracked_device_bytes": 530926120
+    "peak_device_bytes": 1860501504,
+    "peak_tracked_device_bytes": 518472960
   },
   "geometry": {
-    "objects": 9,
-    "instances": 9,
+    "objects": 75,
+    "instances": 75,
     "unique_meshes": 1,
     "mesh_triangles": 5816,
-    "gas_count": 9
+    "gas_count": 75
   },
   "performance": {
-    "traced_rays": 4844789609,
-    "rays_per_second": 1555667154.7829478
+    "traced_rays": 4727050301,
+    "rays_per_second": 882935155.1459775
   },
   "firefly": {
     "direct_clamped_contributions": 199445,
-    "indirect_clamped_contributions": 7259
+    "indirect_clamped_contributions": 5769
   },
   "volume": {
     "volume_density_evaluations": 0,
