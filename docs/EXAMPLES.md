@@ -28,7 +28,7 @@ RTX 5090 运行记录，普通示例执行不会覆盖它们。
 
 ![Radiance Pavilion](gallery/radiance-pavilion.png)
 
-开放式海岸 look-dev 展台以胶囊吉祥物为中央展品，四件户外观测装置沿非对称弧线展开：漫反射陶土风向标、粗糙青铜日晷、光滑铬抛物面日光镜和玻璃双透镜观测仪。场景没有 emitter，也没有任何显式灯；2048×1024 的程序化 Radiance RGBE 日落海岸环境是唯一光源。环境贴图包含低角度金色夕阳、暖色分层云、冷色天顶、暗青海面、太阳反光带与远岛剪影，使各向异性的高动态热点和大范围天空补光同时出现在背景与材质响应中。Python 程序通过 `renderer.integrator(direct_light_sampling="importance")` 按线性亮度与 texel 立体角选择方向，并与 BSDF 采样进行 MIS，用这个唯一光源直观展示重要性采样如何减少样本浪费。正式配置固定为 1920×1080、512 spp、depth 12、seed 909，并启用 AI Denoiser。
+开放式海岸 look-dev 展台以陶瓷胶囊吉祥物与履带机器人 Sparky 为并列双主角，四件户外观测装置沿非对称弧线展开：漫反射陶土风向标、粗糙青铜日晷、光滑铬抛物面日光镜和玻璃双透镜观测仪。Sparky 的十个 `usemtl` 槽由 Python 显式映射到塑料、金属、粗糙玻璃和三块共享 sRGB atlas 的屏幕；名为 `EmitYellow` 的槽有意映射到普通 Lambertian 材质，不会发光。场景没有 emitter，也没有任何显式灯；2048×1024 的程序化 Radiance RGBE 日落海岸环境是唯一光源。环境贴图包含低角度金色夕阳、暖色分层云、冷色天顶、暗青海面、太阳反光带与远岛剪影，使各向异性的高动态热点和大范围天空补光同时出现在背景与材质响应中。Python 程序通过 `renderer.integrator(direct_light_sampling="importance")` 按线性亮度与 texel 立体角选择方向，并与 BSDF 采样进行 MIS，用这个唯一光源直观展示重要性采样如何减少样本浪费。当前程序的正式配置固定为 1920×1080、512 spp、depth 12、seed 909，并启用 AI Denoiser。
 
 ## Neon Koi
 

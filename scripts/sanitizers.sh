@@ -67,6 +67,10 @@ sanitize_scene \
   "mesh composite" tests/scenes/mesh-composite-smoke.py \
   output/sanitizer-mesh-composite.png 64 64 1 6 1 0.0 0.0
 
+sanitize_scene \
+  "multi-material mesh" tests/scenes/multi-material-mesh-smoke.py \
+  output/sanitizer-multi-material-mesh.png 64 64 1 4 211 0.0 0.0
+
 require_file "${ROOT}/assets/examples/environments/radiance-pavilion.hdr"
 sanitize_scene \
   "HDR environment" tests/scenes/environment-smoke.py \

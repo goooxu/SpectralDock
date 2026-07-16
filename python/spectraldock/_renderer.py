@@ -44,6 +44,7 @@ class MeshHandle:
     name: str
     id: int
     _owner: object = field(repr=False, compare=False)
+    _has_material_mapping: bool = field(default=False, repr=False, compare=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -393,11 +394,41 @@ class Renderer:
         self._materials[resource_name] = handle
         return handle
 
-    def mesh(self, name: str, path: str | os.PathLike[str]) -> MeshHandle:
+    def mesh(
+        self,
+        name: str,
+        path: str | os.PathLike[str],
+        *,
+        materials: Mapping[str, MaterialHandle] | None = None,
+    ) -> MeshHandle:
         self._editable()
         resource_name = _name(name)
-        identifier = self._builder.add_mesh(resource_name, _path(path, "path"))
-        handle = MeshHandle(resource_name, identifier, self._owner)
+        material_mapping: list[tuple[str, int]] = []
+        if materials is not None:
+            if not isinstance(materials, Mapping):
+                raise TypeError("materials must be a mapping")
+            for slot, material in materials.items():
+                slot_name = _name(slot, "materials key")
+                material_mapping.append(
+                    (
+                        slot_name,
+                        self._handle(
+                            material,
+                            MaterialHandle,
+                            f"materials[{slot_name!r}]",
+                        ),
+                    )
+                )
+            material_mapping.sort(key=lambda item: item[0])
+        identifier = self._builder.add_mesh(
+            resource_name, _path(path, "path"), material_mapping
+        )
+        handle = MeshHandle(
+            resource_name,
+            identifier,
+            self._owner,
+            bool(material_mapping),
+        )
         self._meshes[resource_name] = handle
         return handle
 
@@ -464,7 +495,36 @@ class Renderer:
                 resource_name, center, size, material_id, waves
             )
         else:
-            front, back, alpha, cutoff = self._face_ids(parameters)
+            if kind == "mesh":
+                mesh = _take(parameters, "mesh")
+                mesh_id = self._handle(mesh, MeshHandle, "mesh")
+                if mesh._has_material_mapping:
+                    forbidden = tuple(
+                        key
+                        for key in ("material", "front_material", "back_material")
+                        if key in parameters
+                    )
+                    if forbidden:
+                        raise TypeError(
+                            "material-mapped mesh objects do not accept "
+                            + ", ".join(forbidden)
+                        )
+                    front = -1
+                    back = -1
+                    alpha_handle = _take(parameters, "alpha_texture", None)
+                    alpha = self._handle(
+                        alpha_handle,
+                        TextureHandle,
+                        "alpha_texture",
+                        optional=True,
+                    )
+                    cutoff = _scalar(
+                        _take(parameters, "alpha_cutoff", 0.5), "alpha_cutoff"
+                    )
+                else:
+                    front, back, alpha, cutoff = self._face_ids(parameters)
+            else:
+                front, back, alpha, cutoff = self._face_ids(parameters)
             if kind == "sphere":
                 values = (
                     resource_name,
@@ -552,8 +612,6 @@ class Renderer:
                 _reject_extra(parameters, "parabola")
                 identifier = self._builder.add_parabola(*values)
             elif kind == "mesh":
-                mesh = _take(parameters, "mesh")
-                mesh_id = self._handle(mesh, MeshHandle, "mesh")
                 transform = _take(parameters, "transform", None)
                 transform_values: dict[str, Any] = {}
                 if transform is not None:

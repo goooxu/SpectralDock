@@ -1,0 +1,10 @@
+# Slot declarations for the multi-material mesh smoke fixture.  SpectralDock
+# binds the actual renderer materials explicitly through Renderer.mesh().
+newmtl RedPanel
+Kd 0.8 0.1 0.05
+
+newmtl ScreenPanel
+Kd 1.0 1.0 1.0
+
+newmtl MetalPanel
+Kd 0.7 0.7 0.7

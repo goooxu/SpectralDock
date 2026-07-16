@@ -120,16 +120,44 @@ bool material_uses_texture(const Scene& scene, std::int32_t material_id) {
              kInvalidId;
 }
 
+const MeshResource* mesh_resource_for_object(const Scene& scene,
+                                             const Object& object) {
+  if (object.type != GeometryType::Mesh) return nullptr;
+  const auto& instance = std::get<MeshInstanceData>(object.geometry);
+  if (instance.mesh_id < 0 ||
+      static_cast<std::size_t>(instance.mesh_id) >= scene.meshes.size())
+    return nullptr;
+  return &scene.meshes[static_cast<std::size_t>(instance.mesh_id)];
+}
+
 bool object_requires_uvs(const Scene& scene, const Object& object) {
-  return object.alpha_texture != kInvalidId ||
-         material_uses_texture(scene, object.front_material) ||
-         material_uses_texture(scene, object.back_material);
+  if (object.alpha_texture != kInvalidId ||
+      material_uses_texture(scene, object.front_material) ||
+      material_uses_texture(scene, object.back_material))
+    return true;
+  const MeshResource* resource = mesh_resource_for_object(scene, object);
+  if (resource == nullptr) return false;
+  return std::any_of(
+      resource->material_ids.begin(), resource->material_ids.end(),
+      [&](std::int32_t id) { return material_uses_texture(scene, id); });
 }
 
 bool binds_material_type(const Scene& scene, std::int32_t material_id,
                          MaterialType type) {
   return material_id != kInvalidId &&
          scene.materials[static_cast<std::size_t>(material_id)].type == type;
+}
+
+bool object_binds_material_type(const Scene& scene, const Object& object,
+                                MaterialType type) {
+  if (binds_material_type(scene, object.front_material, type) ||
+      binds_material_type(scene, object.back_material, type))
+    return true;
+  const MeshResource* resource = mesh_resource_for_object(scene, object);
+  if (resource == nullptr) return false;
+  return std::any_of(
+      resource->material_ids.begin(), resource->material_ids.end(),
+      [&](std::int32_t id) { return binds_material_type(scene, id, type); });
 }
 
 }  // namespace
@@ -313,7 +341,10 @@ std::int32_t SceneBuilder::add_material(
 }
 
 std::int32_t SceneBuilder::add_mesh(const std::string& name,
-                                    const std::filesystem::path& path) {
+                                    const std::filesystem::path& path,
+                                    const std::vector<std::pair<
+                                        std::string, std::int32_t>>&
+                                        material_bindings) {
   require_open();
   const std::string where = "meshes[" +
                             std::to_string(scene_.meshes.size()) + "]";
@@ -323,10 +354,64 @@ std::int32_t SceneBuilder::add_mesh(const std::string& name,
   MeshResource resource;
   resource.name = name;
   resource.path = absolute;
+  std::unordered_map<std::string, std::int32_t> bindings;
+  std::vector<std::string> triangle_slots;
+  if (!material_bindings.empty()) {
+    bindings.reserve(material_bindings.size());
+    for (std::size_t i = 0; i < material_bindings.size(); ++i) {
+      const auto& [slot, material_id] = material_bindings[i];
+      const std::string binding_where =
+          where + ".material_bindings[" + std::to_string(i) + "]";
+      require_name(slot, binding_where + ".name");
+      require_id(material_id, scene_.materials.size(),
+                 binding_where + ".material");
+      if (scene_.materials[static_cast<std::size_t>(material_id)].type ==
+          MaterialType::Water)
+        fail(binding_where + ".material",
+             "water materials cannot be bound to OBJ material slots");
+      if (!bindings.emplace(slot, material_id).second)
+        fail(binding_where + ".name",
+             "duplicate OBJ material slot '" + slot + "'");
+    }
+  }
   try {
-    resource.mesh = load_obj_mesh(absolute);
+    if (material_bindings.empty()) {
+      resource.mesh = load_obj_mesh(absolute);
+    } else {
+      resource.mesh = load_obj_mesh(absolute, triangle_slots);
+    }
   } catch (const std::exception& error) {
     fail(where + ".path", error.what());
+  }
+  if (!material_bindings.empty()) {
+    if (triangle_slots.size() != resource.mesh.indices.size())
+      fail(where + ".material_bindings",
+           "OBJ triangle/material assignment count mismatch");
+
+    std::unordered_set<std::string> used_slots;
+    resource.material_ids.reserve(triangle_slots.size());
+    for (const std::string& slot : triangle_slots) {
+      const auto binding = bindings.find(slot);
+      if (binding == bindings.end())
+        fail(where + ".material_bindings",
+             "missing binding for used OBJ material slot '" + slot + "'");
+      used_slots.insert(slot);
+      resource.material_ids.push_back(binding->second);
+    }
+    for (const auto& [slot, material_id] : bindings) {
+      (void)material_id;
+      if (used_slots.count(slot) == 0)
+        fail(where + ".material_bindings",
+             "binding for unused OBJ material slot '" + slot + "'");
+    }
+
+    if (!resource.mesh.has_complete_uvs()) {
+      for (std::int32_t material_id : resource.material_ids) {
+        if (material_uses_texture(scene_, material_id))
+          fail(where + ".material_bindings",
+               "textured OBJ material slots require complete UV coordinates");
+      }
+    }
   }
   const auto id = insert_unique(mesh_ids_, name, scene_.meshes.size(), where);
   scene_.meshes.push_back(std::move(resource));
@@ -343,8 +428,13 @@ std::int32_t SceneBuilder::add_object(Object object) {
              where + ".back_material", true);
   require_id(object.alpha_texture, scene_.textures.size(),
              where + ".alpha_texture", true);
+  const MeshResource* mesh_resource =
+      mesh_resource_for_object(scene_, object);
+  const bool has_mapped_mesh_materials =
+      mesh_resource != nullptr && !mesh_resource->material_ids.empty() &&
+      mesh_resource->material_ids.size() == mesh_resource->mesh.indices.size();
   if (object.front_material == kInvalidId &&
-      object.back_material == kInvalidId)
+      object.back_material == kInvalidId && !has_mapped_mesh_materials)
     fail(where, "at least one face material is required");
   require_finite(object.alpha_cutoff, where + ".alpha_cutoff");
   if (object.alpha_cutoff < 0.0f || object.alpha_cutoff > 1.0f)
@@ -509,6 +599,10 @@ std::int32_t SceneBuilder::add_mesh_instance(
   object.alpha_cutoff = alpha_cutoff;
   const MeshResource& resource =
       scene_.meshes[static_cast<std::size_t>(mesh_id)];
+  if (!resource.material_ids.empty() &&
+      (front_material != kInvalidId || back_material != kInvalidId))
+    fail("mesh_instance",
+         "material-mapped meshes do not accept front/back materials");
   if (!resource.mesh.empty() && !resource.mesh.has_complete_uvs() &&
       object_requires_uvs(scene_, object))
     fail("mesh_instance",
@@ -920,6 +1014,9 @@ void SceneBuilder::validate_scene() const {
         scene_, object.front_material, MaterialType::Dielectric);
     const bool back_dielectric = binds_material_type(
         scene_, object.back_material, MaterialType::Dielectric);
+    const bool mapped_dielectric =
+        object_binds_material_type(scene_, object, MaterialType::Dielectric) &&
+        !front_dielectric && !back_dielectric;
     if (object.type == GeometryType::Sphere) {
       if (front_dielectric || back_dielectric) {
         if (object.front_material != object.back_material ||
@@ -934,7 +1031,7 @@ void SceneBuilder::validate_scene() const {
         dielectric_spheres.push_back(
             {i, std::get<SphereData>(object.geometry)});
       }
-    } else if (front_dielectric || back_dielectric) {
+    } else if (front_dielectric || back_dielectric || mapped_dielectric) {
       fail("objects[" + std::to_string(i) + "]",
            "dielectric materials in water scenes require closed sphere "
            "geometry; open dielectric boundaries are not supported");

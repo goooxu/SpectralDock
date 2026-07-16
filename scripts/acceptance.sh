@@ -18,6 +18,7 @@ smoke_scenes=(
   tests/scenes/smoke.py
   tests/scenes/geometry-smoke.py
   tests/scenes/mesh-composite-smoke.py
+  tests/scenes/multi-material-mesh-smoke.py
   tests/scenes/environment-smoke.py
   tests/scenes/flame-smoke.py
   tests/scenes/water-smoke.py
@@ -33,6 +34,10 @@ for scene in "${smoke_scenes[@]}"; do
       "${ROOT}/output/tests/mesh-composite-smoke.png" \
       "${ROOT}/output/tests/mesh-composite-smoke.stats.json" \
       "${ROOT}/tests/golden/mesh-composite-smoke-64x64-spp1-depth6-seed1.sha256"
+  elif [[ "${scene}" == tests/scenes/multi-material-mesh-smoke.py ]]; then
+    run_python "${ROOT}/tests/check_multi_material_mesh_smoke.py" \
+      "${ROOT}/output/tests/multi-material-mesh-smoke.png" \
+      "${ROOT}/output/tests/multi-material-mesh-smoke.stats.json"
   fi
 done
 

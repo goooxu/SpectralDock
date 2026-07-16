@@ -724,14 +724,39 @@ static __forceinline__ __device__ float2 triangle_uv(
   return f2(b.x + b.y, b.x);
 }
 
+static __forceinline__ __device__ bool mesh_primitive_index(
+    const HitgroupData& hitgroup, unsigned int& primitive) {
+  if (hitgroup.geometry.primitive_type != spectraldock::kPrimitiveMesh) {
+    return false;
+  }
+  const unsigned int raw = optixGetPrimitiveIndex();
+  if (raw < hitgroup.geometry.primitive_index_base) return false;
+  primitive = raw - hitgroup.geometry.primitive_index_base;
+  return primitive < hitgroup.mesh.triangle_count;
+}
+
 static __forceinline__ __device__ uint3 mesh_triangle(
     const HitgroupData& hitgroup) {
-  const unsigned int primitive = optixGetPrimitiveIndex();
+  unsigned int primitive = 0u;
   if (hitgroup.mesh.indices == nullptr ||
-      primitive >= hitgroup.mesh.triangle_count) {
+      !mesh_primitive_index(hitgroup, primitive)) {
     return make_uint3(0u, 0u, 0u);
   }
   return hitgroup.mesh.indices[primitive];
+}
+
+static __forceinline__ __device__ int hit_material(
+    const HitgroupData& hitgroup, bool front_face) {
+  const spectraldock::DeviceMeshData& mesh = hitgroup.mesh;
+  unsigned int primitive = 0u;
+  if ((mesh.flags & spectraldock::kMeshHasMaterials) != 0u &&
+      mesh.material_ids != nullptr &&
+      mesh_primitive_index(hitgroup, primitive) &&
+      primitive < mesh.material_id_count) {
+    return mesh.material_ids[primitive];
+  }
+  return front_face ? hitgroup.geometry.material_front
+                    : hitgroup.geometry.material_back;
 }
 
 static __forceinline__ __device__ float3 mesh_barycentric_weights() {
@@ -2567,8 +2592,7 @@ static __forceinline__ __device__ void alpha_any_hit() {
   const float3 outward = object_outward_normal(*record, object_point);
   const bool front_face =
       dot3(optixGetObjectRayDirection(), outward) < 0.0f;
-  const int material =
-      front_face ? geometry.material_front : geometry.material_back;
+  const int material = hit_material(*record, front_face);
   if (material < 0) {
     optixIgnoreIntersection();
     return;
@@ -3003,8 +3027,7 @@ extern "C" __global__ void __closesthit__radiance() {
     world_shading = neg(world_shading);
   const bool front_face =
       dot3(world_direction, world_outward) < 0.0f;
-  const int material =
-      front_face ? geometry.material_front : geometry.material_back;
+  const int material = hit_material(*record, front_face);
   hit->hit = 1;
   hit->material_index = material;
   hit->light_index = geometry.light_index;

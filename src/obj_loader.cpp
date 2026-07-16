@@ -33,6 +33,7 @@ struct Face {
   Vec3 weighted_normal{};
   unsigned int smoothing_group = 0;
   std::string context;
+  std::string material_name;
 };
 
 struct SmoothKey {
@@ -106,24 +107,38 @@ Vec3 checked_unit_normal(const std::filesystem::path& path, Vec3 value,
   return normalize(value);
 }
 
-}  // namespace
+bool same_position(Vec3 left, Vec3 right) {
+  return left.x == right.x && left.y == right.y && left.z == right.z;
+}
 
-TriangleMesh load_obj_mesh(const std::filesystem::path& input_path) {
+TriangleMesh load_obj_mesh_impl(
+    const std::filesystem::path& input_path,
+    std::vector<std::string>* triangle_material_names) {
   const std::filesystem::path path =
       std::filesystem::absolute(input_path).lexically_normal();
-  std::ifstream input(path, std::ios::binary);
-  if (!input) obj_fail(path, "cannot open file");
-  const std::string source((std::istreambuf_iterator<char>(input)),
-                           std::istreambuf_iterator<char>());
-  if (!input.good() && !input.eof()) obj_fail(path, "failed while reading file");
-
   tinyobj::ObjReaderConfig config;
   config.triangulate = true;
   config.vertex_color = false;
   tinyobj::ObjReader reader;
-  // ParseFromString intentionally ignores mtllib lines. The typed SceneBuilder
-  // remains the sole source of material, texture, and face-sidedness data.
-  if (!reader.ParseFromString(source, std::string{}, config)) {
+  bool parsed = false;
+  if (triangle_material_names == nullptr) {
+    std::ifstream input(path, std::ios::binary);
+    if (!input) obj_fail(path, "cannot open file");
+    const std::string source((std::istreambuf_iterator<char>(input)),
+                             std::istreambuf_iterator<char>());
+    if (!input.good() && !input.eof())
+      obj_fail(path, "failed while reading file");
+    // Preserve the legacy path exactly: ParseFromString intentionally ignores
+    // mtllib/usemtl and therefore never reads an adjacent MTL file.
+    parsed = reader.ParseFromString(source, std::string{}, config);
+  } else {
+    triangle_material_names->clear();
+    // Strict material mode is opt-in. Restrict tinyobjloader's material search
+    // base to the OBJ directory so ordinary sibling mtllib references resolve.
+    config.mtl_search_path = path.parent_path().string();
+    parsed = reader.ParseFromFile(path.string(), config);
+  }
+  if (!parsed) {
     const std::string detail = reader.Error().empty()
                                    ? "could not parse file"
                                    : reader.Error();
@@ -135,6 +150,7 @@ TriangleMesh load_obj_mesh(const std::filesystem::path& input_path) {
   const std::size_t position_count = attributes.vertices.size() / 3;
   const std::size_t normal_count = attributes.normals.size() / 3;
   const std::size_t texcoord_count = attributes.texcoords.size() / 2;
+  const std::vector<tinyobj::material_t>& materials = reader.GetMaterials();
 
   std::vector<Face> faces;
   bool normals_complete = true;
@@ -145,6 +161,11 @@ TriangleMesh load_obj_mesh(const std::filesystem::path& input_path) {
         mesh.texcoord_indices.size() != mesh.vertex_indices.size()) {
       obj_fail(path, "shape '" + shape_name(shape) +
                          "' has inconsistent corner index arrays");
+    }
+    if (triangle_material_names != nullptr &&
+        mesh.material_ids.size() != mesh.num_face_vertices.size()) {
+      obj_fail(path, "shape '" + shape_name(shape) +
+                         "' has inconsistent material assignments");
     }
     std::size_t offset = 0;
     for (std::size_t face_index = 0;
@@ -160,11 +181,25 @@ TriangleMesh load_obj_mesh(const std::filesystem::path& input_path) {
         obj_fail(path, context + " has a truncated index list");
 
       Face face;
+      bool face_normals_complete = true;
+      bool face_texcoords_complete = true;
       face.context = context;
       face.smoothing_group =
           face_index < mesh.smoothing_group_ids.size()
               ? mesh.smoothing_group_ids[face_index]
               : 0u;
+      if (triangle_material_names != nullptr) {
+        const int material_id = mesh.material_ids[face_index];
+        if (material_id < 0 ||
+            static_cast<std::size_t>(material_id) >= materials.size()) {
+          obj_fail(path, context +
+                             " has no valid usemtl assignment in the sibling MTL");
+        }
+        face.material_name =
+            materials[static_cast<std::size_t>(material_id)].name;
+        if (face.material_name.empty())
+          obj_fail(path, context + " resolves to an unnamed MTL material");
+      }
       for (std::size_t corner_index = 0; corner_index < 3; ++corner_index) {
         Corner& corner = face.corners[corner_index];
         corner.position = mesh.vertex_indices[offset + corner_index];
@@ -175,18 +210,32 @@ TriangleMesh load_obj_mesh(const std::filesystem::path& input_path) {
         check_index(path, corner.normal, normal_count, "normal", context, true);
         check_index(path, corner.texcoord, texcoord_count, "texture coordinate",
                     context, true);
-        normals_complete = normals_complete && corner.normal >= 0;
-        texcoords_complete = texcoords_complete && corner.texcoord >= 0;
+        face_normals_complete = face_normals_complete && corner.normal >= 0;
+        face_texcoords_complete =
+            face_texcoords_complete && corner.texcoord >= 0;
       }
       const Vec3 p0 = read_position(attributes, face.corners[0].position);
       const Vec3 p1 = read_position(attributes, face.corners[1].position);
       const Vec3 p2 = read_position(attributes, face.corners[2].position);
       if (!finite(p0) || !finite(p1) || !finite(p2))
         obj_fail(path, context + " contains a non-finite position");
+      // Some exporters emit zero-area pole faces whose distinct OBJ indices
+      // resolve to exactly the same position. They cannot intersect a ray and
+      // OptiX does not need them, so discard only this unambiguous artifact.
+      // Collinear faces with three distinct positions remain hard errors.
+      const bool repeated_position =
+          same_position(p1, p0) || same_position(p2, p0) ||
+          same_position(p2, p1);
+      if (repeated_position) {
+        offset += 3;
+        continue;
+      }
       face.weighted_normal = cross(p1 - p0, p2 - p0);
       if (!finite(face.weighted_normal) ||
           length_squared(face.weighted_normal) <= 1.0e-20f)
         obj_fail(path, context + " is degenerate");
+      normals_complete = normals_complete && face_normals_complete;
+      texcoords_complete = texcoords_complete && face_texcoords_complete;
       faces.push_back(std::move(face));
       offset += 3;
     }
@@ -250,8 +299,22 @@ TriangleMesh load_obj_mesh(const std::filesystem::path& input_path) {
       }
     }
     result.indices.push_back({base, base + 1u, base + 2u});
+    if (triangle_material_names != nullptr)
+      triangle_material_names->push_back(face.material_name);
   }
   return result;
+}
+
+}  // namespace
+
+TriangleMesh load_obj_mesh(const std::filesystem::path& path) {
+  return load_obj_mesh_impl(path, nullptr);
+}
+
+TriangleMesh load_obj_mesh(
+    const std::filesystem::path& path,
+    std::vector<std::string>& triangle_material_names) {
+  return load_obj_mesh_impl(path, &triangle_material_names);
 }
 
 }  // namespace spectraldock

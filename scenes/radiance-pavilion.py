@@ -32,6 +32,12 @@ def create_renderer() -> Renderer:
         exposure=0.0,
     )
 
+    sparky_screen_texture = renderer.texture(
+        name="sparky_screen_texture",
+        type="image",
+        path=ROOT / "assets/examples/models/sparky/sparky_albedo.png",
+        color_space="srgb",
+    )
     pavilion_floor = renderer.material(
         name="pavilion_floor", type="lambertian", base_color=(0.11, 0.12, 0.14)
     )
@@ -62,8 +68,68 @@ def create_renderer() -> Renderer:
         base_color=(0.13, 0.15, 0.17),
         roughness=0.30,
     )
+    sparky_plastic_blue = renderer.material(
+        name="sparky_plastic_blue",
+        type="lambertian",
+        base_color=(0.35, 0.65, 0.90),
+    )
+    sparky_screen = renderer.material(
+        name="sparky_screen",
+        type="lambertian",
+        texture=sparky_screen_texture,
+        base_color=(1.0, 1.0, 1.0),
+    )
+    sparky_glass_head = renderer.material(
+        name="sparky_glass_head",
+        type="dielectric",
+        base_color=(0.55, 0.75, 0.95),
+        ior=1.5,
+        roughness=0.06,
+    )
+    sparky_plastic_white = renderer.material(
+        name="sparky_plastic_white",
+        type="lambertian",
+        base_color=(0.92, 0.93, 0.95),
+    )
+    sparky_metal_grey = renderer.material(
+        name="sparky_metal_grey",
+        type="metal",
+        base_color=(0.45, 0.47, 0.50),
+        roughness=0.28,
+    )
+    sparky_accent_orange = renderer.material(
+        name="sparky_accent_orange",
+        type="lambertian",
+        base_color=(0.95, 0.45, 0.12),
+    )
+    sparky_tread_orange = renderer.material(
+        name="sparky_tread_orange",
+        type="lambertian",
+        base_color=(0.95, 0.40, 0.08),
+    )
+    sparky_emit_yellow = renderer.material(
+        name="sparky_emit_yellow",
+        type="lambertian",
+        base_color=(1.0, 0.85, 0.20),
+    )
     mascot = renderer.mesh(
         name="mascot", path=ROOT / "assets/examples/models/capsule-mascot.obj"
+    )
+    sparky = renderer.mesh(
+        name="sparky",
+        path=ROOT / "assets/examples/models/sparky/sparky.obj",
+        materials={
+            "AccentOrange": sparky_accent_orange,
+            "EmitYellow": sparky_emit_yellow,
+            "GlassHead": sparky_glass_head,
+            "MetalGrey": sparky_metal_grey,
+            "PlasticBlue": sparky_plastic_blue,
+            "PlasticWhite": sparky_plastic_white,
+            "ScreenChest": sparky_screen,
+            "ScreenFace": sparky_screen,
+            "ScreenPalm": sparky_screen,
+            "TreadOrange": sparky_tread_orange,
+        },
     )
 
     def cylinder(name, base, axis, height, radius, material):
@@ -97,16 +163,24 @@ def create_renderer() -> Renderer:
     )
     cylinder("main_stage", (0.0, 0.0, -1.0), (0.0, 1.0, 0.0), 0.34, 5.9, stage)
     disk("main_stage_top", (0.0, 0.34, -1.0), (0.0, 1.0, 0.0), 5.9, stage)
-    cylinder("mascot_pedestal", (0.0, 0.34, -0.35), (0.0, 1.0, 0.0), 0.62, 1.55, pedestal)
-    disk("mascot_pedestal_top", (0.0, 0.96, -0.35), (0.0, 1.0, 0.0), 1.55, pedestal)
+    cylinder("mascot_pedestal", (0.0, 0.34, -0.35), (0.0, 1.0, 0.0), 0.62, 2.35, pedestal)
+    disk("mascot_pedestal_top", (0.0, 0.96, -0.35), (0.0, 1.0, 0.0), 2.35, pedestal)
     renderer.object(
         name="pavilion_mascot",
         type="mesh",
         mesh=mascot,
-        translate=(0.0, 0.96, -0.35),
+        translate=(-0.90, 0.96, 0.25),
         rotate_degrees=(0.0, 24.0, 0.0),
         scale=(0.98, 0.98, 0.98),
         material=mascot_porcelain,
+    )
+    renderer.object(
+        name="pavilion_sparky",
+        type="mesh",
+        mesh=sparky,
+        translate=(0.90, 0.963, -0.95),
+        rotate_degrees=(0.0, 24.0, 0.0),
+        scale=(0.937, 0.937, 0.937),
     )
 
     cylinder("wind_vane_foot", (-4.15, 0.34, 0.05), (0.0, 1.0, 0.0), 0.30, 0.62, instrument_frame)

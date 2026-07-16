@@ -7,6 +7,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace spectraldock {
@@ -42,7 +43,9 @@ class SceneBuilder {
                             Vec3 emission, float roughness, float ior,
                             Vec3 absorption);
   std::int32_t add_mesh(const std::string& name,
-                        const std::filesystem::path& path);
+                        const std::filesystem::path& path,
+                        const std::vector<std::pair<std::string, std::int32_t>>&
+                            material_bindings = {});
 
   std::int32_t add_sphere(const std::string& name, Vec3 center, float radius,
                           std::int32_t front_material,

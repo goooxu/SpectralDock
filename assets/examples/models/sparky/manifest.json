@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "name": "sparky",
+  "description": "Original boxy tread robot with articulated arms, screen details, glass head shell, and ten explicit OBJ material slots.",
+  "source": "Direct contribution by the project owner",
+  "source_archives_in_distribution": false,
+  "asset_license": "CC0-1.0",
+  "license_file": "../CC0-1.0.txt",
+  "manifest_license": "Apache-2.0",
+  "coordinate_system": {
+    "up": "+Y",
+    "front": "+Z",
+    "ground_y": -0.002721,
+    "units": "scene units"
+  },
+  "geometry": {
+    "positions": 5818,
+    "texture_coordinates": 5818,
+    "explicit_normals": 0,
+    "source_triangles": 7284,
+    "discarded_duplicate_position_triangles": 896,
+    "renderable_triangles": 6388,
+    "all_faces_have_texture_coordinates": true,
+    "material_slots": 10
+  },
+  "bounds": {
+    "min": [-0.85, -0.002721, -0.305],
+    "max": [0.85, 2.09, 0.325]
+  },
+  "materials": [
+    {"name": "PlasticBlue", "source_triangles": 3144, "renderable_triangles": 2632},
+    {"name": "MetalGrey", "source_triangles": 760, "renderable_triangles": 760},
+    {"name": "ScreenFace", "source_triangles": 2, "renderable_triangles": 2, "albedo": "sparky_albedo.png"},
+    {"name": "GlassHead", "source_triangles": 12, "renderable_triangles": 12},
+    {"name": "EmitYellow", "source_triangles": 24, "renderable_triangles": 24},
+    {"name": "PlasticWhite", "source_triangles": 2520, "renderable_triangles": 2136},
+    {"name": "ScreenChest", "source_triangles": 2, "renderable_triangles": 2, "albedo": "sparky_albedo.png"},
+    {"name": "AccentOrange", "source_triangles": 384, "renderable_triangles": 384},
+    {"name": "ScreenPalm", "source_triangles": 4, "renderable_triangles": 4, "albedo": "sparky_albedo.png"},
+    {"name": "TreadOrange", "source_triangles": 432, "renderable_triangles": 432}
+  ],
+  "files": [
+    {
+      "path": "sparky.obj",
+      "role": "geometry and UV coordinates",
+      "bytes": 520676,
+      "sha256": "9e22935d0c7cf34d7c2964419cacb04518d4b7a9e05646d8e5ca1b14765eb5ae"
+    },
+    {
+      "path": "sparky.mtl",
+      "role": "material-slot names, diffuse colors, and relative albedo references",
+      "bytes": 408,
+      "sha256": "24e7f30ffa16d67c2b2ed092460bb7b1fc62ef2552bafdacf759810f546b4f28"
+    },
+    {
+      "path": "sparky_albedo.png",
+      "role": "sRGB albedo atlas for ScreenFace, ScreenChest, and ScreenPalm",
+      "bytes": 15103,
+      "sha256": "e0c5f6b728a53d3cfbc1ef6f29bd55417170d5f02c53305a7a4b1a9f931e22f0",
+      "width": 1024,
+      "height": 1024,
+      "mode": "RGBA8",
+      "scene_color_space": "sRGB",
+      "embedded_color_profile": false,
+      "alpha": "fully opaque"
+    }
+  ]
+}

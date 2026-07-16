@@ -621,24 +621,32 @@ struct MeshGpu {
   DeviceBuffer normals;
   DeviceBuffer texcoords;
   DeviceBuffer indices;
+  DeviceBuffer material_ids;
   Gas gas;
 
-  DeviceMeshData device_data(const TriangleMesh& mesh) const {
+  DeviceMeshData device_data(const MeshResource& resource) const {
+    const TriangleMesh& mesh = resource.mesh;
     DeviceMeshData data{};
     data.positions = reinterpret_cast<const float3*>(positions.pointer());
     data.normals = reinterpret_cast<const float3*>(normals.pointer());
     data.texcoords = reinterpret_cast<const float2*>(texcoords.pointer());
     data.indices = reinterpret_cast<const uint3*>(indices.pointer());
+    data.material_ids = reinterpret_cast<const std::int32_t*>(
+        material_ids.pointer());
     data.vertex_count = checked_u32(mesh.positions.size(), "mesh vertex count");
     data.triangle_count = checked_u32(mesh.indices.size(), "mesh triangle count");
+    data.material_id_count = checked_u32(resource.material_ids.size(),
+                                         "mesh material id count");
     if (!mesh.normals.empty()) data.flags |= kMeshHasNormals;
     if (mesh.has_complete_uvs()) data.flags |= kMeshHasTexcoords;
+    if (!resource.material_ids.empty()) data.flags |= kMeshHasMaterials;
     return data;
   }
 };
 
 MeshGpu build_mesh(OptixDeviceContext context, cudaStream_t stream,
-                   const MeshResource& resource, MemoryTracker& tracker) {
+                   const MeshResource& resource, std::size_t material_count,
+                   MemoryTracker& tracker) {
   const TriangleMesh& mesh = resource.mesh;
   if (mesh.empty())
     throw std::runtime_error("mesh is empty: " + resource.name);
@@ -646,6 +654,14 @@ MeshGpu build_mesh(OptixDeviceContext context, cudaStream_t stream,
     throw std::runtime_error("mesh normals are incomplete: " + resource.name);
   if (!mesh.texcoords.empty() && !mesh.has_complete_uvs())
     throw std::runtime_error("mesh texture coordinates are incomplete: " + resource.name);
+  if (!resource.material_ids.empty() &&
+      resource.material_ids.size() != mesh.indices.size())
+    throw std::runtime_error("mesh material ids are incomplete: " + resource.name);
+  for (std::int32_t material_id : resource.material_ids) {
+    if (material_id < 0 ||
+        static_cast<std::size_t>(material_id) >= material_count)
+      throw std::runtime_error("mesh material id is invalid: " + resource.name);
+  }
 
   MeshGpu result;
   result.positions.allocate(tracker, mesh.positions.size() * sizeof(Vec3));
@@ -653,10 +669,16 @@ MeshGpu build_mesh(OptixDeviceContext context, cudaStream_t stream,
   result.indices.allocate(tracker, mesh.indices.size() * sizeof(MeshTriangle));
   if (!mesh.texcoords.empty())
     result.texcoords.allocate(tracker, mesh.texcoords.size() * sizeof(Vec2));
+  if (!resource.material_ids.empty())
+    result.material_ids.allocate(
+        tracker, checked_product(resource.material_ids.size(),
+                                 sizeof(std::int32_t), "mesh material ids"));
   result.positions.upload(mesh.positions, stream);
   result.normals.upload(mesh.normals, stream);
   result.indices.upload(mesh.indices, stream);
   if (!mesh.texcoords.empty()) result.texcoords.upload(mesh.texcoords, stream);
+  if (!resource.material_ids.empty())
+    result.material_ids.upload(resource.material_ids, stream);
 
   unsigned int flag = OPTIX_GEOMETRY_FLAG_NONE;
   CUdeviceptr vertex_pointer = result.positions.pointer();
@@ -1233,7 +1255,7 @@ RenderResult render_optix(const Scene& scene,
       const MeshResource& resource = scene.meshes[instance.mesh_id];
       mesh_triangle_count += resource.mesh.indices.size();
       mesh_gpus.push_back(build_mesh(
-          optix.context, stream, resource, tracker));
+          optix.context, stream, resource, scene.materials.size(), tracker));
       ++unique_mesh_count;
     }
 
@@ -1248,8 +1270,8 @@ RenderResult render_optix(const Scene& scene,
         if (gpu_index < 0)
           throw std::runtime_error("referenced mesh GAS was not built: " + object.name);
         MeshGpu& mesh_gpu = mesh_gpus[static_cast<std::size_t>(gpu_index)];
-        hitgroup.mesh = mesh_gpu.device_data(
-            scene.meshes[instance.mesh_id].mesh);
+        hitgroup.mesh =
+            mesh_gpu.device_data(scene.meshes[instance.mesh_id]);
         instance_handles.push_back(mesh_gpu.gas.handle);
       } else {
         primitive_gases.push_back(build_object(

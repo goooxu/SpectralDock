@@ -231,7 +231,9 @@ PYBIND11_MODULE(_native, module) {
           py::arg("base_color"), py::arg("emission"), py::arg("roughness"),
           py::arg("ior"), py::arg("absorption"))
       .def("add_mesh", &SceneBuilder::add_mesh, py::arg("name"),
-           py::arg("path"))
+           py::arg("path"),
+           py::arg("material_bindings") =
+               std::vector<std::pair<std::string, std::int32_t>>{})
       .def(
           "add_sphere",
           [](SceneBuilder& self, const std::string& name,

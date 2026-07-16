@@ -16,6 +16,8 @@ commit 列表仍以 Git 历史为准。发布新版本时，应把 `Unreleased` 
   几何和灯光，并在 `render()` 调用中指定分辨率、采样数和输出路径。
 - 提供隔离进程中的受限 PhysX Python API，使同一个 Python 程序可以运行 GPU
   刚体模拟、应用 actor-local 渲染附件并立即启动 OptiX。
+- 增加 `mesh(materials={...})` 显式多材质 OBJ 接口，通过逐三角形材质索引
+  在单个 GAS 中解析 `usemtl` 槽；新增 CC0 Sparky OBJ/MTL/albedo 资产。
 
 ### 变更
 
@@ -23,6 +25,10 @@ commit 列表仍以 Git 历史为准。发布新版本时，应把 `Unreleased` 
   解释所谓“场景文件”，用户自定义渲染程序也不需要注册。
 - 构建与运行改为仓库内宿主流程；CUDA 13.3/OptiX 9.1 renderer 和 CUDA
   12.8/PhysX 5.8 worker 保持进程隔离。
+- Radiance Pavilion 改为 capsule mascot 与 Sparky 并列的双主角展台，同时
+  保持 HDR 环境贴图是唯一光源。
+- OBJ 导入器会丢弃 corner 解析到完全重复 position 的零面积导出器残留，
+  但仍拒绝三点不同的共线退化面；Sparky 源面与可渲染面统计分别锁定。
 
 ### 移除
 

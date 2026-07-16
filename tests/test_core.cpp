@@ -4,6 +4,7 @@
 #include "spectraldock/scene_builder.h"
 #include "spectraldock/scene_types.h"
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -286,6 +287,223 @@ f 1 3 4
   write_text(degenerate, "v 0 0 0\nv 1 0 0\nv 2 0 0\nf 1 2 3\n");
   expect_error([&] { (void)load_obj_mesh(degenerate); }, "degenerate",
                "OBJ degenerate face");
+  const auto repeated = directory.path / "repeated-position.obj";
+  write_text(repeated, R"obj(
+v 0 0 0
+v 1 0 0
+v 0 1 0
+v 0 0 0
+f 1 4 2
+f 1 2 3
+)obj");
+  check(load_obj_mesh(repeated).indices.size() == 1,
+        "OBJ exact repeated-position face is discarded");
+  const auto tiny_nonzero = directory.path / "tiny-nonzero.obj";
+  write_text(tiny_nonzero, R"obj(
+v 0 0 0
+v 1e-30 0 0
+v 0 1e-30 0
+v 1 0 0
+v 0 1 0
+f 1 2 3
+f 1 4 5
+)obj");
+  expect_error([&] { (void)load_obj_mesh(tiny_nonzero); }, "degenerate",
+               "OBJ tiny nonzero positions are not treated as duplicates");
+}
+
+void test_obj_material_bindings() {
+  TemporaryDirectory directory;
+  const auto add_test_diffuse = [](
+      SceneBuilder& builder, const std::string& name,
+      std::int32_t texture = kInvalidId) {
+    return builder.add_material(name, MaterialType::Lambertian, texture,
+                                Vec3{0.7f}, Vec3{0.0f}, 0.5f, 1.5f,
+                                Vec3{0.0f});
+  };
+  const auto materials = directory.path / "panels.mtl";
+  const auto mesh_path = directory.path / "panels.obj";
+  write_text(materials, R"mtl(
+newmtl RedPanel
+Kd 0.8 0.1 0.05
+newmtl BluePanel
+Kd 0.05 0.2 0.8
+newmtl UnusedPanel
+Kd 0.5 0.5 0.5
+)mtl");
+  write_text(mesh_path, R"obj(
+mtllib panels.mtl
+v 0 0 0
+v 1 0 0
+v 1 1 0
+v 0 1 0
+vt 0 0
+vt 1 0
+vt 1 1
+vt 0 1
+vn 0 0 -2
+usemtl RedPanel
+f 1 1 2
+f 1/1/1 2/2/1 3/3/1
+usemtl BluePanel
+f 1/1/1 3/3/1 4/4/1
+)obj");
+
+  std::vector<std::string> triangle_slots;
+  const TriangleMesh strict = load_obj_mesh(mesh_path, triangle_slots);
+  check(strict.indices.size() == 2 &&
+            strict.has_complete_uvs() &&
+            triangle_slots ==
+                std::vector<std::string>{"RedPanel", "BluePanel"},
+        "OBJ strict per-triangle material slots and retained UVs");
+  check(std::all_of(strict.normals.begin(), strict.normals.end(),
+                    [](Vec3 normal) { return normal.z < -0.999f; }),
+        "discarded OBJ face does not pollute retained explicit normals");
+
+  SceneBuilder mapped;
+  const auto texture =
+      mapped.add_constant_texture("blue-texture", {0.1f, 0.2f, 0.8f});
+  const auto red = add_test_diffuse(mapped, "red");
+  const auto blue = add_test_diffuse(mapped, "blue", texture);
+  const auto mapped_mesh = mapped.add_mesh(
+      "panels", mesh_path, {{"BluePanel", blue}, {"RedPanel", red}});
+  mapped.add_mesh_instance("mapped-instance", mapped_mesh, Transform{},
+                           kInvalidId, kInvalidId, kInvalidId, 0.5f);
+  expect_error(
+      [&] {
+        mapped.add_mesh_instance("mapped-override", mapped_mesh, Transform{},
+                                 red, red, kInvalidId, 0.5f);
+      },
+      "material-mapped meshes do not accept front/back materials",
+      "mapped OBJ materials cannot be overridden per instance");
+  mapped.set_camera({0.0f, 4.0f, 8.0f}, {0.0f, 0.0f, 0.0f},
+                    {0.0f, 1.0f, 0.0f}, 40.0f, 0.0f, 8.0f);
+  mapped.set_constant_background({0.01f, 0.02f, 0.03f}, 0.0f);
+  const std::shared_ptr<const Scene> scene = mapped.finish();
+  check(scene->meshes.size() == 1 &&
+            scene->meshes[0].material_ids ==
+                std::vector<std::int32_t>{red, blue},
+        "OBJ material slots resolve to global material ids");
+
+  const auto legacy_path = directory.path / "legacy.obj";
+  write_text(legacy_path, R"obj(
+mtllib missing-and-deliberately-ignored.mtl
+v 0 0 0
+v 1 0 0
+v 0 1 0
+usemtl MissingMaterial
+f 1 2 3
+)obj");
+  check(load_obj_mesh(legacy_path).indices.size() == 1,
+        "empty material mapping keeps legacy MTL-ignore behavior");
+  SceneBuilder legacy;
+  const auto legacy_material =
+      add_test_diffuse(legacy, "legacy-material");
+  const auto legacy_mesh = legacy.add_mesh("legacy", legacy_path);
+  expect_error(
+      [&] {
+        legacy.add_mesh_instance("missing-instance-material", legacy_mesh,
+                                 Transform{}, kInvalidId, kInvalidId,
+                                 kInvalidId, 0.5f);
+      },
+      "at least one face material", "legacy mesh still requires a material");
+  legacy.add_mesh_instance("legacy-instance", legacy_mesh, Transform{},
+                           legacy_material, legacy_material, kInvalidId, 0.5f);
+
+  SceneBuilder missing;
+  const auto missing_red = add_test_diffuse(missing, "red");
+  expect_error(
+      [&] {
+        missing.add_mesh("missing-slot", mesh_path,
+                         {{"RedPanel", missing_red}});
+      },
+      "missing binding for used OBJ material slot 'BluePanel'",
+      "OBJ used material slot requires a binding");
+
+  SceneBuilder extra;
+  const auto extra_red = add_test_diffuse(extra, "red");
+  const auto extra_blue = add_test_diffuse(extra, "blue");
+  const auto extra_unused = add_test_diffuse(extra, "unused");
+  expect_error(
+      [&] {
+        extra.add_mesh("extra-slot", mesh_path,
+                       {{"RedPanel", extra_red},
+                        {"BluePanel", extra_blue},
+                        {"UnusedPanel", extra_unused}});
+      },
+      "binding for unused OBJ material slot 'UnusedPanel'",
+      "OBJ material bindings reject unused slots");
+  expect_error(
+      [&] {
+        extra.add_mesh("duplicate-slot", mesh_path,
+                       {{"RedPanel", extra_red},
+                        {"RedPanel", extra_blue},
+                        {"BluePanel", extra_blue}});
+      },
+      "duplicate OBJ material slot 'RedPanel'",
+      "OBJ material bindings reject duplicate keys");
+  expect_error(
+      [&] {
+        extra.add_mesh("invalid-material", mesh_path,
+                       {{"RedPanel", 99}, {"BluePanel", extra_blue}});
+      },
+      "invalid typed handle", "OBJ material bindings validate material ids");
+
+  const auto unassigned_path = directory.path / "unassigned.obj";
+  write_text(unassigned_path, R"obj(
+mtllib panels.mtl
+v 0 0 0
+v 1 0 0
+v 1 1 0
+v 0 1 0
+f 1 2 3
+usemtl RedPanel
+f 1 3 4
+)obj");
+  SceneBuilder unassigned;
+  const auto unassigned_red = add_test_diffuse(unassigned, "red");
+  expect_error(
+      [&] {
+        unassigned.add_mesh("unassigned", unassigned_path,
+                            {{"RedPanel", unassigned_red}});
+      },
+      "has no valid usemtl assignment",
+      "mapped OBJ requires every triangle to have a material");
+
+  const auto no_uv_mtl = directory.path / "no-uv.mtl";
+  const auto no_uv_obj = directory.path / "no-uv.obj";
+  write_text(no_uv_mtl, "newmtl Painted\nKd 1 1 1\n");
+  write_text(no_uv_obj, R"obj(
+mtllib no-uv.mtl
+v 0 0 0
+v 1 0 0
+v 0 1 0
+usemtl Painted
+f 1 2 3
+)obj");
+  SceneBuilder no_uv;
+  const auto paint_texture =
+      no_uv.add_constant_texture("paint", {1.0f, 1.0f, 1.0f});
+  const auto painted = add_test_diffuse(no_uv, "painted", paint_texture);
+  expect_error(
+      [&] {
+        no_uv.add_mesh("no-uv", no_uv_obj, {{"Painted", painted}});
+      },
+      "require complete UV coordinates",
+      "textured OBJ material slot requires UVs");
+
+  SceneBuilder water;
+  const auto water_material = water.add_material(
+      "water", MaterialType::Water, kInvalidId, Vec3{1.0f}, Vec3{0.0f},
+      0.0f, 1.333f, {0.35f, 0.08f, 0.025f});
+  expect_error(
+      [&] {
+        water.add_mesh("water-slot", mesh_path,
+                       {{"RedPanel", water_material},
+                        {"BluePanel", water_material}});
+      },
+      "water materials cannot be bound to OBJ material slots",
+      "OBJ material slots reject water materials");
 }
 
 void test_transform_order() {
@@ -1004,6 +1222,7 @@ int main() {
     test_image_io();
     test_hdr_and_sampling_distributions();
     test_obj_loader();
+    test_obj_material_bindings();
     test_transform_order();
     test_scene_builder_complete_scene();
     test_scene_builder_configuration_and_resources();

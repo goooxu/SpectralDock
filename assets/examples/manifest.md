@@ -1,11 +1,12 @@
 # Example asset manifest
 
-Runtime image paths are relative to this directory. The four PNG textures were
+Runtime image paths are relative to this directory. Four PNG textures were
 generated for this project on 2026-07-07 through the built-in `imagegen`
 workflow. They are provided as-is, without a representation of uniqueness or
-exclusivity. The Radiance HDR environment is an analytical, deterministic
-output of the Apache-2.0 Python generator in `tools/`, not an AI-generated
-image.
+exclusivity. The separate `models/sparky/sparky_albedo.png` is an original
+project-owner contribution, not an output of that workflow. The Radiance HDR
+environment is an analytical, deterministic output of the Apache-2.0 Python
+generator in `tools/`, not an AI-generated image.
 
 The compact distribution omits PNG generation, chroma-key, and seam-repair
 intermediate bitmaps; their dimensions, processing steps, prompts, and SHA-256
@@ -16,12 +17,12 @@ the image model lightly redrew pixels outside the requested center band rather
 than keeping those regions byte-identical. The initial-bitmap digests remain in
 this manifest so this distinction stays auditable.
 
-The four runtime texture PNG files and the HDR environment listed here are
+The five runtime texture PNG files and the HDR environment listed here are
 dedicated under CC0-1.0. This Markdown sidecar is licensed under Apache-2.0 and
 is not a signed provenance claim. Only textures/circuit-panel.png retains an
 embedded caBX/JUMBF C2PA structure identifying OpenAI Media Service;
 cryptographic validity is not verified by this project. The other three
-post-processed runtime textures do not retain C2PA data.
+post-processed imagegen textures do not retain C2PA data.
 
 ## `environments/radiance-pavilion.hdr`
 
@@ -41,6 +42,22 @@ post-processed runtime textures do not retain C2PA data.
   metadata.
 - Licensing: the generator is Apache-2.0; the generated `.hdr` file is one of
   the visual assets explicitly dedicated under CC0-1.0.
+
+## `models/sparky/sparky_albedo.png`
+
+- Runtime size and encoding: 1024 x 1024, 8-bit RGBA PNG without an embedded
+  color profile or sRGB chunk; every alpha sample is fully opaque. The scene
+  explicitly registers it as sRGB through the typed texture API.
+- Runtime byte size: 15,103 bytes.
+- Runtime SHA-256:
+  `e0c5f6b728a53d3cfbc1ef6f29bd55417170d5f02c53305a7a4b1a9f931e22f0`.
+- Source: direct original contribution by the project owner together with
+  `sparky.obj` and `sparky.mtl`; it is not represented as imagegen output and
+  has no upstream archive in the distribution.
+- Use: one sRGB atlas shared by the `ScreenFace`, `ScreenChest`, and
+  `ScreenPalm` material slots. The full geometry/material/file record is in
+  `models/sparky/manifest.json`.
+- Licensing: explicitly dedicated under CC0-1.0.
 
 ## `textures/planet-azure.png`
 

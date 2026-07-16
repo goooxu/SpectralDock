@@ -1,9 +1,12 @@
 CC0 1.0 Universal
 
-The following seventeen assets, and only these assets, are dedicated under
+The following twenty assets, and only these assets, are dedicated under
 Creative Commons CC0 1.0 Universal:
 
 - assets/examples/models/capsule-mascot.obj
+- assets/examples/models/sparky/sparky.obj
+- assets/examples/models/sparky/sparky.mtl
+- assets/examples/models/sparky/sparky_albedo.png
 - assets/examples/model-manifest.json
 - assets/examples/environments/radiance-pavilion.hdr
 - assets/examples/textures/circuit-panel.png
@@ -30,7 +33,8 @@ This dedication does not apply to tools/generate_mascot.py,
 tools/generate_hdr_environment.py,
 scenes/kinetic-foundry.py, scenes/lava-temple-oracle.py,
 python/spectraldock/physics.py, tools/physx_worker.cpp,
-assets/examples/manifest.md, docs/gallery/*.stats.json,
+assets/examples/manifest.md, assets/examples/models/sparky/manifest.json,
+docs/gallery/*.stats.json,
 docs/gallery/*.physics.json, or any other code, documentation, scene, SVG, or
 test. Those project-authored materials are licensed under Apache-2.0.
 Third-party tinyobjloader files remain under MIT, and the external PhysX

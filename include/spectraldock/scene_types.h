@@ -128,6 +128,10 @@ struct MeshResource {
   std::string name;
   std::filesystem::path path;
   TriangleMesh mesh;
+  // Empty preserves the legacy per-instance front/back material path. When
+  // populated, each entry is the global Scene material id for the matching
+  // triangle in mesh.indices.
+  std::vector<std::int32_t> material_ids;
 };
 
 struct SphereData {

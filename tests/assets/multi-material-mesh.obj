@@ -1,0 +1,30 @@
+# Three adjacent UV-complete panels using distinct OBJ material slots.
+mtllib multi-material-mesh.mtl
+o multi_material_panels
+v -1.50 0.00 0.0
+v -0.50 0.00 0.0
+v -0.50 1.80 0.0
+v -1.50 1.80 0.0
+v -0.50 0.00 0.0
+v  0.50 0.00 0.0
+v  0.50 1.80 0.0
+v -0.50 1.80 0.0
+v  0.50 0.00 0.0
+v  1.50 0.00 0.0
+v  1.50 1.80 0.0
+v  0.50 1.80 0.0
+vt 0.0 0.0
+vt 1.0 0.0
+vt 1.0 1.0
+vt 0.0 1.0
+vn 0.0 0.0 1.0
+s 1
+usemtl RedPanel
+f 1/1/1 2/2/1 3/3/1
+f 1/1/1 3/3/1 4/4/1
+usemtl ScreenPanel
+f 5/1/1 6/2/1 7/3/1
+f 5/1/1 7/3/1 8/4/1
+usemtl MetalPanel
+f 9/1/1 10/2/1 11/3/1
+f 9/1/1 11/3/1 12/4/1

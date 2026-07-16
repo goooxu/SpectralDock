@@ -5,10 +5,10 @@
 | 范围 | 许可证 |
 | --- | --- |
 | 代码、脚本、Python 场景程序、C++ worker、文档、SVG、测试 fixture、素材 sidecar、gallery stats 与物理 sidecar | Apache-2.0 |
-| capsule-mascot.obj、model-manifest.json、四张运行时 PNG 纹理、程序化 HDR 环境和正式 gallery PNG | CC0-1.0 |
+| capsule mascot、Sparky OBJ/MTL/albedo、四张 imagegen PNG、程序化 HDR 环境和正式 gallery PNG | CC0-1.0 |
 | third_party/tinyobjloader 下的 vendored 文件 | MIT |
 
-CC0 只覆盖 assets/examples/models/CC0-1.0.txt 逐项列出的十七个文件。
+CC0 只覆盖 assets/examples/models/CC0-1.0.txt 逐项列出的二十个文件。
 tools/generate_mascot.py、tools/generate_hdr_environment.py、
 scenes/kinetic-foundry.py、scenes/lava-temple-oracle.py、
 python/spectraldock/physics.py 与 tools/physx_worker.cpp 均为 Apache-2.0，
@@ -20,6 +20,8 @@ python/spectraldock/physics.py 与 tools/physx_worker.cpp 均为 Apache-2.0，
   [`assets/examples/manifest.md`](../assets/examples/manifest.md)
 - 原创胶囊吉祥物的几何统计、包围盒、字节数和 SHA-256：
   [`assets/examples/model-manifest.json`](../assets/examples/model-manifest.json)
+- 原创 Sparky 模型、材质槽与纹理的完整清单：
+  [`assets/examples/models/sparky/manifest.json`](../assets/examples/models/sparky/manifest.json)
 - 零依赖确定性模型生成器：
   `python3 tools/generate_mascot.py [--output PATH] [--manifest PATH]`
 - 零依赖确定性 HDR 环境生成器：
@@ -35,6 +37,7 @@ python/spectraldock/physics.py 与 tools/physx_worker.cpp 均为 Apache-2.0，
 | `planet-ember.png` | 1774×887 RGB | `14cb336904b10e18758aa1923ad786a2651e326e4f92dd116fd689675d1d5d52` |
 | `koi-mask.png` | 1024×1536 RGBA | `fd4376986b5622043fdb63386bc02450f9ec162d7f4517ebb154e45e3052bf60` |
 | `circuit-panel.png` | 1536×1024 RGB | `9361c04d5fab6098676cee2f65efb8d222246ddba0b1828a7ab4088f9f05f0be` |
+| `models/sparky/sparky_albedo.png` | 1024×1024 RGBA（全不透明） | `e0c5f6b728a53d3cfbc1ef6f29bd55417170d5f02c53305a7a4b1a9f931e22f0` |
 | `environments/radiance-pavilion.hdr` | 2048×1024 Radiance RGBE，modern RLE | `33b6e651abbacbf7458aac0c2610f96705a763251a1699e5548615ca36dbf6d7` |
 
 上述四张 PNG 为本项目通过 AI 图像生成工作流生成，按现状提供，不保证
@@ -43,6 +46,11 @@ python/spectraldock/physics.py 与 tools/physx_worker.cpp 均为 Apache-2.0，
 并令首末像素列严格相同；锦鲤先生成在平坦绿幕上，再生成透明 PNG。
 仓库不收录原始生成图和处理中间图；prompt、尺寸、处理步骤及
 SHA-256 均保留在图像素材清单中。
+
+`sparky_albedo.png` 是项目所有者直接贡献的原创 Sparky 资产组成部分，
+不是上述 imagegen 工作流的输出。它与同目录 OBJ、MTL 一起按 CC0-1.0
+提供；其来源声明、精确字节数和摘要记录在独立 Sparky manifest 中。该
+`manifest.json` 是 Apache-2.0 文档 sidecar，不计入二十项 CC0 文件。
 
 只有 circuit-panel.png 保留内嵌 caBX/JUMBF C2PA 结构，其中标识
 OpenAI Media Service；仓库保留该结构，但不验证其密码学有效性。另外
@@ -60,6 +68,7 @@ sidecar，不应解释为签名来源声明。
 | OBJ | 三角数 | 规格 | 许可 |
 | --- | ---: | --- | --- |
 | `capsule-mascot.obj` | 5,816 | Y-up、脚底 `y=0`、正面 `+Z`、无 UV/MTL | CC0 1.0 Universal |
+| `sparky/sparky.obj` | 7,284 源面 / 6,388 可渲染面 | Y-up、正面 `+Z`、完整 UV、10 个 `usemtl` 槽 | CC0 1.0 Universal |
 
 胶囊吉祥物为本项目原创模块化角色，由圆润躯干、横向面罩、双眼浮雕、非对称天线、短手臂与手套、短腿与靴子及腰带凸缘组成；不使用品牌角色的护目镜、背带裤或其他识别特征。各组件是不相交的闭合网格，并留有小型装配间隙，使纯色与介电材质都能保持清楚轮廓。
 
@@ -68,6 +77,15 @@ sidecar，不应解释为签名来源声明。
 model-manifest.json 才属于明确列出的 CC0 范围。默认命令同时重建 OBJ
 与清单；清单记录三角数、闭合边、包围盒、字节数与 SHA-256，供重建时
 核对。模型颜色和 BSDF 完全来自场景材质。
+
+Sparky 是一个履带式箱体机器人，包含塑料、金属、玻璃、彩色装饰和三块
+共享同一 sRGB atlas 的屏幕。仓库原样保存 OBJ、MTL 与 PNG；MTL 用于声明
+材质槽和互操作信息，SpectralDock 不从名称或 MTL 数值猜测 BSDF。场景通过
+`mesh(materials={...})` 把十个 `usemtl` 名称显式映射到 typed material
+handle，逐三角形材质索引仍由一份共享 mesh GAS 使用。
+源 OBJ 还包含 896 个由两个完全重合坐标构成的零面积极点面；加载器只丢弃
+这类无法求交的明确导出器残留，三点坐标不同但共线的退化面仍会报错。原始
+文件、逐槽源面统计和实际可渲染面数均锁定在 Sparky manifest 与测试中。
 
 ## Gallery
 

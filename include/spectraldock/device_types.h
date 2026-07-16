@@ -120,6 +120,7 @@ struct DeviceGeometryData {
 enum MeshFlags : std::uint32_t {
   kMeshHasNormals = 1u << 0,
   kMeshHasTexcoords = 1u << 1,
+  kMeshHasMaterials = 1u << 2,
 };
 
 struct DeviceMeshData {
@@ -127,10 +128,11 @@ struct DeviceMeshData {
   const float3* normals = nullptr;
   const float2* texcoords = nullptr;
   const uint3* indices = nullptr;
+  const std::int32_t* material_ids = nullptr;
   std::uint32_t vertex_count = 0;
   std::uint32_t triangle_count = 0;
+  std::uint32_t material_id_count = 0;
   std::uint32_t flags = 0;
-  std::uint32_t reserved = 0;
 };
 
 struct HitgroupData {
