@@ -112,7 +112,7 @@ flowchart TD
 | miss | 2 | radiance miss 报告“未命中”，shadow miss 返回“可见” |
 | hitgroup | 16 | 8 个 primitive dispatch slot × 2 类射线，组合 intersection、any-hit 和 closest-hit |
 
-八个 dispatch slot 是 sphere、triangle、disk、cylinder、parabola、mesh、water surface 和 solid sphere。rectangle 和 sketch 在主机端变为 triangle；mesh 也使用内建三角形求交，但从 SBT 读取独立的顶点属性缓冲区。disk、cylinder、parabola、解析水面和实心 sphere 使用项目自定义 intersection；普通 sphere 与 triangle/mesh 使用 OptiX 内建求交。实心 sphere 只服务于含水场景中的 dielectric 闭合边界，原因见[第 12 章第 4 节](12-runtime-analytic-water.md#水中-dielectric-sphere-为什么使用自定义实心边界)。
+八个 dispatch slot 是 sphere、triangle、disk、cylinder、parabola、mesh、water surface 和 solid sphere。rectangle（包括带 alpha 裁剪的版本）在主机端变为 triangle；mesh 也使用内建三角形求交，但从 SBT 读取独立的顶点属性缓冲区。disk、cylinder、parabola、解析水面和实心 sphere 使用项目自定义 intersection；普通 sphere 与 triangle/mesh 使用 OptiX 内建求交。实心 sphere 只服务于含水场景中的 dielectric 闭合边界，原因见[第 12 章第 4 节](12-runtime-analytic-water.md#水中-dielectric-sphere-为什么使用自定义实心边界)。
 
 ### 4.3 链接浅调用栈 pipeline
 

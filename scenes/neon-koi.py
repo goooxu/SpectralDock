@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Neon Koi: emissive alpha-cut sketches in a dark gallery."""
+"""Neon Koi: emissive alpha-cut rectangles in a dark gallery."""
 
 from pathlib import Path
 
@@ -86,7 +86,7 @@ def create_renderer() -> Renderer:
     ):
         renderer.object(
             name=name,
-            type="sketch",
+            type="rectangle",
             p1=p1,
             p2=p2,
             p3=p3,

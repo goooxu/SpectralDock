@@ -4,8 +4,8 @@
 
 | 范围 | 许可证 |
 | --- | --- |
-| 代码、脚本、Python 场景程序、C++ worker、文档、SVG、测试 fixture、素材 sidecar、gallery stats 与物理 sidecar | Apache-2.0 |
-| capsule mascot、Sparky OBJ/MTL/albedo、四张 imagegen PNG、程序化 HDR 环境和正式 gallery PNG | CC0-1.0 |
+| 代码、脚本、Python 场景程序、C++ worker、文档、SVG、测试 fixture、图像与 Sparky manifest、gallery stats 与物理 sidecar | Apache-2.0 |
+| capsule mascot、Sparky OBJ/MTL/albedo、`model-manifest.json`、四张 imagegen PNG、程序化 HDR 环境和正式 gallery PNG | CC0-1.0 |
 | third_party/tinyobjloader 下的 vendored 文件 | MIT |
 
 CC0 只覆盖 assets/examples/models/CC0-1.0.txt 逐项列出的二十个文件。

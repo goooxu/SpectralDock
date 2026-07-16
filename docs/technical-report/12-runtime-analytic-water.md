@@ -452,9 +452,9 @@ stats 分开记录 height evaluations、tile tests、roots reported、medium seg
   }
 ```
 
-定向 GPU fixture 检查固定 seed、粗糙反射/透射、全反射、两侧法线语义、深浅路径 RGB Beer、浸没玻璃的介质栈、depth-1 粗糙 NEE、透明中间边界阻断，以及后续真实水面顶点恢复贡献。绑定 emitter 在 depth 2 已能用 NEE 完成末端连接，未绑定的 BSDF-only 路径需要 depth 3 才能命中同一 emitter；因此对照按**等散射阶数**比较 bound depth 2 / unbound depth 3，其高 spp 线性 PFM 均值必须在 2% 内，三组低 spp seed 的 NEE ROI MSE 至多是 BSDF-only 的 50%。光滑 fixture 检查单次 split、全反射、能量权重与确定性。Moonlit Stepwell 的维护者 time-to-error 固定同一 `roughness: 0.12` 积分对象，用一份独立 seed 的粗糙 NEE 8192 spp 线性参考，对比三组 NEE 1024 spp 与只删除显式灯绑定、保留 emitter 几何的 BSDF-only 2048 spp；候选平均渲染时间须在 15% 内，反射和水下 ROI 的归一化 MSE 都必须更低。该对照不写入 gallery stats；当前报告不沿用缺少同次原始记录的历史数值。它改变的是采样策略而不是场景辐射度，且仅供维护者手工执行，不进入默认 acceptance，也不是跨 GPU 性能承诺。
+定向 GPU fixture 检查固定 seed、粗糙反射/透射、全反射、两侧法线语义、深浅路径 RGB Beer、浸没玻璃的介质栈、depth-1 粗糙 NEE、透明中间边界阻断，以及后续真实水面顶点恢复贡献。绑定 emitter 在 depth 2 已能用 NEE 完成末端连接，未绑定的 BSDF-only 路径需要 depth 3 才能命中同一 emitter；因此对照按**等散射阶数**比较 bound depth 2 / unbound depth 3，其高 spp 线性 PFM 均值必须在 2% 内，三组低 spp seed 的 NEE ROI MSE 至多是 BSDF-only 的 50%。光滑 fixture 检查单次 split、全反射、能量权重与确定性。
 
-正式 Moonlit Stepwell 使用 `roughness=0.12`、512 spp、depth 12、direct 64 / indirect 16 贡献钳位，并为 gallery PNG 启用 OptiX AI Denoiser。所有能量、无偏性和 time-to-error 比较都通过 `render(linear_output=..., denoise=False, clamp_direct=0, clamp_indirect=0)` 保存 tone map 前的 PFM；因此降噪和有偏钳位都不参与上述数值结论。tile seam、漏交和构图还需人工检查，统计安全门与 Compute Sanitizer 则检查数值和内存错误。
+正式 Moonlit Stepwell 使用 `roughness=0.12`、512 spp、depth 12、direct 64 / indirect 16 贡献钳位，并为 gallery PNG 启用 OptiX AI Denoiser。所有能量、无偏性和 MSE 比较都通过 `render(linear_output=..., denoise=False, clamp_direct=0, clamp_indirect=0)` 保存 tone map 前的 PFM；因此降噪和有偏钳位都不参与上述数值结论。tile seam、漏交和构图还需人工检查，统计安全门负责拒绝数值异常。
 
 当前模型仍有以下边界：
 

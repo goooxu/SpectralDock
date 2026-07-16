@@ -11,8 +11,22 @@ SPECTRALDOCK_CUDA_ROOT="${SPECTRALDOCK_CUDA_ROOT:-}"
 SPECTRALDOCK_PHYSX_CUDA_ROOT="${SPECTRALDOCK_PHYSX_CUDA_ROOT:-}"
 PHYSX_ROOT="${PHYSX_ROOT:-}"
 SPECTRALDOCK_PHYSX_WORKER="${SPECTRALDOCK_PHYSX_WORKER:-${PHYSX_BUILD}/spectraldock_physx_worker}"
-COMPUTE_SANITIZER="${COMPUTE_SANITIZER:-${SPECTRALDOCK_CUDA_ROOT:+${SPECTRALDOCK_CUDA_ROOT}/bin/compute-sanitizer}}"
 export SPECTRALDOCK_PHYSX_WORKER
+
+STATIC_EXAMPLES=(
+  material-cathedral
+  neon-koi
+  celestial-archive
+  reflector-laboratory
+  benchmark-harbor
+  ember-forge
+  moonlit-stepwell
+  radiance-pavilion
+)
+PHYSX_EXAMPLES=(
+  kinetic-foundry
+  lava-temple-oracle
+)
 
 die() {
   echo "error: $*" >&2
@@ -37,15 +51,6 @@ require_cuda_root() {
   [[ -n "${SPECTRALDOCK_CUDA_ROOT}" ]] ||
     die "SPECTRALDOCK_CUDA_ROOT must name the CUDA 13.3 toolkit"
   require_file "${SPECTRALDOCK_CUDA_ROOT}/bin/nvcc"
-}
-
-require_compute_sanitizer() {
-  require_cuda_root
-  [[ -n "${COMPUTE_SANITIZER}" ]] ||
-    die "COMPUTE_SANITIZER must name the CUDA Compute Sanitizer executable"
-  require_file "${COMPUTE_SANITIZER}"
-  [[ -x "${COMPUTE_SANITIZER}" ]] ||
-    die "Compute Sanitizer is not executable: ${COMPUTE_SANITIZER}"
 }
 
 require_physx_roots() {

@@ -13,6 +13,9 @@ PANEL_BOXES = {
     "screen": (24, 16, 39, 44),
     "metal": (43, 16, 58, 44),
 }
+ROOT = Path(__file__).resolve().parents[1]
+IMAGE_PATH = ROOT / "output/tests/multi-material-mesh-smoke.png"
+STATS_PATH = ROOT / "output/tests/multi-material-mesh-smoke.stats.json"
 
 
 def pixels(image: Image.Image, box: tuple[int, int, int, int]):
@@ -36,13 +39,12 @@ def saturated_count(image: Image.Image, box: tuple[int, int, int, int]) -> int:
 
 
 def main() -> int:
-    if len(sys.argv) != 3:
+    if len(sys.argv) != 1:
         raise RuntimeError(
-            "usage: check_multi_material_mesh_smoke.py IMAGE STATS"
+            "check_multi_material_mesh_smoke.py does not accept arguments"
         )
-    image_path, stats_path = map(Path, sys.argv[1:])
 
-    stats = json.loads(stats_path.read_text(encoding="utf-8"))
+    stats = json.loads(STATS_PATH.read_text(encoding="utf-8"))
     expected_geometry = {
         "objects": 2,
         "instances": 2,
@@ -73,7 +75,7 @@ def main() -> int:
                 )
             )
 
-    with Image.open(image_path) as decoded:
+    with Image.open(IMAGE_PATH) as decoded:
         decoded.load()
         if decoded.size != (64, 64) or decoded.mode != "RGBA":
             raise RuntimeError(

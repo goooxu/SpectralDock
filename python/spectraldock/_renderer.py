@@ -56,15 +56,6 @@ class ObjectHandle:
     _owner: object = field(repr=False, compare=False)
 
 
-@dataclass(frozen=True, slots=True)
-class LightHandle:
-    """Typed reference to a light owned by one :class:`Renderer`."""
-
-    name: str
-    id: int
-    _owner: object = field(repr=False, compare=False)
-
-
 def _name(value: str, label: str = "name") -> str:
     if not isinstance(value, str) or not value:
         raise ValueError(f"{label} must be a non-empty string")
@@ -156,9 +147,10 @@ def _write_json_atomic(path: Path, value: Mapping[str, Any]) -> None:
 class Renderer:
     """Build and render one immutable OptiX scene from ordinary Python code.
 
-    Resource methods return typed handles.  A handle can only be consumed by
-    the renderer that created it, preventing accidental cross-scene references.
-    The native builder remains the authoritative validation boundary.
+    Texture, material, mesh, and object methods return typed handles.  A handle
+    can only be consumed by the renderer that created it, preventing accidental
+    cross-scene references.  Lights are terminal registrations.  The native
+    builder remains the authoritative validation boundary.
     """
 
     def __init__(self, device: int = 0, *, scene_name: str | None = None) -> None:
@@ -167,20 +159,9 @@ class Renderer:
         self._owner = object()
         self._builder = _native.SceneBuilder()
         self._scene: Any | None = None
-        self._textures: dict[str, TextureHandle] = {}
-        self._materials: dict[str, MaterialHandle] = {}
-        self._meshes: dict[str, MeshHandle] = {}
-        self._objects: dict[str, ObjectHandle] = {}
-        self._lights: dict[str, LightHandle] = {}
         self._exposure = 0.0
         self._clamp_direct = 64.0
         self._clamp_indirect = 16.0
-
-    @property
-    def gpu_enabled(self) -> bool:
-        """Whether the native extension was configured with CUDA and OptiX."""
-
-        return bool(_native.gpu_enabled)
 
     def _editable(self) -> None:
         if self._scene is not None:
@@ -195,28 +176,6 @@ class Renderer:
         if value._owner is not self._owner:
             raise ValueError(f"{label} belongs to a different Renderer")
         return value.id
-
-    @staticmethod
-    def _lookup(registry: Mapping[str, _HandleType], name: str) -> _HandleType:
-        try:
-            return registry[name]
-        except KeyError:
-            raise KeyError(f"unknown resource {name!r}") from None
-
-    def texture_handle(self, name: str) -> TextureHandle:
-        return self._lookup(self._textures, name)
-
-    def material_handle(self, name: str) -> MaterialHandle:
-        return self._lookup(self._materials, name)
-
-    def mesh_handle(self, name: str) -> MeshHandle:
-        return self._lookup(self._meshes, name)
-
-    def object_handle(self, name: str) -> ObjectHandle:
-        return self._lookup(self._objects, name)
-
-    def light_handle(self, name: str) -> LightHandle:
-        return self._lookup(self._lights, name)
 
     def integrator(
         self,
@@ -240,17 +199,11 @@ class Renderer:
         look_from: Sequence[float],
         look_at: Sequence[float],
         up: Sequence[float] = (0.0, 1.0, 0.0),
-        vfov: float | None = None,
-        vertical_fov_degrees: float | None = None,
+        vfov: float = 45.0,
         aperture: float = 0.0,
         focus_distance: float | None = None,
     ) -> None:
         self._editable()
-        if vfov is not None and vertical_fov_degrees is not None:
-            raise TypeError("vfov and vertical_fov_degrees are mutually exclusive")
-        field_of_view = 45.0 if vfov is None and vertical_fov_degrees is None else (
-            vertical_fov_degrees if vertical_fov_degrees is not None else vfov
-        )
         origin = _vector(look_from, 3, "look_from")
         target = _vector(look_at, 3, "look_at")
         distance = math.dist(origin, target)
@@ -261,7 +214,7 @@ class Renderer:
             origin,
             target,
             _vector(up, 3, "up"),
-            _scalar(field_of_view, "vfov"),
+            _scalar(vfov, "vfov"),
             _scalar(aperture, "aperture"),
             focus,
         )
@@ -324,7 +277,6 @@ class Renderer:
         else:
             raise ValueError(f"unsupported texture type: {kind!r}")
         handle = TextureHandle(resource_name, identifier, self._owner)
-        self._textures[resource_name] = handle
         return handle
 
     def material(
@@ -391,7 +343,6 @@ class Renderer:
             absorption_value,
         )
         handle = MaterialHandle(resource_name, identifier, self._owner)
-        self._materials[resource_name] = handle
         return handle
 
     def mesh(
@@ -429,7 +380,6 @@ class Renderer:
             self._owner,
             bool(material_mapping),
         )
-        self._meshes[resource_name] = handle
         return handle
 
     def _face_ids(
@@ -455,8 +405,6 @@ class Renderer:
         self._editable()
         resource_name = _name(name)
         kind = _name(type, "type")
-        if kind == "mesh_instance":
-            kind = "mesh"
 
         if kind == "water_surface":
             if "front_material" in parameters or "back_material" in parameters:
@@ -537,7 +485,7 @@ class Renderer:
                 )
                 _reject_extra(parameters, "sphere")
                 identifier = self._builder.add_sphere(*values)
-            elif kind in {"rectangle", "sketch"}:
+            elif kind == "rectangle":
                 values = (
                     resource_name,
                     _vector(_take(parameters, "p1"), 3, "p1"),
@@ -548,13 +496,8 @@ class Renderer:
                     alpha,
                     cutoff,
                 )
-                _reject_extra(parameters, kind)
-                add = (
-                    self._builder.add_rectangle
-                    if kind == "rectangle"
-                    else self._builder.add_sketch
-                )
-                identifier = add(*values)
+                _reject_extra(parameters, "rectangle")
+                identifier = self._builder.add_rectangle(*values)
             elif kind == "disk":
                 values = (
                     resource_name,
@@ -583,27 +526,13 @@ class Renderer:
                 _reject_extra(parameters, "cylinder")
                 identifier = self._builder.add_cylinder(*values)
             elif kind == "parabola":
-                clip = _take(parameters, "clip", _UNSET)
-                clip_min = _take(parameters, "clip_min", _UNSET)
-                clip_max = _take(parameters, "clip_max", _UNSET)
-                if clip is not _UNSET:
-                    if clip_min is not _UNSET or clip_max is not _UNSET:
-                        raise TypeError("clip and clip_min/clip_max are mutually exclusive")
-                    if not isinstance(clip, Mapping):
-                        raise TypeError("clip must be a mapping with min and max")
-                    clip_values = dict(clip)
-                    clip_min = _take(clip_values, "min")
-                    clip_max = _take(clip_values, "max")
-                    _reject_extra(clip_values, "clip")
-                elif clip_min is _UNSET or clip_max is _UNSET:
-                    raise TypeError("parabola requires clip or clip_min and clip_max")
                 values = (
                     resource_name,
                     _vector(_take(parameters, "origin"), 3, "origin"),
                     _vector(_take(parameters, "normal"), 3, "normal"),
                     _vector(_take(parameters, "focus"), 3, "focus"),
-                    _vector(clip_min, 3, "clip_min"),
-                    _vector(clip_max, 3, "clip_max"),
+                    _vector(_take(parameters, "clip_min"), 3, "clip_min"),
+                    _vector(_take(parameters, "clip_max"), 3, "clip_max"),
                     front,
                     back,
                     alpha,
@@ -612,29 +541,19 @@ class Renderer:
                 _reject_extra(parameters, "parabola")
                 identifier = self._builder.add_parabola(*values)
             elif kind == "mesh":
-                transform = _take(parameters, "transform", None)
-                transform_values: dict[str, Any] = {}
-                if transform is not None:
-                    if not isinstance(transform, Mapping):
-                        raise TypeError("transform must be a mapping")
-                    transform_values.update(transform)
-                for key in ("translate", "rotate_degrees", "scale"):
-                    if key in parameters:
-                        if key in transform_values:
-                            raise TypeError(f"transform.{key} and {key} are mutually exclusive")
-                        transform_values[key] = parameters.pop(key)
                 translate = _vector(
-                    transform_values.pop("translate", (0.0, 0.0, 0.0)),
+                    _take(parameters, "translate", (0.0, 0.0, 0.0)),
                     3,
                     "translate",
                 )
                 rotate = _vector(
-                    transform_values.pop("rotate_degrees", (0.0, 0.0, 0.0)),
+                    _take(parameters, "rotate_degrees", (0.0, 0.0, 0.0)),
                     3,
                     "rotate_degrees",
                 )
-                scale = _vector(transform_values.pop("scale", (1.0, 1.0, 1.0)), 3, "scale")
-                _reject_extra(transform_values, "transform")
+                scale = _vector(
+                    _take(parameters, "scale", (1.0, 1.0, 1.0)), 3, "scale"
+                )
                 _reject_extra(parameters, "mesh")
                 identifier = self._builder.add_mesh_instance(
                     resource_name, mesh_id, translate, rotate, scale,
@@ -644,10 +563,9 @@ class Renderer:
                 raise ValueError(f"unsupported object type: {kind!r}")
 
         handle = ObjectHandle(resource_name, identifier, self._owner)
-        self._objects[resource_name] = handle
         return handle
 
-    def light(self, name: str, type: str, **parameters: Any) -> LightHandle:
+    def light(self, name: str, type: str, **parameters: Any) -> None:
         self._editable()
         resource_name = _name(name)
         kind = _name(type, "type")
@@ -724,10 +642,7 @@ class Renderer:
             "point": self._builder.add_point_light,
             "directional": self._builder.add_directional_light,
         }[kind]
-        identifier = add_light(*values)
-        handle = LightHandle(resource_name, identifier, self._owner)
-        self._lights[resource_name] = handle
-        return handle
+        add_light(*values)
 
     def render(
         self,
@@ -736,26 +651,19 @@ class Renderer:
         width: int = 1024,
         height: int = 1024,
         spp: int = 256,
-        depth: int | None = None,
-        max_depth: int | None = None,
+        depth: int = 12,
         seed: int = 1,
         denoise: bool = False,
         stats_output: str | os.PathLike[str] | None = None,
         linear_output: str | os.PathLike[str] | None = None,
-        exposure: float | None = None,
         clamp_direct: float | None = None,
         clamp_indirect: float | None = None,
         validation: bool | None = None,
     ) -> dict[str, Any]:
-        if depth is not None and max_depth is not None:
-            raise TypeError("depth and max_depth are mutually exclusive")
-        render_depth = 12 if depth is None and max_depth is None else (
-            max_depth if max_depth is not None else depth
-        )
         width_value = _integer(width, "width", 1, 16384)
         height_value = _integer(height, "height", 1, 16384)
         spp_value = _integer(spp, "spp", 1, 1_000_000)
-        depth_value = _integer(render_depth, "max_depth", 1, 64)
+        depth_value = _integer(depth, "depth", 1, 64)
         seed_value = _integer(seed, "seed", 0, 2**32 - 1)
         if not isinstance(denoise, bool):
             raise TypeError("denoise must be a bool")
@@ -789,7 +697,7 @@ class Renderer:
             spp_value,
             depth_value,
             seed_value,
-            self._exposure if exposure is None else _scalar(exposure, "exposure"),
+            self._exposure,
             direct_clamp,
             indirect_clamp,
             denoise,
@@ -811,7 +719,6 @@ class Renderer:
 
 
 __all__ = [
-    "LightHandle",
     "MaterialHandle",
     "MeshHandle",
     "ObjectHandle",

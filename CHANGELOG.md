@@ -29,6 +29,12 @@ commit 列表仍以 Git 历史为准。发布新版本时，应把 `Unreleased` 
   保持 HDR 环境贴图是唯一光源。
 - OBJ 导入器会丢弃 corner 解析到完全重复 position 的零面积导出器残留，
   但仍拒绝三点不同的共线退化面；Sparky 源面与可渲染面统计分别锁定。
+- Python API 收敛到单一规范写法：相机使用 `vfov`，mesh 使用平铺变换，
+  parabola 使用 `clip_min`/`clip_max`，渲染深度使用 `depth`，曝光属于背景；
+  `light()` 改为注册后返回 `None`。
+- 默认 GPU 验收收敛为 Release smoke、OptiX validation、受控数学契约、八个
+  静态示例预览和两个物理预览；可用 `SPECTRALDOCK_BUILD_PHYSX=OFF` 显式
+  跳过 PhysX SDK、worker 与物理预览，host 检查统一由 `scripts/test.sh` 进入。
 
 ### 移除
 
@@ -36,6 +42,13 @@ commit 列表仍以 Git 历史为准。发布新版本时，应把 `Unreleased` 
   场景序列化。这是有意的破坏性接口变化；stats、physics 和资产 manifest
   JSON 仍作为非场景运行记录保留。
 - 移除 Dockerfiles、镜像构建脚本和容器运行路径。
+- 移除 Python API 的 `vertical_fov_degrees`、`mesh_instance`、嵌套
+  `transform`、`max_depth`、parabola `clip` 和 render `exposure` 兼容入口，
+  以及按名称查询 handle 的 registry、`LightHandle` 与 `gpu_enabled`。
+- 移除独立 `sketch` 几何；alpha 图形统一使用 rectangle 的
+  `alpha_texture`/`alpha_cutoff`。同时删除独立 sanitizer 矩阵、Moonlit
+  time-to-error、Radiance Pavilion 场景级 A/B 和粗糙介电 8192 spp full
+  profile 等高成本维护流程。
 
 ## [0.1.0] - 2026-07-15
 

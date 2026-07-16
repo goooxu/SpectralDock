@@ -25,7 +25,6 @@ enum class MaterialType : std::uint32_t {
 enum class GeometryType : std::uint32_t {
   Sphere,
   Rectangle,
-  Sketch,
   Disk,
   Cylinder,
   Parabola,
@@ -146,12 +145,6 @@ struct RectangleData {
   Vec3 p3{1.0f, 1.0f, 0.0f};
 };
 
-struct SketchData {
-  Vec3 p1{};
-  Vec3 p2{0.0f, 1.0f, 0.0f};
-  Vec3 p3{1.0f, 1.0f, 0.0f};
-};
-
 struct DiskData {
   Vec3 center{};
   Vec3 normal{0.0f, 1.0f, 0.0f};
@@ -196,7 +189,6 @@ struct WaterSurfaceData {
 
 using GeometryData = std::variant<SphereData,
                                   RectangleData,
-                                  SketchData,
                                   DiskData,
                                   CylinderData,
                                   ParabolaData,

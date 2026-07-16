@@ -526,14 +526,12 @@ DeviceGeometryData geometry_for(const Scene& scene, const Object& object,
       d.aabb_min = f3(g.center - extent);
       d.aabb_max = f3(g.center + extent);
     }
-  } else if (object.type == GeometryType::Rectangle || object.type == GeometryType::Sketch) {
-    Vec3 a, b, c;
-    if (object.type == GeometryType::Rectangle) {
-      const auto& g = std::get<RectangleData>(object.geometry); a=g.p1; b=g.p2; c=g.p3;
-    } else {
-      const auto& g = std::get<SketchData>(object.geometry); a=g.p1; b=g.p2; c=g.p3;
-    }
-    d.primitive_type = kPrimitiveTriangle; d.p0=f3(a); d.p1=f3(b); d.p2=f3(c);
+  } else if (object.type == GeometryType::Rectangle) {
+    const auto& g = std::get<RectangleData>(object.geometry);
+    d.primitive_type = kPrimitiveTriangle;
+    d.p0 = f3(g.p1);
+    d.p1 = f3(g.p2);
+    d.p2 = f3(g.p3);
   } else if (object.type == GeometryType::Disk) {
     const auto& g = std::get<DiskData>(object.geometry); Vec3 u,v; basis(g.normal,u,v);
     const Vec3 n=normalize(g.normal), e{
@@ -717,7 +715,7 @@ Gas build_object(OptixDeviceContext context, cudaStream_t stream,
     input.sphereArray.vertexStrideInBytes=sizeof(float3); input.sphereArray.radiusBuffers=&bp;
     input.sphereArray.radiusStrideInBytes=sizeof(float); input.sphereArray.singleRadius=1;
     input.sphereArray.flags=&flag; input.sphereArray.numSbtRecords=1;
-  } else if (object.type == GeometryType::Rectangle || object.type == GeometryType::Sketch) {
+  } else if (object.type == GeometryType::Rectangle) {
     const float3 p3=make_float3(g.p0.x+g.p2.x-g.p1.x,g.p0.y+g.p2.y-g.p1.y,g.p0.z+g.p2.z-g.p1.z);
     const std::array<float3,4> vertices{g.p0,g.p1,g.p2,p3};
     const std::array<uint3,2> indices{make_uint3(0,1,2),make_uint3(0,2,3)};

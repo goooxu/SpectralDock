@@ -8,7 +8,6 @@ from pkgutil import extend_path
 __path__ = extend_path(__path__, __name__)
 
 from ._renderer import (
-    LightHandle,
     MaterialHandle,
     MeshHandle,
     ObjectHandle,
@@ -18,7 +17,6 @@ from ._renderer import (
 from .physics import PhysicsError, PhysicsMaterial, PhysicsResult, PhysicsWorld
 
 __all__ = [
-    "LightHandle",
     "MaterialHandle",
     "MeshHandle",
     "ObjectHandle",

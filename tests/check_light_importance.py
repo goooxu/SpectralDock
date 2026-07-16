@@ -151,7 +151,7 @@ def add_representative_lights(renderer):
     add_dim_flame(renderer)
 
 
-def render(renderer, directory, name, mode, spp, seed, max_depth=1):
+def render(renderer, directory, name, mode, spp, seed, depth=1):
     output = directory / (name + ".png")
     stats = renderer.render(
         output=output,
@@ -159,7 +159,7 @@ def render(renderer, directory, name, mode, spp, seed, max_depth=1):
         width=WIDTH,
         height=HEIGHT,
         spp=spp,
-        depth=max_depth,
+        depth=depth,
         seed=seed,
         denoise=False,
     )
@@ -395,7 +395,7 @@ def main():
             "uniform",
             768,
             1451,
-            max_depth=2,
+            depth=2,
         )
         bound_importance, _ = render(
             bound_emitter_mis_renderer("importance"),
@@ -404,7 +404,7 @@ def main():
             "importance",
             768,
             1559,
-            max_depth=2,
+            depth=2,
         )
         bound_uniform_mean = mean_luminance(bound_uniform)
         bound_importance_mean = mean_luminance(bound_importance)

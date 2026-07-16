@@ -48,7 +48,7 @@ t=\frac{\mathbf n\cdot(\mathbf p_0-\mathbf o)}
 {\mathbf n\cdot\mathbf d}.
 $$
 
-分母接近零时射线与平面平行。圆盘还要求 $\|\mathbf r(t)-\mathbf p_0\|\le R$。rectangle 和 sketch 则在主机端拆成两个三角形交给 OptiX 内建三角形求交。Python API 中的 rectangle 实际允许任意非退化平行四边形，并不额外校验四个角为直角；rectangle light 也只要求两条边不共线。
+分母接近零时射线与平面平行。圆盘还要求 $\|\mathbf r(t)-\mathbf p_0\|\le R$。rectangle 在主机端拆成两个三角形交给 OptiX 内建三角形求交；需要镂空轮廓时，同一种几何再通过 `alpha_texture` 和 any-hit 裁剪。Python API 中的 rectangle 实际允许任意非退化平行四边形，并不额外校验四个角为直角；rectangle light 也只要求两条边不共线。
 
 ### 1.3 圆柱
 

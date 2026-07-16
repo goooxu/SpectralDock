@@ -613,8 +613,8 @@ void test_scene_builder_complete_scene() {
   const std::int32_t panel = builder.add_rectangle(
       "panel", {-1.0f, 3.0f, -1.0f}, {1.0f, 3.0f, -1.0f},
       {1.0f, 3.0f, 1.0f}, emitter, emitter, kInvalidId, 0.5f);
-  const std::int32_t sketch = builder.add_sketch(
-      "sketch", {-2.0f, 0.0f, -2.0f}, {-2.0f, 2.0f, -2.0f},
+  const std::int32_t alpha_rectangle = builder.add_rectangle(
+      "alpha-rectangle", {-2.0f, 0.0f, -2.0f}, {-2.0f, 2.0f, -2.0f},
       {0.0f, 2.0f, -2.0f}, diffuse, diffuse, mask, 0.25f);
   const std::int32_t disk = builder.add_disk(
       "disk", {3.0f, 2.0f, 0.0f}, {0.0f, -2.0f, 0.0f}, 0.75f,
@@ -644,7 +644,7 @@ void test_scene_builder_complete_scene() {
   check(diffuse == 0 && metal == 1 && glass == 2 && emitter == 3 &&
             water == 4 && mesh == 0,
         "typed resource ids");
-  check(glass_sphere == 0 && panel == 1 && sketch == 2 && disk == 3 &&
+  check(glass_sphere == 0 && panel == 1 && alpha_rectangle == 2 && disk == 3 &&
             cylinder == 4 && parabola == 5 && instance == 6 &&
             surface == 7 && emitter_sphere == 8,
         "stable object ids");
@@ -697,13 +697,16 @@ void test_scene_builder_complete_scene() {
 
   const std::array<GeometryType, 9> expected_geometry = {
       GeometryType::Sphere,       GeometryType::Rectangle,
-      GeometryType::Sketch,       GeometryType::Disk,
+      GeometryType::Rectangle,    GeometryType::Disk,
       GeometryType::Cylinder,     GeometryType::Parabola,
       GeometryType::Mesh,         GeometryType::WaterSurface,
       GeometryType::Sphere};
   for (std::size_t i = 0; i < expected_geometry.size(); ++i)
     check(scene->objects[i].type == expected_geometry[i],
-          "all geometry types retained");
+          "object geometry types retained");
+  check(scene->objects[2].alpha_texture == mask &&
+            scene->objects[2].alpha_cutoff == 0.25f,
+        "alpha rectangle fields retained");
   const auto& built_transform =
       std::get<MeshInstanceData>(scene->objects[6].geometry).transform;
   near(built_transform.rotate_degrees.z, 30.0f, 0.0f,
@@ -919,13 +922,6 @@ void test_scene_builder_geometry_validation() {
                               kInvalidId, 0.5f);
       },
       "degenerate", "rectangle degeneracy");
-  expect_error(
-      [&] {
-        builder.add_sketch("sketch", Vec3{0.0f}, {0.0f, 1.0f, 0.0f},
-                           {1.0f, 1.0f, 0.0f}, diffuse, diffuse, kInvalidId,
-                           0.5f);
-      },
-      "requires alpha_texture", "sketch alpha requirement");
   expect_error(
       [&] {
         builder.add_disk("disk", Vec3{0.0f}, Vec3{0.0f}, 1.0f, diffuse,

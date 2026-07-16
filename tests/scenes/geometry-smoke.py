@@ -48,7 +48,7 @@ def create_renderer() -> Renderer:
     )
     renderer.object(
         name="alpha_panel",
-        type="sketch",
+        type="rectangle",
         p1=(-1.2, 0.05, 0.8),
         p2=(-1.2, 1.35, 0.8),
         p3=(-0.4, 1.35, 0.8),

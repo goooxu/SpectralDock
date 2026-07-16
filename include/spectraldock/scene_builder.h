@@ -55,10 +55,6 @@ class SceneBuilder {
                              Vec3 p3, std::int32_t front_material,
                              std::int32_t back_material,
                              std::int32_t alpha_texture, float alpha_cutoff);
-  std::int32_t add_sketch(const std::string& name, Vec3 p1, Vec3 p2,
-                          Vec3 p3, std::int32_t front_material,
-                          std::int32_t back_material,
-                          std::int32_t alpha_texture, float alpha_cutoff);
   std::int32_t add_disk(const std::string& name, Vec3 center, Vec3 normal,
                         float radius, std::int32_t front_material,
                         std::int32_t back_material,

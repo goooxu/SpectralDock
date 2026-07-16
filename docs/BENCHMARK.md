@@ -39,8 +39,6 @@ Ember Forge 的三段 flame 不注册为几何，因此不增加 object、instan
 
 Moonlit Stepwell 的 water_surface 注册为一个共享波面参数的 custom-primitive GAS；最短波长决定 tile 数和 GAS primitive 数，但不把解析曲面三角化。当前正式 stats 记录 13,239,801,692 次 height evaluation、1,709,683,496 次 tile test、277,840,586 个 reported root、253,017,452 个 medium segment、398,730,722 次粗糙水面 NEE 尝试和 233,784,483 份非零直接光贡献；delta split、solver overflow 与 medium error 均为 0。它在每个粗糙水面顶点各取一个功率选灯样本和均匀索引样本，并与 BSDF emitter-hit 使用三技术 balance；所有球外连续 BSDF 顶点对单面 sphere 灯按可见立体角取样。其路径追踪耗时和 rays/s 因包含 OptiX 自定义 intersection 中的 CUDA 数值求根、额外 shadow connection、介质栈与 Beer 计算，不应直接与纯表面场景比较。正式 PNG 启用 Denoiser 与贡献钳位；下面的线性误差对照显式关闭降噪和两级钳位。
 
-维护级 Moonlit time-to-error 在 320×180 上使用一份独立 seed 的 8192 spp 粗糙 NEE PFM 作为参考，并对三个候选 seed 求平均；候选为 NEE 1024 spp，以及仅删除显式灯绑定、保留 emitter 几何的 BSDF-only 2048 spp。该维护对照不写入 gallery stats，当前提交的 `docs/gallery/*.stats.json` 因此不能为它提供同次时间或 MSE。本页不沿用历史数值；需要发布新结论时必须重新运行维护脚本，并把独立原始记录与运行环境一起保存。
-
 Radiance Pavilion 不放置有限面积灯、emitter 或其他显式灯，唯一照明来自 2048×1024 Radiance RGBE 日落海岸环境贴图。陶瓷胶囊吉祥物与显式映射十个 `usemtl` 槽的 Sparky 是双主角，周围的陶土风向标、青铜日晷、铬制抛物面日光镜和玻璃双透镜观测仪继续展示漫反射、粗糙金属、光滑金属和介电材质。Sparky 的源 OBJ 有 7,284 个面，其中 896 个完全重复坐标的零面积面在导入时丢弃；它实际向第二份 mesh GAS 提交 6,388 个三角形，与 mascot 合计 12,204 个 unique mesh triangles。三块屏幕共享显式 sRGB atlas；`EmitYellow` 槽绑定 Lambertian 而非 emitter，因此不改变环境唯一照明契约。该场景用于观察环境亮区的重要性采样、镜面反射与折射；HDR 纹理、两级 CDF 和两份 mesh 的设备内存均计入本次显存统计。
 
 ## 即时 Kinetic Foundry（PhysX）
@@ -101,27 +99,19 @@ direct contribution 和 1,360,014 次 indirect contribution。
 
 同次 physics sidecar 记录 130 个 moving、130 个达到最小径向位移、130 个
 rotating、四个水平象限全部占用、0 个 sleeping dynamic actors，且
-`cpu_fallback=false`。该 PNG、stats 和 physics sidecar 是一次通过契约、
-Compute Sanitizer memcheck 与人工构图检查的运行记录，不是跨 GPU 物理姿态 golden
-或性能门槛。
-
-当前 acceptance 对封面使用一次显式 `--target-processes all` memcheck，同时
-检查 CUDA 13.3 OptiX 根进程和它启动的 CUDA 12.8 PhysX worker。PhysX 5.8
-内部容量缓冲复制会产生上游 initcheck 诊断，所以项目不宣称对 worker 运行
-initcheck 或 racecheck；GPU-only 身份、双运行 validator 和独立渲染帧仍负责
-物理结果契约，但它们不能替代内存安全检查。
+`cpu_fallback=false`。该 PNG、stats 和 physics sidecar 是一次通过场景契约与
+人工构图检查的运行记录，不是跨 GPU 物理姿态 golden 或性能门槛。
 
 ## 定向 GPU fixture
 
-综合 GPU fixture 使用 64×64、1 spp、depth 6、seed 1 和无降噪输出，覆盖带 UV/平滑法线/alpha 的 mesh、两个共享 GAS 且使用不同变换/材质的实例，以及 custom primitives。其 RTX 5090 SHA-256 为 `8218a4c77997e6c581a846b32a75f15e78238c344ae5a8b9f3d6090e5b4ed990`；`acceptance.sh` 在 Release smoke 后立即调用 `check_mesh_smoke.py` 验证它，随后才进入独立的 Debug Compute Sanitizer 检查。
+综合 GPU fixture 使用 64×64、1 spp、depth 6、seed 1 和无降噪输出，覆盖带 UV/平滑法线/alpha 的 mesh、两个共享 GAS 且使用不同变换/材质的实例，以及 custom primitives。其 RTX 5090 SHA-256 为 `8218a4c77997e6c581a846b32a75f15e78238c344ae5a8b9f3d6090e5b4ed990`；`acceptance.sh` 在 Release smoke 后调用 `check_mesh_smoke.py` 验证它。
 
 多材质 mesh fixture 使用 64×64、1 spp、depth 4、seed 211 和无降噪输出，
 把同一份六三角形 OBJ 的 `RedPanel`、`ScreenPanel`、`MetalPanel` 显式绑定
 为红色漫反射、sRGB 纹理漫反射与粗糙金属。stats 必须保持 1 个 unique mesh、
 1 份 mesh GAS 和 6 个 mesh triangles；checker 再对三个固定面板 ROI 做宽松的
 主色、纹理色差与中性金属断言，直接验证逐 primitive 材质读取，但不建立跨 GPU
-像素 golden。该 fixture 同时进入 Compute Sanitizer 列表；本次最小验收只运行
-Release memcheck，未宣称执行完整 Debug initcheck/racecheck 矩阵。
+像素 golden。
 
 积分器兼容性对照使用 smoke 场景的临时绑定/未绑定灯副本，以 64×64、4 spp、depth 1、seed 1 和无降噪渲染；两版解码 RGBA 必须逐字节相同且非空。该测试由 `acceptance.sh` 在 Release 构建后运行，临时 PNG/stats 自动清理，不建立 golden。
 
@@ -129,9 +119,9 @@ HDR 环境 fixture 检查 RGBE 加载、固定 seed 确定性、强度缩放、y
 
 firefly fixture 分别触发 direct 与 indirect 长尾贡献，检查默认 64/16、Python API 覆盖、最大 RGB 通道保色相缩放、两类原子计数器，以及 0/0 时输出与原有随机序列不变。钳位是明确的有偏展示策略，因此其降噪效果不参与无偏采样器的收敛均值判定。
 
-flame fixture 额外检查固定 seed RGBA 确定性、外部漫反射面的体积 NEE、表面遮挡、面积光穿过体积后的吸收、介电 delta 路径以及 volume counters；同一 fixture 进入三种 Compute Sanitizer 检查：memcheck 覆盖 OptiX/CUDA 内存访问，带 `--check-optix` 的 initcheck 覆盖 OptiX launch 未初始化读取，racecheck 只覆盖普通 CUDA postprocess，不宣称检查 OptiX device program 的竞争。它不建立跨 GPU 像素 golden，也不设置自动性能阈值。
+flame fixture 额外检查固定 seed RGBA 确定性、外部漫反射面的体积 NEE、表面遮挡、面积光穿过体积后的吸收、介电 delta 路径以及 volume counters。它不建立跨 GPU 像素 golden，也不设置自动性能阈值。
 
-water fixture 检查固定 seed、解析波面、粗糙/光滑反射与折射、GGX 介电两侧语义、三技术 NEE/MIS、可见球锥、delta 灯 NEE、深浅路径的 RGB Beer 吸收、浸没玻璃 sphere 的介质栈、透明边界阻断、不透明遮挡和 water counters；同一 fixture 进入三种 Compute Sanitizer 检查。tile seam 还在 Moonlit Stepwell 预览中人工检查；它不建立跨 GPU 像素 golden。耗时较高的同模型 time-to-error 脚本只供维护者手工运行，不进入默认 acceptance。
+water fixture 检查固定 seed、解析波面、粗糙/光滑反射与折射、GGX 介电两侧语义、三技术 NEE/MIS、可见球锥、delta 灯 NEE、深浅路径的 RGB Beer 吸收、浸没玻璃 sphere 的介质栈、透明边界阻断、不透明遮挡和 water counters。tile seam 还在 Moonlit Stepwell 预览中人工检查；它不建立跨 GPU 像素 golden。
 
 PNG、stats 和本页耗时表作为图形学实验的一次运行记录保留，不属于自动 golden 或性能回归门禁。
 
@@ -147,6 +137,9 @@ python3 scenes/kinetic-foundry.py
 python3 scenes/lava-temple-oracle.py
 ./scripts/render-examples.sh
 
-# 完整回归会自行构建 Release、Debug 与 PhysX worker，再运行 sanitizer
+# 默认维护者验收会自行构建 Release renderer 与 PhysX worker
 ./scripts/acceptance.sh
+
+# 没有 PhysX SDK 时，显式只运行 Renderer 验收与八个静态预览
+SPECTRALDOCK_BUILD_PHYSX=OFF ./scripts/acceptance.sh
 ```

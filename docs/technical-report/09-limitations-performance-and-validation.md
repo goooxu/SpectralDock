@@ -160,14 +160,13 @@ $$
 4. 多灯对照分别触发 rectangle、disk、sphere、flame，再验证功率选择降低强弱灯场景的低 spp MSE；sphere 对所有连续 BSDF 顶点验证可见锥采样，metal 另验证 VNDF 的均值与低样本误差；
 5. 综合 mesh GPU fixture 定向覆盖共享 GAS、实例变换、UV、平滑法线、alpha 和 custom primitives；
 6. delta 灯对照检查 point 逆平方、directional 距离不变性、背面、遮挡、逐灯确定性、粗糙介电两侧和水中 Beer；firefly 对照检查 direct/indirect 独立触发、最大 RGB 通道保色相缩放、计数器、Python API 参数覆盖和 clamp 0/0 兼容路径；
-7. water GPU 对照用 clamp 0/0 线性 PFM 检查粗糙反射/透射、两侧介质、Beer、TIR、透明阻断、光滑有界 split，并以等散射阶数（bound depth 2 / unbound depth 3）比较高 spp 均值与三 seed 低 spp MSE；Moonlit 另以同一 `roughness: 0.12` 积分对象做维护级 time-to-error：一份独立 seed 的 8192 spp 粗糙 NEE 线性参考，对比三 seed 的 NEE 1024 spp 与仅删除显式灯绑定、保留 emitter 几何的 BSDF-only 2048 spp；两者平均 GPU render 时间须在 15% 内，且 NEE 在反射/水下 ROI 的归一化 MSE 都更低；
-8. Compute Sanitizer 对 mesh、water、flame、HDR environment 和新 delta/clamp fixture 分层检查：memcheck 覆盖 OptiX/CUDA 内存访问，显式 `--check-optix` 的 initcheck 覆盖 OptiX launch 未初始化读取，racecheck 只检查普通 CUDA postprocess，不外推到 OptiX device program；
-9. 技术报告 pytest 逐字核对引用的源码片段，并检查数学标记没有使用渲染环境不支持的宏；PhysX host 测试用 typed `PhysicsWorld`/`PhysicsResult`、合成结果和定向 mutation 覆盖协议版本、GPU-only 身份、body 顺序、附件交接与封面 validator，但不假装执行 subprocess worker、真实刚体或像素渲染。
-10. RTX 5090 的正式 acceptance 对 Kinetic Foundry 与封面各即时生成低分辨率样本，完成契约和像素流程；封面还以 `--target-processes all` 进入低分辨率 memcheck，同时覆盖 Renderer 与 PhysX worker，并在 4K 发布前人工检查爆发构图、水池、火/烟/神光代理及同次 sidecar。PhysX worker 的 initcheck/racecheck 不在项目声称的覆盖范围内。
+7. water GPU 对照用 clamp 0/0 线性 PFM 检查粗糙反射/透射、两侧介质、Beer、TIR、透明阻断、光滑有界 split，并以等散射阶数（bound depth 2 / unbound depth 3）比较高 spp 均值与三 seed 低 spp MSE；
+8. 技术报告 pytest 逐字核对引用的源码片段，并检查数学标记没有使用渲染环境不支持的宏；PhysX host 测试用 typed `PhysicsWorld`/`PhysicsResult`、合成结果和定向 mutation 覆盖协议版本、GPU-only 身份、body 顺序、附件交接与封面 validator，但不假装执行 subprocess worker、真实刚体或像素渲染；
+9. RTX 5090 的维护者 acceptance 构建 Release renderer，运行启用 OptiX validation 的 smoke、受控数学契约和八个静态低分辨率示例预览；可用 PhysX SDK 时，Kinetic Foundry 与封面还会即时求解低分辨率样本并检查契约和像素流程。4K 发布前仍人工检查爆发构图、水池、火/烟/神光代理及同次 sidecar。
 
-唯一保留的像素 golden 是 mesh fixture 的 RTX 5090 基线；积分器对照的临时 PNG 和 stats 会自动清理，不保存哈希。mesh golden 只证明定向输出与已接受结果逐字节相同，不能独立证明物理正确；跨 GPU、编译器或 `--use_fast_math` 的少量浮点差异，也不自动等于数学回归。正式 gallery 与 stats 继续作为作品和一次运行记录保存，但不再是自动测试门禁；默认 acceptance 不设置性能阈值或 profiling 验收，耗时较高的 Moonlit 维护脚本才在同一次手工运行内检查相对时间。可靠结论仍需要公式审查、定向场景和数值/视觉证据结合。
+唯一保留的像素 golden 是 mesh fixture 的 RTX 5090 基线；积分器对照的临时 PNG 和 stats 会自动清理，不保存哈希。mesh golden 只证明定向输出与已接受结果逐字节相同，不能独立证明物理正确；跨 GPU、编译器或 `--use_fast_math` 的少量浮点差异，也不自动等于数学回归。正式 gallery 与 stats 继续作为作品和一次运行记录保存，但不再是自动测试门禁；默认 acceptance 不设置性能阈值或 profiling 验收。可靠结论仍需要公式审查、定向场景和数值/视觉证据结合。
 
-需要特别区分：这组 host-only 检查不编译 CUDA/OptiX 渲染器，不执行路径着色，也不输出参考像素。因此它们不是 CPU reference renderer，不能代替上述 GPU 对照、sanitizer 或 golden。RR、MIS、delta NEE 与贡献钳位实现只位于设备路径；第 4、5 章负责公式与源码审查，数值性质由 clamp 0/0 的 GPU 对照验证。
+需要特别区分：这组 host-only 检查不编译 CUDA/OptiX 渲染器，不执行路径着色，也不输出参考像素。因此它们不是 CPU reference renderer，不能代替上述 GPU 对照或 golden。RR、MIS、delta NEE 与贡献钳位实现只位于设备路径；第 4、5 章负责公式与源码审查，数值性质由 clamp 0/0 的 GPU 对照验证。
 
 ## 7. 从一个像素重新串起全文
 

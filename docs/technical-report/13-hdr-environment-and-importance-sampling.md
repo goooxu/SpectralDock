@@ -431,7 +431,7 @@ point/directional 不受该开关影响，始终逐灯求值。
 
 Host 测试覆盖 RGBE 原始/RLE scanline、坏 packet、尺寸上限、CDF 单调归一、最终 float 区间概率、全黑退化和有限灯代理。程序化环境生成器还必须逐字节重建 tracked HDR 资产。
 
-GPU 定向测试检查环境唯一照明、`intensity=0` 精确黑场、旋转响应、固定 seed 确定性和 depth 1 环境 NEE；高 spp 的 uniform/importance 均值必须收敛，低 spp 下热点环境与强弱多灯的 ROI MSE 必须由 importance 明显降低。有限灯测试还用两盏不等功率且绑定可见 emitter 几何的面积灯，在 depth 2 同时触发 NEE 与 BSDF-hit 路径，验证两侧 MIS 都使用同一 $q_i$；sphere 对所有连续表面验证可见锥。delta fixture 检查 point 逆平方、directional 距离不变、遮挡和不扰动有限灯 RNG。水面 fixture 另按等散射阶数验证确定性双选灯、可见立体角和反射分支过采样后的收敛均值不变。所有均值/MSE 对照都用 clamp 0/0；环境与 delta/clamp fixture 进入 Compute Sanitizer。
+GPU 定向测试检查环境唯一照明、`intensity=0` 精确黑场、旋转响应、固定 seed 确定性和 depth 1 环境 NEE；高 spp 的 uniform/importance 均值必须收敛，低 spp 下热点环境与强弱多灯的 ROI MSE 必须由 importance 明显降低。有限灯测试还用两盏不等功率且绑定可见 emitter 几何的面积灯，在 depth 2 同时触发 NEE 与 BSDF-hit 路径，验证两侧 MIS 都使用同一 $q_i$；sphere 对所有连续表面验证可见锥。delta fixture 检查 point 逆平方、directional 距离不变、遮挡和不扰动有限灯 RNG。水面 fixture 另按等散射阶数验证确定性双选灯、可见立体角和反射分支过采样后的收敛均值不变。所有均值/MSE 对照都用 clamp 0/0。
 
 重要性采样不是“画面增强”开关：它不能改变正确极限，也不能修复错误 HDR、缺失遮挡、错误材质或截断偏差。亮度分布也不是对任意 BSDF 都最优；极光滑 GGX 仍可能主要依赖 BSDF 采样。所有球外连续 BSDF 顶点对 sphere 使用可见立体角，球内/近球才回退整球面积。默认贡献钳位能减少 firefly，但它与本章的无偏重要性采样不同，会改变正确极限；定量比较必须设为 0/0。
 

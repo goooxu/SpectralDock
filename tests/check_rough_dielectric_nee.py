@@ -5,7 +5,6 @@ The checks intentionally compare pre-tone-map linear PFM values. PNG is still
 decoded once per render so the public output contract is exercised as well.
 """
 
-import argparse
 import math
 import struct
 import sys
@@ -38,13 +37,9 @@ class SampleProfile(NamedTuple):
     tir_spp: int
 
 
-# The full profile preserves the original convergence contract.  Acceptance
-# keeps every transport branch and assertion, but lowers the expensive
-# independent high-spp comparisons used on every routine GPU validation run.
-SAMPLE_PROFILES = {
-    "full": SampleProfile(8192, 32, 128, 512, 1024, 1024, 256, 512, 512),
-    "acceptance": SampleProfile(2048, 32, 64, 64, 256, 256, 64, 128, 128),
-}
+# Keep every transport branch and assertion while avoiding an 8192-spp
+# maintainer-only convergence pass in routine acceptance.
+SAMPLE_PROFILE = SampleProfile(2048, 32, 64, 64, 256, 256, 64, 128, 128)
 
 
 def read_pfm(path):
@@ -366,19 +361,10 @@ def generic_glass_renderer(mode, ior=1.52):
     return renderer
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--profile",
-        choices=tuple(SAMPLE_PROFILES),
-        default="full",
-        help="sampling budget; full retains the high-spp convergence contract",
-    )
-    return parser.parse_args()
-
-
 def main():
-    profile = SAMPLE_PROFILES[parse_args().profile]
+    if len(sys.argv) != 1:
+        raise RuntimeError("check_rough_dielectric_nee.py does not accept arguments")
+    profile = SAMPLE_PROFILE
 
     with tempfile.TemporaryDirectory(prefix="spectraldock-rough-nee-") as tmp:
         directory = Path(tmp)

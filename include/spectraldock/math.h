@@ -27,9 +27,6 @@ static_assert(sizeof(Vec3) == 3 * sizeof(float), "Vec3 must match CUDA float3 la
 static_assert(std::is_standard_layout<Vec3>::value, "Vec3 must remain standard-layout");
 static_assert(std::is_trivially_copyable<Vec3>::value, "Vec3 must be device-copyable");
 
-constexpr Vec2 operator+(Vec2 a, Vec2 b) { return {a.x + b.x, a.y + b.y}; }
-constexpr Vec2 operator-(Vec2 a, Vec2 b) { return {a.x - b.x, a.y - b.y}; }
-constexpr Vec2 operator*(Vec2 v, float s) { return {v.x * s, v.y * s}; }
 constexpr Vec3 operator+(Vec3 a, Vec3 b) {
   return {a.x + b.x, a.y + b.y, a.z + b.z};
 }
@@ -47,19 +44,8 @@ constexpr Vec3 operator*(Vec3 a, Vec3 b) {
 constexpr Vec3 operator/(Vec3 v, float s) {
   return {v.x / s, v.y / s, v.z / s};
 }
-constexpr Vec3 operator/(Vec3 a, Vec3 b) {
-  return {a.x / b.x, a.y / b.y, a.z / b.z};
-}
 constexpr Vec3& operator+=(Vec3& a, Vec3 b) {
   a = a + b;
-  return a;
-}
-constexpr Vec3& operator*=(Vec3& a, Vec3 b) {
-  a = a * b;
-  return a;
-}
-constexpr Vec3& operator*=(Vec3& a, float s) {
-  a = a * s;
   return a;
 }
 

@@ -192,7 +192,7 @@ def render_variant(
         width=WIDTH,
         height=HEIGHT,
         spp=spp,
-        max_depth=depth,
+        depth=depth,
         seed=SEED,
         denoise=False,
     )

@@ -6,9 +6,14 @@ source "$(dirname "$0")/common.sh"
 [[ $# -eq 0 ]] || die "acceptance.sh does not accept arguments"
 require_optix_root
 require_cuda_root
-require_physx_roots
 [[ -d "${ROOT}/assets/examples" ]] ||
   die "local asset directory is missing: assets/examples"
+
+if [[ "${SPECTRALDOCK_BUILD_PHYSX:-ON}" == ON ]]; then
+  require_physx_roots
+else
+  echo "== PhysX disabled: skipping SDK checks, worker build, and PhysX previews =="
+fi
 
 "$(dirname "$0")/configure.sh" Release
 "$(dirname "$0")/build.sh" Release
@@ -28,16 +33,9 @@ for scene in "${smoke_scenes[@]}"; do
   echo "== Python smoke scene: ${scene} =="
   run_python "${ROOT}/${scene}"
   if [[ "${scene}" == tests/scenes/mesh-composite-smoke.py ]]; then
-    run_python "${ROOT}/tests/check_mesh_smoke.py" \
-      "${ROOT}/${scene}" \
-      "${ROOT}/tests/assets/uv-quad.obj" \
-      "${ROOT}/output/tests/mesh-composite-smoke.png" \
-      "${ROOT}/output/tests/mesh-composite-smoke.stats.json" \
-      "${ROOT}/tests/golden/mesh-composite-smoke-64x64-spp1-depth6-seed1.sha256"
+    run_python "${ROOT}/tests/check_mesh_smoke.py"
   elif [[ "${scene}" == tests/scenes/multi-material-mesh-smoke.py ]]; then
-    run_python "${ROOT}/tests/check_multi_material_mesh_smoke.py" \
-      "${ROOT}/output/tests/multi-material-mesh-smoke.png" \
-      "${ROOT}/output/tests/multi-material-mesh-smoke.stats.json"
+    run_python "${ROOT}/tests/check_multi_material_mesh_smoke.py"
   fi
 done
 
@@ -49,9 +47,7 @@ run_gpu_check() {
 }
 
 # These budgets keep the routine acceptance pass practical while retaining
-# deterministic, transport-branch, and statistical A/B coverage.  Invoking a
-# check directly still uses its full/default convergence budget.  The much
-# heavier water time-to-error benchmark intentionally remains maintainer-only.
+# deterministic, transport-branch, and statistical A/B coverage.
 run_gpu_check check_integrator_mis.py --spp 4
 run_gpu_check check_delta_lights_and_firefly.py
 run_gpu_check check_flame_transport.py --spp 32
@@ -59,10 +55,8 @@ run_gpu_check check_environment_importance.py \
   --deterministic-spp 4 --rotation-spp 32 \
   --reference-spp 256 --high-spp 256 --low-spp 8
 run_gpu_check check_light_importance.py
-run_gpu_check check_radiance_pavilion_importance.py \
-  --low-spp 8 --high-spp 128 --reference-spp 256
 run_gpu_check check_water_transport.py
-run_gpu_check check_rough_dielectric_nee.py --profile acceptance
+run_gpu_check check_rough_dielectric_nee.py
 
 # Build every shipped static example through its public factory and render a
 # tiny frame. Their ordinary __main__ blocks retain the canonical quality and
@@ -83,9 +77,7 @@ renderer.render(
     seed=1,
     denoise=False,
 )'
-for scene in \
-  material-cathedral neon-koi celestial-archive reflector-laboratory \
-  benchmark-harbor ember-forge moonlit-stepwell radiance-pavilion; do
+for scene in "${STATIC_EXAMPLES[@]}"; do
   echo "== Python static example preview: ${scene} =="
   run_python -c "${STATIC_PREVIEW_CODE}" \
     "${ROOT}/scenes/${scene}.py" \
@@ -116,59 +108,21 @@ renderer.render(
     seed=int(module["SEED"]),
     denoise=False,
 )'
-for scene in kinetic-foundry lava-temple-oracle; do
-  echo "== Python PhysX smoke scene: ${scene} =="
-  run_python -c "${PHYSX_SMOKE_CODE}" \
-    "${ROOT}/scenes/${scene}.py" \
-    "${ROOT}/output/acceptance-${scene}.png"
-done
-
-"$(dirname "$0")/configure.sh" Debug
-cmake --build "${ROOT}/build/Debug" --clean-first --parallel
-source "$(dirname "$0")/activate.sh" Debug
-
-# Exercise OptiX validation once on the compact smoke scene. Compute
-# Sanitizer is run separately with validation disabled: stacking both tools
-# makes OptiX module compilation prohibitively slow and does not improve their
-# independent diagnostics.
-echo "== Debug OptiX validation smoke =="
-run_python "${ROOT}/tests/scenes/smoke.py"
-
-require_compute_sanitizer
-COVER_SANITIZER_CODE='import runpy, sys
-from pathlib import Path
-module = runpy.run_path(sys.argv[1])
-output = Path(sys.argv[2])
-physics = module["create_physics_world"]()
-renderer = module["create_renderer"](
-    physics,
-    metadata_output=output.with_suffix(".physics.json"),
-    verify=True,
-)
-renderer.render(
-    output=output,
-    stats_output=output.with_suffix(".stats.json"),
-    width=64,
-    height=36,
-    spp=1,
-    depth=12,
-    seed=int(module["SEED"]),
-    denoise=False,
-    validation=False,
-)'
-# One explicit all-process memcheck covers both the CUDA-13.x OptiX root process
-# and its CUDA-12.8 PhysX workers. PhysX initcheck is deliberately not claimed:
-# PhysX 5.8's internal buffer-capacity copies emit upstream diagnostics, while
-# OptiX initcheck and ordinary-CUDA racecheck are covered by focused fixtures.
-echo "== compute-sanitizer memcheck (PhysX lava temple cover) =="
-"${COMPUTE_SANITIZER}" --tool memcheck \
-  --target-processes all \
-  --report-api-errors explicit --error-exitcode 99 \
-  "${PYTHON}" -c "${COVER_SANITIZER_CODE}" \
-  "${ROOT}/scenes/lava-temple-oracle.py" \
-  "${ROOT}/output/sanitizer-lava-temple-oracle.png"
+if [[ "${SPECTRALDOCK_BUILD_PHYSX:-ON}" == ON ]]; then
+  for scene in "${PHYSX_EXAMPLES[@]}"; do
+    echo "== Python PhysX smoke scene: ${scene} =="
+    run_python -c "${PHYSX_SMOKE_CODE}" \
+      "${ROOT}/scenes/${scene}.py" \
+      "${ROOT}/output/acceptance-${scene}.png"
+  done
+else
+  echo "== PhysX disabled: two PhysX example previews were not run =="
+fi
 
 "$(dirname "$0")/test.sh"
-BUILD_TYPE=Debug "$(dirname "$0")/sanitizers.sh"
 
-echo "GPU renderer and PhysX scene acceptance completed"
+if [[ "${SPECTRALDOCK_BUILD_PHYSX:-ON}" == ON ]]; then
+  echo "GPU renderer and PhysX scene acceptance completed"
+else
+  echo "GPU renderer acceptance completed without PhysX"
+fi

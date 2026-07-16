@@ -10,17 +10,20 @@ from pathlib import Path
 from PIL import Image, ImageStat
 
 
-def main() -> int:
-    if len(sys.argv) != 6:
-        raise RuntimeError(
-            "usage: check_mesh_smoke.py SCENE OBJ IMAGE STATS EXPECTED_SHA256"
-        )
-    scene_path, obj_path, image_path, stats_path, hash_path = map(
-        Path, sys.argv[1:]
-    )
+ROOT = Path(__file__).resolve().parents[1]
+SCENE_PATH = ROOT / "tests/scenes/mesh-composite-smoke.py"
+OBJ_PATH = ROOT / "tests/assets/uv-quad.obj"
+IMAGE_PATH = ROOT / "output/tests/mesh-composite-smoke.png"
+STATS_PATH = ROOT / "output/tests/mesh-composite-smoke.stats.json"
+HASH_PATH = ROOT / "tests/golden/mesh-composite-smoke-64x64-spp1-depth6-seed1.sha256"
 
-    source = scene_path.read_text(encoding="utf-8")
-    tree = ast.parse(source, filename=str(scene_path))
+
+def main() -> int:
+    if len(sys.argv) != 1:
+        raise RuntimeError("check_mesh_smoke.py does not accept arguments")
+
+    source = SCENE_PATH.read_text(encoding="utf-8")
+    tree = ast.parse(source, filename=str(SCENE_PATH))
     object_calls = [
         node
         for node in ast.walk(tree)
@@ -38,13 +41,13 @@ def main() -> int:
         values = keywords(call)
         type_node = values.get("type")
         if (isinstance(type_node, ast.Constant)
-                and type_node.value in {"mesh", "mesh_instance"}):
+                and type_node.value == "mesh"):
             mesh_objects.append(values)
     if len(mesh_objects) != 2:
         raise RuntimeError("mesh smoke must contain exactly two mesh instances")
     if len({ast.dump(item["mesh"]) for item in mesh_objects}) != 1:
         raise RuntimeError("mesh smoke instances must share one mesh resource")
-    transform_keys = ("transform", "translate", "rotate_degrees", "scale")
+    transform_keys = ("translate", "rotate_degrees", "scale")
     transforms = [
         tuple(ast.dump(item[key]) if key in item else None
               for key in transform_keys)
@@ -66,13 +69,13 @@ def main() -> int:
     if not any("alpha_texture" in item for item in mesh_objects):
         raise RuntimeError("mesh smoke must exercise alpha any-hit")
 
-    obj_lines = obj_path.read_text(encoding="ascii").splitlines()
+    obj_lines = OBJ_PATH.read_text(encoding="ascii").splitlines()
     if not any(line.startswith("vt ") for line in obj_lines):
         raise RuntimeError("mesh smoke OBJ must contain UVs")
     if not any(line.startswith("vn ") for line in obj_lines):
         raise RuntimeError("mesh smoke OBJ must contain smooth normals")
 
-    stats = json.loads(stats_path.read_text(encoding="utf-8"))
+    stats = json.loads(STATS_PATH.read_text(encoding="utf-8"))
     geometry = stats["geometry"]
     expected_geometry = {
         "objects": 6,
@@ -90,14 +93,14 @@ def main() -> int:
     if stats["render"]["denoised"] is not False:
         raise RuntimeError("mesh smoke golden must not use denoising")
 
-    actual = hashlib.sha256(image_path.read_bytes()).hexdigest()
-    expected = hash_path.read_text(encoding="ascii").strip()
+    actual = hashlib.sha256(IMAGE_PATH.read_bytes()).hexdigest()
+    expected = HASH_PATH.read_text(encoding="ascii").strip()
     if actual != expected:
         raise RuntimeError(
             f"mesh smoke golden mismatch: expected {expected}, got {actual}"
         )
 
-    with Image.open(image_path) as image:
+    with Image.open(IMAGE_PATH) as image:
         image.load()
         if image.size != (64, 64) or image.mode != "RGBA":
             raise RuntimeError(

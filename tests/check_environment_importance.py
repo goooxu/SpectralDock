@@ -178,7 +178,7 @@ def render_variant(
         width=WIDTH,
         height=HEIGHT,
         spp=spp,
-        max_depth=1,
+        depth=1,
         seed=seed,
         denoise=False,
     )

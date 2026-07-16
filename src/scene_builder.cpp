@@ -485,24 +485,6 @@ std::int32_t SceneBuilder::add_rectangle(
   return add_object(std::move(object));
 }
 
-std::int32_t SceneBuilder::add_sketch(
-    const std::string& name, Vec3 p1, Vec3 p2, Vec3 p3,
-    std::int32_t front_material, std::int32_t back_material,
-    std::int32_t alpha_texture, float alpha_cutoff) {
-  validate_rectangle(p1, p2, p3, "sketch");
-  if (alpha_texture == kInvalidId)
-    fail("sketch", "requires alpha_texture");
-  Object object;
-  object.name = name;
-  object.type = GeometryType::Sketch;
-  object.geometry = SketchData{p1, p2, p3};
-  object.front_material = front_material;
-  object.back_material = back_material;
-  object.alpha_texture = alpha_texture;
-  object.alpha_cutoff = alpha_cutoff;
-  return add_object(std::move(object));
-}
-
 std::int32_t SceneBuilder::add_disk(
     const std::string& name, Vec3 center, Vec3 normal, float radius,
     std::int32_t front_material, std::int32_t back_material,

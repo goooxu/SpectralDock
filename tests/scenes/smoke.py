@@ -84,6 +84,7 @@ def main() -> None:
         depth=4,
         seed=1,
         denoise=False,
+        validation=True,
     )
 
 

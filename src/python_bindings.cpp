@@ -153,7 +153,6 @@ py::dict stats_dictionary(const RenderStats& stats) {
 PYBIND11_MODULE(_native, module) {
   using namespace spectraldock;
   module.doc() = "SpectralDock native scene builder and OptiX renderer";
-  module.attr("gpu_enabled") = py::bool_(SPECTRALDOCK_ENABLE_GPU != 0);
   module.attr("validation_default") =
       py::bool_(SPECTRALDOCK_ENABLE_VALIDATION_DEFAULT != 0);
 
@@ -253,17 +252,6 @@ PYBIND11_MODULE(_native, module) {
             return self.add_rectangle(name, vec3(p1), vec3(p2), vec3(p3),
                                       front_material, back_material,
                                       alpha_texture, alpha_cutoff);
-          })
-      .def(
-          "add_sketch",
-          [](SceneBuilder& self, const std::string& name,
-             const std::array<float, 3>& p1, const std::array<float, 3>& p2,
-             const std::array<float, 3>& p3, std::int32_t front_material,
-             std::int32_t back_material, std::int32_t alpha_texture,
-             float alpha_cutoff) {
-            return self.add_sketch(name, vec3(p1), vec3(p2), vec3(p3),
-                                   front_material, back_material,
-                                   alpha_texture, alpha_cutoff);
           })
       .def(
           "add_disk",
