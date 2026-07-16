@@ -28,10 +28,8 @@ images, this dedication makes no representation of uniqueness or exclusivity.
 
 This dedication does not apply to tools/generate_mascot.py,
 tools/generate_hdr_environment.py,
-tools/generate_benchmark_harbor.py,
-tools/generate_physx_kinetic_foundry.cpp,
-tools/generate_physx_lava_temple_oracle.cpp,
-tools/check_physx_scene.py, tools/check_physx_lava_temple_oracle.py,
+scenes/kinetic-foundry.py, scenes/lava-temple-oracle.py,
+python/spectraldock/physics.py, tools/physx_worker.cpp,
 assets/examples/manifest.md, docs/gallery/*.stats.json,
 docs/gallery/*.physics.json, or any other code, documentation, scene, SVG, or
 test. Those project-authored materials are licensed under Apache-2.0.

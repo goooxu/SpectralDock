@@ -48,7 +48,7 @@ t=\frac{\mathbf n\cdot(\mathbf p_0-\mathbf o)}
 {\mathbf n\cdot\mathbf d}.
 $$
 
-分母接近零时射线与平面平行。圆盘还要求 $\|\mathbf r(t)-\mathbf p_0\|\le R$。rectangle 和 sketch 则在主机端拆成两个三角形交给 OptiX 内建三角形求交。JSON 中的 rectangle 实际允许任意非退化平行四边形，并不额外校验四个角为直角；rectangle light 也只要求两条边不共线。
+分母接近零时射线与平面平行。圆盘还要求 $\|\mathbf r(t)-\mathbf p_0\|\le R$。rectangle 和 sketch 则在主机端拆成两个三角形交给 OptiX 内建三角形求交。Python API 中的 rectangle 实际允许任意非退化平行四边形，并不额外校验四个角为直角；rectangle light 也只要求两条边不共线。
 
 ### 1.3 圆柱
 
@@ -72,7 +72,7 @@ $$
 0\le(\mathbf r(t)-\mathbf p_0)\cdot\mathbf a\le H.
 $$
 
-`d_perp` 与 `q_perp` 正是 $\mathbf d_\perp$ 和 $\mathbf q_\perp$；随后三行 `a`、`b`、`c` 构造侧壁二次方程。场景验证要求 cylinder 的 `height > 0`，所以合法 JSON 总是进入有限圆柱分支；`height <= 0` 时调用共享求根器只是防御性路径。
+`d_perp` 与 `q_perp` 正是 $\mathbf d_\perp$ 和 $\mathbf q_\perp$；随后三行 `a`、`b`、`c` 构造侧壁二次方程。typed SceneBuilder 要求 cylinder 的 `height > 0`，所以合法 API 输入总是进入有限圆柱分支；`height <= 0` 时调用共享求根器只是防御性路径。
 
 <!-- source-snippet id="cylinder-quadratic-coefficients" path="src/device_programs.cu" anchor="__intersection__cylinder" -->
 ```cpp
@@ -130,7 +130,7 @@ $$
 x^2=4fy,
 $$
 
-其中 $f$ 是顶点到焦点的距离。射线的局部 $x(t),y(t)$ 都是 $t$ 的一次式，代入后得到二次方程。`__intersection__parabola` 把系数交给共享的 `report_quadratic`；这个 helper 也是上述 `height <= 0` cylinder 防御性路径所调用的求根器，但合法 JSON 中的有限圆柱不经过它。
+其中 $f$ 是顶点到焦点的距离。射线的局部 $x(t),y(t)$ 都是 $t$ 的一次式，代入后得到二次方程。`__intersection__parabola` 把系数交给共享的 `report_quadratic`；这个 helper 也是上述 `height <= 0` cylinder 防御性路径所调用的求根器，但合法 API 输入中的有限圆柱不经过它。
 
 `report_quadratic` 避免直接计算两个 $(-b\pm\sqrt\Delta)/(2a)$，而是构造
 
@@ -200,7 +200,7 @@ $$
 \mathbf{uv}=\lambda_a\mathbf{uv}_a+\lambda_b\mathbf{uv}_b+\lambda_c\mathbf{uv}_c.
 $$
 
-OBJ 导入器会三角化多边形、合并 group，并处理 OBJ 独立的 position/normal/UV 索引。它忽略 `mtllib` 与 `usemtl`；最终材质、纹理和正反面都由场景 JSON 决定。若法线不完整，导入器按 smoothing group 生成法线；纹理所需的 UV 必须完整。
+OBJ 导入器会三角化多边形、合并 group，并处理 OBJ 独立的 position/normal/UV 索引。它忽略 `mtllib` 与 `usemtl`；最终材质、纹理和正反面由 Python 程序传给 `renderer.object()` 的 typed handles 决定。若法线不完整，导入器按 smoothing group 生成法线；纹理所需的 UV 必须完整。
 
 ## 3. 几何法线、着色法线和正反面
 
@@ -245,7 +245,7 @@ OptiX 把底层几何加速结构称为 GAS，把实例层称为 IAS：
 
 - 每个被引用的 mesh 资源上传并构建一份 GAS；若紧凑尺寸确实更小则压缩，多个对象实例共享最终结构；
 - 每个非 mesh primitive 对象各构建一份 GAS；
-- IAS 为 JSON 中每个对象保存一个实例，并指向相应 GAS；
+- IAS 为 typed SceneBuilder 注册的每个对象保存一个实例，并指向相应 GAS；
 - 只有 mesh 对象支持 `T * Rz * Ry * Rx * S` 实例变换；缩放三分量必须严格大于零，不能用负缩放做镜像；其他 primitive 已在世界坐标中定义。
 
 完整的数据链为：CPU 侧 `TriangleMesh` 数组上传到 CUDA `DeviceBuffer`，设备指针写入 `OptixBuildInput` 并构建 GAS；每个场景对象再把对应 GAS handle 写入 `OptixInstance`，实例数组上传后作为另一份 `OptixBuildInput` 构建 IAS。最终 `LaunchParams.traversable` 指向 IAS，射线遍历先经过实例层，再进入相应 GAS。

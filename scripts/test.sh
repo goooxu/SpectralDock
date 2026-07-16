@@ -1,5 +1,3 @@
 #!/usr/bin/env bash
 set -euo pipefail
-source "$(dirname "$0")/common.sh"
-
-cpu_container bash scripts/test-host.sh build/host-test
+exec "$(dirname "$0")/test-host.sh" "${1:-build/host-test}"

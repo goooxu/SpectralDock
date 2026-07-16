@@ -20,7 +20,7 @@
 - 以稳态表面光传输为主，没有通用雾、烟或散射参与介质、次表面散射与传播时间；特化的 flame 只做吸收—自发光，water 只做均匀 RGB 吸收；
 - 使用线性 RGB，不模拟波长、色散、衍射或偏振；
 - `max_depth` 会截断最后一个已处理表面事件之后的继续路径；最后一个事件自身的显式直接光仍完整估计；
-- schema v6 默认以 direct 64 / indirect 16 保色相钳位独立路径贡献，能控制 firefly 但会引入偏差；无偏参考必须把两者都设为 0；
+- `Renderer.integrator()` 默认以 direct 64 / indirect 16 保色相钳位独立路径贡献，能控制 firefly 但会引入偏差；无偏参考必须把两者都设为 0；
 - Radiance HDR 环境有显式重要性采样；constant、sky 渐变和太阳瓣仍没有；
 - 纹理 emitter 和 mesh emitter 不能进入 NEE 灯列表；
 - 有限灯在普通空气顶点按发光功率代理选择，粗糙水面确定性地各取一份全局分布和均匀索引样本，介质内其他顶点用均匀索引；所有球外连续 BSDF 顶点对 sphere 使用可见立体角，球内/近球回退仍采整个球面；point/directional 逐灯求值，最多 32 盏，shadow-ray 成本线性增长。
@@ -31,7 +31,7 @@
 - `metal` 与粗糙 `dielectric`/`water` 都使用 Heitz GGX VNDF；这降低掠射角拒绝方差，但仍是单次散射微表面模型，不含多重散射补偿；
 - `dielectric` 的 `roughness = 0` 是 delta 界面，非零时是 Walter 单次散射 GGX 反射/透射；无 `water_surface` 的光滑兼容路径固定空气外部介质、使用 Schlick 且没有嵌套与体吸收，含水路径使用精确 Fresnel、严格介质栈与 RGB Beer；
 - 粗糙 water 为了降低反射方差，把 BSDF 反射分支概率设为 $\max(F,0.5)$；物理 BSDF 仍使用精确 Fresnel $F$，路径权重和 MIS PDF 用实际分支概率补偿，所以这是无偏采样改变而不是更改材质能量；
-- 场景解析不强制被动材质的 `base_color ≤ 1`，能量合理性部分依赖输入；
+- Python API 与 SceneBuilder 不强制被动材质的 `base_color ≤ 1`，能量合理性部分依赖输入；
 - 直接光连接只表示当前顶点的一次散射；粗糙介电可在当前界面 NEE 到反射或透射侧，但下一层透明边界会阻断连接。光滑首水面只做一次有界 Fresnel 分裂，不实现 MNEE、双向路径追踪或光滑多界面焦散，详见[第 12 章](12-runtime-analytic-water.md)。
 
 ### 几何与颜色
@@ -87,7 +87,7 @@ class Event {
 
 在 `render_optix()` 完成 settings 与像素数检查后开始，到返回前记录。它包括 CUDA/OptiX 初始化、pipeline、纹理解码与上传、加速结构、SBT/缓冲区、路径追踪、可选降噪、后处理、RGBA/射线计数回传和设备信息查询。
 
-它**不包括**调用前的 JSON/OBJ 解析，也不包括调用后的 PNG 与 stats JSON 写盘；时间戳还早于函数局部 RAII 资源析构。因此 Total 不是完整 CLI 进程墙钟时间，也不等于前三个分项简单相加。BVH 与 denoise 分项由同一 CUDA stream 上的 event 包围；区间可能包含主机尚未提交下一项工作时的 stream idle，不应解读成逐 kernel 时间之和。
+它**不包括**调用前的 Python SceneBuilder 构造与 OBJ 解析，也不包括调用后的 PNG 与 stats JSON 写盘；时间戳还早于函数局部 RAII 资源析构。因此 Total 不是完整 `Renderer.render()` 调用的墙钟时间，也不等于前三个分项简单相加。BVH 与 denoise 分项由同一 CUDA stream 上的 event 包围；区间可能包含主机尚未提交下一项工作时的 stream idle，不应解读成逐 kernel 时间之和。
 
 ## 4. 射线吞吐量怎样理解
 
@@ -154,16 +154,16 @@ $$
 
 测试不是渲染器的核心功能，而是按层保存其行为证据：
 
-1. Host-only 单元测试检查向量、场景解析、OBJ、PNG/HDR/PFM I/O、CDF 分布和输入语义；
-2. parser fixtures 覆盖 primitive、灯、UV、alpha、实例与共享 GAS 的输入组合，但不执行 GPU 着色；
+1. Host-only 单元测试检查向量、typed SceneBuilder、OBJ、PNG/HDR/PFM I/O、CDF 分布和输入语义；
+2. typed SceneBuilder fixtures 覆盖 primitive、灯、UV、alpha、实例与共享 GAS 的输入组合，但不执行 GPU 着色；
 3. 无 golden 的积分器 GPU 对照覆盖末端 bound/unbound MIS、HDR 环境唯一照明、旋转、确定性、零强度黑场，以及 uniform/importance 的高 spp 均值与低 spp MSE；
 4. 多灯对照分别触发 rectangle、disk、sphere、flame，再验证功率选择降低强弱灯场景的低 spp MSE；sphere 对所有连续 BSDF 顶点验证可见锥采样，metal 另验证 VNDF 的均值与低样本误差；
 5. 综合 mesh GPU fixture 定向覆盖共享 GAS、实例变换、UV、平滑法线、alpha 和 custom primitives；
-6. delta 灯对照检查 point 逆平方、directional 距离不变性、背面、遮挡、逐灯确定性、粗糙介电两侧和水中 Beer；firefly 对照检查 direct/indirect 独立触发、最大 RGB 通道保色相缩放、计数器、CLI 覆盖和 clamp 0/0 兼容路径；
+6. delta 灯对照检查 point 逆平方、directional 距离不变性、背面、遮挡、逐灯确定性、粗糙介电两侧和水中 Beer；firefly 对照检查 direct/indirect 独立触发、最大 RGB 通道保色相缩放、计数器、Python API 参数覆盖和 clamp 0/0 兼容路径；
 7. water GPU 对照用 clamp 0/0 线性 PFM 检查粗糙反射/透射、两侧介质、Beer、TIR、透明阻断、光滑有界 split，并以等散射阶数（bound depth 2 / unbound depth 3）比较高 spp 均值与三 seed 低 spp MSE；Moonlit 另以同一 `roughness: 0.12` 积分对象做维护级 time-to-error：一份独立 seed 的 8192 spp 粗糙 NEE 线性参考，对比三 seed 的 NEE 1024 spp 与仅删除显式灯绑定、保留 emitter 几何的 BSDF-only 2048 spp；两者平均 GPU render 时间须在 15% 内，且 NEE 在反射/水下 ROI 的归一化 MSE 都更低；
-8. Compute Sanitizer 对 mesh、water、flame、HDR environment 和新 delta/clamp fixture 查找越界、竞争和未初始化数据；
-9. 技术报告 pytest 逐字核对引用的源码片段，并检查数学标记没有使用渲染环境不支持的宏；PhysX 封面 checker 的 host 测试用合成有效文档和定向 mutation 覆盖版本、GPU-only flags、actor/灯光/体积/水面契约，但不假装执行真实刚体或像素渲染。
-10. RTX 5090 的正式 acceptance 对 Kinetic Foundry 与封面各即时生成低分辨率样本，完成契约和像素流程；封面还进入低分辨率 Compute Sanitizer，并在 4K 发布前人工检查爆发构图、水池、火/烟/神光代理及同次 sidecar。
+8. Compute Sanitizer 对 mesh、water、flame、HDR environment 和新 delta/clamp fixture 分层检查：memcheck 覆盖 OptiX/CUDA 内存访问，显式 `--check-optix` 的 initcheck 覆盖 OptiX launch 未初始化读取，racecheck 只检查普通 CUDA postprocess，不外推到 OptiX device program；
+9. 技术报告 pytest 逐字核对引用的源码片段，并检查数学标记没有使用渲染环境不支持的宏；PhysX host 测试用 typed `PhysicsWorld`/`PhysicsResult`、合成结果和定向 mutation 覆盖协议版本、GPU-only 身份、body 顺序、附件交接与封面 validator，但不假装执行 subprocess worker、真实刚体或像素渲染。
+10. RTX 5090 的正式 acceptance 对 Kinetic Foundry 与封面各即时生成低分辨率样本，完成契约和像素流程；封面还以 `--target-processes all` 进入低分辨率 memcheck，同时覆盖 Renderer 与 PhysX worker，并在 4K 发布前人工检查爆发构图、水池、火/烟/神光代理及同次 sidecar。PhysX worker 的 initcheck/racecheck 不在项目声称的覆盖范围内。
 
 唯一保留的像素 golden 是 mesh fixture 的 RTX 5090 基线；积分器对照的临时 PNG 和 stats 会自动清理，不保存哈希。mesh golden 只证明定向输出与已接受结果逐字节相同，不能独立证明物理正确；跨 GPU、编译器或 `--use_fast_math` 的少量浮点差异，也不自动等于数学回归。正式 gallery 与 stats 继续作为作品和一次运行记录保存，但不再是自动测试门禁；默认 acceptance 不设置性能阈值或 profiling 验收，耗时较高的 Moonlit 维护脚本才在同一次手工运行内检查相对时间。可靠结论仍需要公式审查、定向场景和数值/视觉证据结合。
 
@@ -189,4 +189,4 @@ $$
 - Bruce Walter 等，*Microfacet Models for Refraction through Rough Surfaces*（2007）。
 - Matt Pharr、Wenzel Jakob、Greg Humphreys，*Physically Based Rendering*。
 
-[上一章：降噪、色调映射与输出](08-denoising-color-and-output.md) · [返回目录](README.md) · [下一章：PhysX 刚体模拟与场景 JIT 构建](10-physx-rigid-body-scene-baking.md)
+[上一章：降噪、色调映射与输出](08-denoising-color-and-output.md) · [返回目录](README.md) · [下一章：PhysX 刚体模拟与即时场景构建](10-physx-rigid-body-scene-baking.md)

@@ -2,11 +2,17 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-IMAGE="${SPECTRALDOCK_IMAGE:-spectraldock-dev:cuda13.3}"
-PHYSX_IMAGE="${SPECTRALDOCK_PHYSX_IMAGE:-spectraldock-physx:5.8.0-cuda12.8}"
-PHYSX_GPU_DEVICE="${PHYSX_GPU_DEVICE:-0}"
-OPTIX_ROOT="${OPTIX_ROOT:-}"
 BUILD_TYPE="${BUILD_TYPE:-Release}"
+PYTHON="${PYTHON:-python3}"
+RENDER_BUILD="${ROOT}/build/${BUILD_TYPE}"
+PHYSX_BUILD="${ROOT}/build/PhysX"
+OPTIX_ROOT="${OPTIX_ROOT:-}"
+SPECTRALDOCK_CUDA_ROOT="${SPECTRALDOCK_CUDA_ROOT:-}"
+SPECTRALDOCK_PHYSX_CUDA_ROOT="${SPECTRALDOCK_PHYSX_CUDA_ROOT:-}"
+PHYSX_ROOT="${PHYSX_ROOT:-}"
+SPECTRALDOCK_PHYSX_WORKER="${SPECTRALDOCK_PHYSX_WORKER:-${PHYSX_BUILD}/spectraldock_physx_worker}"
+COMPUTE_SANITIZER="${COMPUTE_SANITIZER:-${SPECTRALDOCK_CUDA_ROOT:+${SPECTRALDOCK_CUDA_ROOT}/bin/compute-sanitizer}}"
+export SPECTRALDOCK_PHYSX_WORKER
 
 die() {
   echo "error: $*" >&2
@@ -17,65 +23,53 @@ require_file() {
   [[ -f "$1" ]] || die "required file is missing: $1"
 }
 
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || die "required command is missing: $1"
+}
+
 require_optix_root() {
   [[ -n "${OPTIX_ROOT}" ]] ||
-    die "OPTIX_ROOT must be set to the extracted NVIDIA OptiX SDK directory"
+    die "OPTIX_ROOT must name the extracted NVIDIA OptiX SDK"
   require_file "${OPTIX_ROOT}/include/optix.h"
 }
 
-run_container() {
-  local mode="$1"
-  shift
-  local image="${IMAGE}"
-  local args=(
-    run --rm
-    --user "$(id -u):$(id -g)"
-    -e HOME=/tmp
-    -v "${ROOT}:/workspace"
-    -w /workspace
-    --entrypoint /usr/bin/env
-  )
-
-  case "${mode}" in
-    cpu)
-      ;;
-    gpu)
-      require_optix_root
-      args+=(
-        --gpus all
-        -e "NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics"
-        -v "${OPTIX_ROOT}:/opt/optix:ro"
-      )
-      if [[ -f /usr/share/nvidia/nvoptix.bin ]]; then
-        args+=(-v /usr/share/nvidia/nvoptix.bin:/usr/share/nvidia/nvoptix.bin:ro)
-      fi
-      ;;
-    physx)
-      image="${PHYSX_IMAGE}"
-      args+=(
-        --gpus all
-        -e "NVIDIA_DRIVER_CAPABILITIES=compute,utility"
-        -e "PHYSX_ROOT=/opt/physx"
-        -e "PHYSX_BUILD_TYPE=checked"
-        -e "PHYSX_GPU_DEVICE=${PHYSX_GPU_DEVICE}"
-      )
-      ;;
-    *)
-      die "unknown container mode: ${mode}"
-      ;;
-  esac
-
-  docker "${args[@]}" "${image}" "$@"
+require_cuda_root() {
+  [[ -n "${SPECTRALDOCK_CUDA_ROOT}" ]] ||
+    die "SPECTRALDOCK_CUDA_ROOT must name the CUDA 13.3 toolkit"
+  require_file "${SPECTRALDOCK_CUDA_ROOT}/bin/nvcc"
 }
 
-cpu_container() {
-  run_container cpu "$@"
+require_compute_sanitizer() {
+  require_cuda_root
+  [[ -n "${COMPUTE_SANITIZER}" ]] ||
+    die "COMPUTE_SANITIZER must name the CUDA Compute Sanitizer executable"
+  require_file "${COMPUTE_SANITIZER}"
+  [[ -x "${COMPUTE_SANITIZER}" ]] ||
+    die "Compute Sanitizer is not executable: ${COMPUTE_SANITIZER}"
 }
 
-gpu_container() {
-  run_container gpu "$@"
+require_physx_roots() {
+  [[ -n "${SPECTRALDOCK_PHYSX_CUDA_ROOT}" ]] ||
+    die "SPECTRALDOCK_PHYSX_CUDA_ROOT must name the CUDA 12.8 toolkit"
+  require_file "${SPECTRALDOCK_PHYSX_CUDA_ROOT}/bin/nvcc"
+  [[ -n "${PHYSX_ROOT}" ]] ||
+    die "PHYSX_ROOT must name the installed NVIDIA PhysX 5.8 SDK"
+  require_file "${PHYSX_ROOT}/include/PxPhysicsAPI.h"
 }
 
-physx_container() {
-  run_container physx "$@"
+python_path=(
+  "${ROOT}/python"
+  "${RENDER_BUILD}/python"
+  "${PHYSX_BUILD}/python"
+)
+joined_python_path="$(IFS=:; echo "${python_path[*]}")"
+export PYTHONPATH="${joined_python_path}${PYTHONPATH:+:${PYTHONPATH}}"
+
+if [[ -n "${PHYSX_ROOT}" ]]; then
+  physx_library_path="${PHYSX_ROOT}/bin/linux.x86_64/${PHYSX_BUILD_TYPE:-checked}"
+  export LD_LIBRARY_PATH="${physx_library_path}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+fi
+
+run_python() {
+  "${PYTHON}" "$@"
 }

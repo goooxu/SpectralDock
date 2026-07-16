@@ -1,6 +1,6 @@
 # 12　运行时解析水面：波面求交、介电传输与 Beer 吸收
 
-Moonlit Stepwell 的水不是平面贴图，也不是预先烘焙的网格。它是 schema v6 在运行时求值的有限解析高度场：OptiX 用保守 tile AABB 找出候选区域，自定义 intersection 程序求射线与波面的根，路径积分器再处理粗糙 GGX 介电反射/透射、NEE/MIS、Fresnel/Snell、介质栈和水下吸收。
+Moonlit Stepwell 的水不是平面贴图，也不是预先烘焙的网格。Python 程序通过 `Renderer.object(type="water_surface", ...)` 构造一个在运行时求值的有限解析高度场：OptiX 用保守 tile AABB 找出候选区域，自定义 intersection 程序求射线与波面的根，路径积分器再处理粗糙 GGX 介电反射/透射、NEE/MIS、Fresnel/Snell、介质栈和水下吸收。
 
 “熔岩圣殿的机械先知”在右侧下陷池体中使用同一个解析模型：带苔石砖与
 不透明池壁/池底封闭水下区域，RGB Beer 吸收让池边保持可见而深处迅速转为
@@ -13,7 +13,7 @@ Moonlit Stepwell 的水不是平面贴图，也不是预先烘焙的网格。它
 metal sphere 作为冰晶外观代理，并以 `opaque_frost_visual_proxy: true`
 显式记录。这保留了轮廓和冷色反光，但不宣称模拟冰的透射光学。
 
-这里的“水体”有严格边界：`water_surface` 只是有限顶界面，不自带侧壁或底部。v0.1 加载器强制相机 aperture 位于水和玻璃外；场景还必须用不透明池壁与池底封住水下区域。它不是流体模拟，也没有时间演化、泡沫、飞溅、专用焦散或 motion blur。
+这里的“水体”有严格边界：`water_surface` 只是有限顶界面，不自带侧壁或底部。原生 SceneBuilder 强制相机 aperture 位于水和玻璃外；Python 程序还必须用不透明池壁与池底封住水下区域。它不是流体模拟，也没有时间演化、泡沫、飞溅、专用焦散或 motion blur。
 
 ## 1. 四项解析波浪
 
@@ -41,8 +41,8 @@ $$
 \mathbf n=\frac{(-h_x,1,-h_z)}{\|(-h_x,1,-h_z)\|}.
 $$
 
-这避免了有限差分步长和额外高度查询。加载器限制
-$\sum_i 2\pi a_i/\lambda_i\le1$，既约束波面坡度，也让求交的数值上界可控；它还用 float32 重新检查派生波数、AABB 和 tile 尺寸均为有限正值，避免有限 JSON 输入在设备表示中溢出。
+这避免了有限差分步长和额外高度查询。SceneBuilder 限制
+$\sum_i 2\pi a_i/\lambda_i\le1$，既约束波面坡度，也让求交的数值上界可控；它还用 float32 重新检查派生波数、AABB 和 tile 尺寸均为有限正值，避免有限 Python 数值在设备表示中溢出。
 
 <!-- source-snippet id="water-analytic-height-gradient" path="src/device_programs.cu" anchor="const float angle =" -->
 ```cpp
@@ -76,7 +76,7 @@ $$
 f(t)=r_y(t)-h(r_x(t),r_z(t))=0.
 $$
 
-intersection 程序在射线进入 tile 的区间内隔离候选根，再以受区间保护的 Newton/bisection 收敛，并检查残差。相邻 tile 从同一个 `surface_min + width * integer` 计算边界，加载器会用同样的 float32 运算逐条确认边界严格递增，避免大坐标下小 tile 因 ULP 量化塌缩。最终用半开 XZ 区间决定唯一所有权；AABB 可以保守重叠，但同一根只由一个 tile 报告。这是 tile seam 不应出现在解析波面的原因。
+intersection 程序在射线进入 tile 的区间内隔离候选根，再以受区间保护的 Newton/bisection 收敛，并检查残差。相邻 tile 从同一个 `surface_min + width * integer` 计算边界，SceneBuilder 会用同样的 float32 运算逐条确认边界严格递增，避免大坐标下小 tile 因 ULP 量化塌缩。最终用半开 XZ 区间决定唯一所有权；AABB 可以保守重叠，但同一根只由一个 tile 报告。这是 tile seam 不应出现在解析波面的原因。
 
 具体实现先用正弦与余弦的区间包络估计 $f$ 和 $f'$：若 $f$ 的区间不含零就排除该段；若 $f'$ 不含零就得到单调段，再用二分和受 bracket 保护的 Newton 步求根。近切线处的单精度符号最容易产生一簇伪根，因此当根处 $|f'|<0.02$ 时才进入选择性的双精度复核：用 double 重新计算 bracket 两端，确认真实异号后再做 40 次二分。恰好落在分段端点的 float 零值也会在根两侧做 double 异号复核，切触零或舍入伪零不作为介质穿越报告。这样把昂贵的 double 三角函数限制在可疑区间，而普通根仍走 float 快路径。
 
@@ -180,7 +180,7 @@ static __forceinline__ __device__ bool update_medium_after_transmission(
 }
 ```
 
-正面透射压栈，背面透射必须弹出同一材质；次序不符就是相交、开放或错误嵌套。加载器因此把含水场景的拓扑约束变成硬错误：dielectric sphere 必须在正反面绑定同一个非空 dielectric 且不能使用 alpha；任意两球只能严格分离或严格包含，拒绝相交与内外相切；四层总栈深包含水层，所以最多允许三层同时活跃的嵌套玻璃。sphere 不能与水面的保守高度带相交，多个水面 footprint 必须严格分离，相机的有限 aperture 也必须位于水和所有玻璃之外。Moonlit Stepwell 的不透明池壁和池底进一步保证路径不会从没有边界的侧面“漏出水体”。
+正面透射压栈，背面透射必须弹出同一材质；次序不符就是相交、开放或错误嵌套。SceneBuilder 因此把含水场景的拓扑约束变成硬错误：dielectric sphere 必须在正反面绑定同一个非空 dielectric 且不能使用 alpha；任意两球只能严格分离或严格包含，拒绝相交与内外相切；四层总栈深包含水层，所以最多允许三层同时活跃的嵌套玻璃。sphere 不能与水面的保守高度带相交，多个水面 footprint 必须严格分离，相机的有限 aperture 也必须位于水和所有玻璃之外。Moonlit Stepwell 的不透明池壁和池底进一步保证路径不会从没有边界的侧面“漏出水体”。
 
 有限顶界面本身没有水体侧面。一条已经在水下的路径若从 footprint 边缘绕入，可能在介质栈为空时首先碰到水面的背面；直接按严格弹栈会把这个几何缺口误报成介质错误。实现只对“空栈 + 水材质背面”这一无歧义情形推断基底水层，并在计算该段 Beer 衰减前压入水；只要栈非空，尤其存在嵌套玻璃时，绝不搜索或修补层次，仍按严格 LIFO 报错。这个补偿不是通用 point-in-volume 判定，也是 v0.1 必须使用不透明池壁、从水外启动相机的原因之一。
 
@@ -218,7 +218,7 @@ extern "C" __global__ void __intersection__solid_sphere() {
 }
 ```
 
-主机只在场景含 `water_surface` 且 sphere 绑定 dielectric 时，把它改为带保守 AABB 的 `kPrimitiveSolidSphere` 自定义 primitive；普通 sphere 和全部无水场景仍使用 OptiX 内建 sphere。这既满足水中闭合边界语义，也避免机械改动既有场景的求交路径与 golden 输出。
+主机只在场景含 `water_surface` 且 sphere 绑定 dielectric 时，把它改为带保守 AABB 的 `kPrimitiveSolidSphere` 自定义 primitive；普通 sphere 和全部无水场景仍使用 OptiX 内建 sphere。这既满足水中闭合边界语义，也避免机械改动既有场景的求交路径与确定性输出序列。
 
 ## 5. Beer 吸收
 
@@ -454,17 +454,17 @@ stats 分开记录 height evaluations、tile tests、roots reported、medium seg
 
 定向 GPU fixture 检查固定 seed、粗糙反射/透射、全反射、两侧法线语义、深浅路径 RGB Beer、浸没玻璃的介质栈、depth-1 粗糙 NEE、透明中间边界阻断，以及后续真实水面顶点恢复贡献。绑定 emitter 在 depth 2 已能用 NEE 完成末端连接，未绑定的 BSDF-only 路径需要 depth 3 才能命中同一 emitter；因此对照按**等散射阶数**比较 bound depth 2 / unbound depth 3，其高 spp 线性 PFM 均值必须在 2% 内，三组低 spp seed 的 NEE ROI MSE 至多是 BSDF-only 的 50%。光滑 fixture 检查单次 split、全反射、能量权重与确定性。Moonlit Stepwell 的维护者 time-to-error 固定同一 `roughness: 0.12` 积分对象，用一份独立 seed 的粗糙 NEE 8192 spp 线性参考，对比三组 NEE 1024 spp 与只删除显式灯绑定、保留 emitter 几何的 BSDF-only 2048 spp；候选平均渲染时间须在 15% 内，反射和水下 ROI 的归一化 MSE 都必须更低。该对照不写入 gallery stats；当前报告不沿用缺少同次原始记录的历史数值。它改变的是采样策略而不是场景辐射度，且仅供维护者手工执行，不进入默认 acceptance，也不是跨 GPU 性能承诺。
 
-正式 Moonlit Stepwell 使用 `roughness: 0.12`、512 spp、depth 12、direct 64 / indirect 16 贡献钳位，并为 gallery PNG 启用 OptiX AI Denoiser。所有能量、无偏性和 time-to-error 比较都通过 `--linear-output` 保存 tone map 前的 PFM，并显式使用 `--no-denoise --clamp-direct 0 --clamp-indirect 0`；因此降噪和有偏钳位都不参与上述数值结论。tile seam、漏交和构图还需人工检查，统计安全门与 Compute Sanitizer 则检查数值和内存错误。
+正式 Moonlit Stepwell 使用 `roughness=0.12`、512 spp、depth 12、direct 64 / indirect 16 贡献钳位，并为 gallery PNG 启用 OptiX AI Denoiser。所有能量、无偏性和 time-to-error 比较都通过 `render(linear_output=..., denoise=False, clamp_direct=0, clamp_indirect=0)` 保存 tone map 前的 PFM；因此降噪和有偏钳位都不参与上述数值结论。tile seam、漏交和构图还需人工检查，统计安全门与 Compute Sanitizer 则检查数值和内存错误。
 
 当前模型仍有以下边界：
 
 - 波浪是确定性静态正弦叠加，不是 CFD、浅水方程或海洋频谱动画；
 - `water_surface` 只是有限顶界面，依赖场景的不透明池壁/底部封闭；
-- 加载器强制相机 aperture 从水与玻璃外开始；普通 dielectric 只支持同材质双面、无 alpha 的闭合 sphere，水层加嵌套玻璃合计最多四层；
+- SceneBuilder 强制相机 aperture 从水与玻璃外开始；普通 dielectric 只支持同材质双面、无 alpha 的闭合 sphere，水层加嵌套玻璃合计最多四层；
 - 封面不依靠普通 dielectric sphere 表现冰晶；其非透明冷色粗糙 metal 代理是为了在不修改渲染器时保持介质安全门为零错误，不代表真实冰材质；
 - 粗糙界面有单顶点 NEE/MIS，光滑首水面有一次有界 split；两者都不求解光滑多界面焦散或 MNEE；
 - GGX 介电是单次微表面散射，不补偿多次散射能量；RGB Beer 吸收不是波长采样，也没有体散射、悬浮物或泡沫。
 
-输入字段和约束见[场景格式](../SCENE_FORMAT.md)，展示构图见 [Moonlit Stepwell](../EXAMPLES.md#moonlit-stepwell)。
+Python 调用与约束见 [Python 场景 API](../PYTHON_API.md)，展示构图见 [Moonlit Stepwell](../EXAMPLES.md#moonlit-stepwell)。
 
 [上一章：程序化体积火焰](11-procedural-volumetric-flame.md) · [返回目录](README.md) · [下一章：HDR 环境与重要性采样](13-hdr-environment-and-importance-sampling.md)

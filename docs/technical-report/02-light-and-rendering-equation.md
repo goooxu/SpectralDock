@@ -40,7 +40,7 @@ SpectralDock 不做光谱或绝对物理单位仿真，而用三个线性数 $(L
 
 ### 1.3 面积灯、点光与平行光的量不同
 
-rectangle、disk 和 sphere 灯描述有限表面发出的辐亮度 $L_e$。point 灯把有限功率理想化为零面积位置，JSON 的 RGB `intensity` 表示辐射强度 $I$；它在距离 $r$ 处产生与 $I/r^2$ 成正比的入射量。directional 灯把光源放到无限远，所有连接方向平行，JSON 的 RGB `irradiance` 直接表示辐照度 $E$，不随着色点平移而变化。
+rectangle、disk 和 sphere 灯描述有限表面发出的辐亮度 $L_e$。point 灯把有限功率理想化为零面积位置，Python `Renderer.light()` 的 RGB `intensity` 表示辐射强度 $I$；它在距离 $r$ 处产生与 $I/r^2$ 成正比的入射量。directional 灯把光源放到无限远，所有连接方向平行，API 的 RGB `irradiance` 直接表示辐照度 $E$，不随着色点平移而变化。
 
 对路径吞吐量 $\boldsymbol\beta$、BSDF $f_s$ 和从表面指向光源的方向 $\boldsymbol\omega_i$，忽略遮挡与介质时，两者的单灯贡献分别为
 

@@ -1,136 +1,134 @@
 # SpectralDock
 
-SpectralDock 是面向计算机图形学研究与教学的确定性离线路径追踪器。它以 NVIDIA RTX GPU 为实验平台，使用 CUDA 与 OptiX 完成硬件光线遍历，并以 PhysX GPU 构建需要刚体动力学的场景；在一个可审查的代码库中连接 Newton–Euler 动力学、场景数据交接、渲染方程、Monte Carlo 积分、材质与光传输、GAS/IAS、Pipeline/SBT、自定义求交、AI Denoiser 和 GPU 验证工具。
+SpectralDock 是面向计算机图形学研究与教学的 NVIDIA GPU 离线路径追踪器。它用 CUDA 与 OptiX 完成硬件射线遍历和光传输，并通过隔离的 PhysX GPU 进程为需要刚体动力学的 Python 程序求解瞬时场景。
 
-![熔岩圣殿的机械先知：PhysX 预碎裂刚体爆发、冷暖照明、火焰体积与解析水面](docs/gallery/lava-temple-oracle.png)
+![熔岩圣殿的机械先知](docs/gallery/lava-temple-oracle.png)
 
-表面路径追踪是项目的核心教学链路；HDR 环境照明、重要性采样、程序化火焰与解析水面是高级光传输实验；PhysX 则是物理场景的核心 JIT GPU 构建子系统。每次渲染 Kinetic Foundry 或“熔岩圣殿的机械先知”时，统一入口都会先运行 PhysX GPU，再把当次姿态写入临时 schema v6 JSON，随后由相邻的 SpectralDock/OptiX 进程立即渲染。两个进程不共享 PhysX 对象或逐帧状态；默认八个静态研究场景也不会初始化 PhysX。仓库收录这些场景需要的模型、纹理、HDR 环境和正式生成记录，但不分发 CUDA、OptiX、PhysX 或其他外部 SDK。
+项目没有场景文件格式，也没有接收 `--scene` 参数的渲染主程序。每个示例都是普通 Python 程序：代码通过 SpectralDock API 添加相机、材质、几何和灯光，随后直接调用 `render()` 并明确指定分辨率、采样数与输出路径。
 
-## 学习与实验主线
+```python
+from pathlib import Path
+from spectraldock import Renderer
 
-- 从相机射线、渲染方程、BSDF 和 Monte Carlo 估计进入路径积分器，再学习 NEE、MIS 与俄罗斯轮盘。
-- 把几何和材质映射到 OptiX 的 GAS、IAS、Program Group、Pipeline、SBT 与 `optixLaunch`，并观察 CUDA 设备程序如何参与遍历、求交和着色。
-- 用 OBJ 实例、alpha any-hit、解析 primitive、异质火焰和波浪水面比较内建求交、自定义 intersection 与纯 CUDA 光传输工作的边界。
-- 用 RTX 5090 运行记录、NVTX、Compute Sanitizer、定向 GPU fixture 和 OptiX Denoiser 观察 NVIDIA 软硬件栈，而不把一次设备结果外推为跨平台结论。
+renderer = Renderer(device=0)
+renderer.camera(
+    look_from=(3.0, 2.0, 5.0),
+    look_at=(0.0, 0.5, 0.0),
+    up=(0.0, 1.0, 0.0),
+    vfov=38.0,
+    aperture=0.0,
+    focus_distance=5.0,
+)
+renderer.background(type="constant", color=(0.01, 0.01, 0.015))
+white = renderer.material(
+    name="white", type="lambertian", base_color=(0.75, 0.75, 0.75)
+)
+renderer.object(
+    name="floor", type="rectangle", material=white,
+    p1=(-3.0, 0.0, 2.0), p2=(-3.0, 0.0, -3.0),
+    p3=(3.0, 0.0, -3.0),
+)
+renderer.render(
+    output=Path("output/first-light.png"),
+    stats_output=Path("output/first-light.stats.json"),
+    width=640, height=360, spp=64, depth=8, seed=1,
+    denoise=True,
+)
+```
 
-## 功能摘要
+Python 程序是受信任的应用代码，而不是由 SpectralDock 解释的数据；项目不提供 Python 沙箱。
 
-- 统一的 schema v6 场景加载，包含 sphere、rectangle/sketch、disk、cylinder、parabola、OBJ mesh、程序化 flame 光源与有限解析波浪水面；rectangle/sketch 在内部使用三角形 primitive。
-- 网格资源共享压缩 GAS；每个实例拥有独立变换、正反面材质、纹理和 alpha。
-- Lambert、GGX metal、光滑/粗糙 dielectric 与 emitter；metal 和粗糙介电反射/透射都使用 Heitz GGX 可见法线（VNDF）采样，并与直接光采样、MIS 和俄罗斯轮盘配合。
-- 线性 Rec.709 Radiance RGBE 环境贴图，支持经纬映射、强度和绕世界 +Y 旋转；环境 NEE 与 miss 端点通过 MIS 配对。
-- 显式 rectangle/disk/sphere 面积灯与 flame 以功率代理为全局基础分布；point 和 directional 是不可见、产生硬阴影的 delta 灯，每个支持 NEE 的连续 BSDF 顶点确定性求值全部 delta 灯（合计最多 32 盏）。球外顶点对单面 sphere 灯均匀采可见立体角，环境则按亮度与精确 texel 立体角采样。场景可在 `importance` 与 `uniform` 基础模式间切换用于 A/B 教学对照。
-- 无散射异质火焰的程序化密度、吸收/自发光传输、Delta Tracking 与体积 NEE。
-- 最多四个确定性解析波浪水面，使用精确介电 Fresnel、GGX 粗糙反射/折射、RGB Beer 吸收和严格介质栈；粗糙水面参与有限灯、火焰与 HDR 环境 NEE/MIS，并以无偏反射分支过采样、双选灯分层与可见球锥采样降低展示区域方差。
-- 固定 seed 的确定性渲染、PNG 输出和同名 `*.stats.json` 运行记录；direct/indirect 两级保色相贡献钳位用于控制高光离群值，阈值设为 0 可恢复无偏参考模式。可选 PFM 导出钳位之后、色调映射与降噪之前的线性 RGB，供收敛与能量分析使用。
-- 八个内置 1920×1080 静态展示场景，以及两个通过统一入口即时生成的 PhysX 5.8.0 GPU 刚体场景：固定在 300 步（2.5 秒）撞击峰值的 Kinetic Foundry，和固定在 24 步（0.2 秒）爆发瞬间、以 3840×2160 发布的“熔岩圣殿的机械先知”；另有低成本 smoke fixture、host-only 测试和手工 GPU 检查流程。
+## 功能
 
-## 依赖与已验证平台
+- OptiX GAS/IAS、Program Group、Pipeline、SBT、`optixLaunch` 与 AI Denoiser。
+- sphere、rectangle/sketch、disk、cylinder、parabola、共享 OBJ mesh 和有限解析波浪水面。
+- Lambert、GGX metal、光滑/粗糙 dielectric、water 与 emitter。
+- rectangle、disk、sphere 面积灯，point/directional delta 灯，以及程序化吸收/自发光 flame 体积。
+- Radiance RGBE HDR 环境、经纬映射、旋转与亮度/立体角重要性采样。
+- NEE、MIS、俄罗斯轮盘、介质栈、Beer 吸收与 direct/indirect firefly 贡献钳位。
+- 类型化 Python handle；材质、网格、物体和灯光之间不使用字符串 schema 引用。
+- 可选 PFM 线性输出和显式指定的 JSON 运行统计。JSON 仅用于运行记录与资产 manifest，不用于描述场景。
+- 受限 PhysX Python API：GPU 刚体、box/sphere/capsule/compound 碰撞体、冲量和 actor-local 渲染附件。
 
-| 组件 | 项目用途 | 验证状态 |
-| --- | --- | --- |
-| 操作系统 | Linux；容器基于 Ubuntu 24.04 | 仅 Linux 完整验证 |
-| NVIDIA GPU | 支持所用 OptiX 功能的 RTX GPU | 仅 GeForce RTX 5090 完整验证 |
-| CUDA | `nvidia/cuda:13.3.0-devel-ubuntu24.04` 容器 | CUDA 13.3 |
-| OptiX | 用户另行取得并解压 SDK | OptiX 9.1 |
-| PhysX | 两个物理场景的 GPU 刚体构建；由专用镜像获取并构建 | PhysX 5.8.0、CUDA 12.8.1 生成环境 |
-| 容器运行时 | Docker Engine；GPU 流程需要 NVIDIA Container Toolkit | Linux 主机 |
-| 构建与测试工具 | CMake 3.28+、Ninja、C++17、Python 3/pytest | 已包含在项目容器中 |
+## 已验证环境
 
-Windows、多 GPU、其他显卡及其他 CUDA/OptiX 组合尚未完整验证，不能由现有 gallery 或像素 golden 推断为兼容。OptiX 的正式平台和驱动要求以 [NVIDIA OptiX 下载与文档](https://developer.nvidia.com/designworks/optix/download) 为准。
+| 组件 | 完整验证版本 |
+| --- | --- |
+| 操作系统 | Ubuntu 22.04 x86-64（Linux only） |
+| GPU | NVIDIA GeForce RTX 5090 |
+| 驱动 | 615.36 |
+| Python | 3.10 |
+| CUDA / OptiX 渲染 | CUDA 13.3 / OptiX 9.1 |
+| PhysX 求解 | PhysX 5.8.0 / CUDA 12.8 |
+| 构建工具 | CMake 3.28+、Ninja、C++17、pybind11 |
 
-## 获取 OptiX 与构建
+Windows、多 GPU、其他显卡以及其他 CUDA/OptiX 组合尚未完整验证。CUDA、OptiX 和 PhysX SDK 不随仓库分发；OptiX 的正式驱动与平台要求以 NVIDIA 文档为准。
 
-从 NVIDIA 官方页面另行下载并解压 OptiX 9.1。SDK 不在本仓库中，也不会被复制进容器镜像；GPU 脚本要求显式提供其绝对路径：
+## 宿主构建
+
+SpectralDock 只支持仓库内宿主构建，不需要也不提供容器镜像。准备两个 CUDA toolkit、OptiX SDK 和已安装的 PhysX SDK，然后明确设置路径：
 
 ```bash
-export OPTIX_ROOT="/absolute/path/to/OptiX-SDK-9.1.0"
-test -f "$OPTIX_ROOT/include/optix.h"
+export SPECTRALDOCK_CUDA_ROOT=/absolute/path/to/cuda-13.3
+export OPTIX_ROOT=/absolute/path/to/OptiX-SDK-9.1.0
+export SPECTRALDOCK_PHYSX_CUDA_ROOT=/absolute/path/to/cuda-12.8
+export PHYSX_ROOT=/absolute/path/to/physx-5.8-install
 
-./scripts/build-image.sh
 ./scripts/configure.sh Release
 ./scripts/build.sh Release
+source ./scripts/activate.sh Release
 ```
 
-构建产物位于 `build/Release/`。当前从构建目录或项目容器运行，因为可执行文件会加载同一构建树中的 OptiX IR。
+`activate.sh` 只把仓库内 Python 包、Renderer 原生扩展和独立 PhysX worker 加入当前 shell 的查找路径，不会发现、加载或执行任何场景程序。
 
-PhysX 不链接进 `spectraldock` 渲染器，也不在 `optixLaunch` 中执行；它是物理场景渲染命令必经的前置 GPU 阶段。八个静态场景仍只需渲染镜像。两个物理场景的统一入口、固定版本和临时产物边界见 [PhysX 场景说明](docs/PHYSX_SCENE.md)。
-
-## 低成本 smoke render
-
-下面的命令渲染 64×64、1 spp、depth 2 的无降噪图片，适合先验证完整 GPU 路径：
+只构建无 GPU 的 SceneBuilder 与 host 测试时，不需要上述 NVIDIA SDK：
 
 ```bash
-./scripts/spectraldock.sh \
-  --scene tests/scenes/smoke.json \
-  --output output/smoke.png \
-  --width 64 --height 64 --spp 1 --max-depth 2 --seed 1 \
-  --no-denoise
-```
-
-结果写入 `output/smoke.png`，运行信息写入 `output/smoke.stats.json`。固定 CLI 为：
-
-```text
-spectraldock --scene SCENE.json --output OUTPUT.png
-  [--width N] [--height N] [--spp N] [--max-depth N]
-  [--seed N] [--exposure EV] [--denoise|--no-denoise]
-  [--clamp-direct X] [--clamp-indirect X]
-  [--linear-output OUTPUT.pfm]
-```
-
-CLI 参数覆盖场景默认值。`max_depth` 表示最多处理的表面事件数；最后一个事件仍估计显式直接光，但不会继续生成 BSDF 射线。
-
-## 测试与示例
-
-Host-only 测试不需要 NVIDIA GPU、OptiX SDK 或 PhysX：
-
-```bash
-./scripts/build-image.sh
 ./scripts/test.sh
 ```
 
-它会完成 shell 语法检查、`SPECTRALDOCK_ENABLE_GPU=OFF` 的 CMake 构建与 CTest，并运行技术报告源码片段、HDR 生成器和 PhysX 封面合成契约的 pytest。这条 CI 路径验证主机端场景/OBJ 解析、输入语义、技术报告的源码片段与数学标记、HDR 资产的确定性重建，以及封面检查器对有效/变异文档的判定；它不运行真实 PhysX、CUDA/OptiX 像素渲染，也不是 CPU reference renderer。GPU 环境、MIS 对照、Compute Sanitizer 与像素 golden 的范围见 [RTX 5090 运行记录](docs/BENCHMARK.md)和[技术报告第 9 章](docs/technical-report/09-limitations-performance-and-validation.md)。
+## 直接运行示例
 
-运行时模型和纹理已完整收录在 `assets/examples/`，无需额外素材挂载。普通预览写入被忽略的 `output/examples/`：
-
-```bash
-./scripts/render-examples.sh --preset preview
-```
-
-`./scripts/render-examples.sh --preset final` 会直接覆盖八个内置场景受版本控制的 gallery PNG 和对应 stats，用于重建同一组运行记录。正式场景显式使用 direct 64、indirect 16 的有偏贡献钳位；能量、均值和收敛实验必须传 `--clamp-direct 0 --clamp-indirect 0`。Ember Forge 固定使用 2048 spp、depth 12 且不降噪；Moonlit Stepwell 使用粗糙水面 NEE，固定为 512 spp、depth 12 并启用 OptiX AI Denoiser。Radiance Pavilion 只使用 HDR 环境照明。两个 PhysX 场景使用统一的即时生成/渲染入口，不在默认八场景批处理中：
+每个示例自行指定输出文件和渲染参数：
 
 ```bash
-./scripts/build-physx-image.sh
-OPTIX_ROOT="/absolute/path/to/OptiX-SDK-9.1.0" \
-  ./scripts/render-physx-scene.sh --scene kinetic-foundry --preset preview
-OPTIX_ROOT="/absolute/path/to/OptiX-SDK-9.1.0" \
-  ./scripts/render-physx-scene.sh --scene lava-temple-oracle --preset preview
+python3 scenes/material-cathedral.py
+python3 scenes/radiance-pavilion.py
+python3 scenes/kinetic-foundry.py
+python3 scenes/lava-temple-oracle.py
 ```
 
-完整说明见[示例画廊](docs/EXAMPLES.md)。
+八个静态示例直接进入 OptiX。两个物理示例在同一个 Python 程序中显式创建 `PhysicsWorld`、运行 fresh GPU PhysX、把结果应用到 `Renderer`，然后调用 OptiX；它们不会读取或生成场景 JSON，也不会回退到 CPU 物理。
+
+维护者可用 `./scripts/render-examples.sh` 依次直接执行十个程序。该脚本只是批处理，不把 Python 文件作为参数传给渲染器。正式示例参数较高，其中封面为 3840×2160、2048 spp。
+
+更多代码与效果说明见[示例画廊](docs/EXAMPLES.md)，API 见[Python 渲染 API](docs/PYTHON_API.md)，PhysX 数学与工程边界见[PhysX 场景说明](docs/PHYSX_SCENE.md)。
+
+## 测试
+
+GitHub Actions 只执行无 GPU 的 C++/Python host 检查。GPU 验收包括 MIS、灯光重要性采样、火焰、水面、HDR 环境、确定性输出、PhysX 契约及 Compute Sanitizer；标准托管 runner 不承担 GPU 或 PhysX 验收。
+
+```bash
+./scripts/test.sh
+./scripts/acceptance.sh
+```
+
+gallery 与 mesh golden 只代表记录中的 RTX 5090、驱动、编译器和 seed，不是跨 GPU 的逐字节承诺。
 
 ## 已知限制
 
-- 单 GPU、离线 RGBA PNG；没有交互窗口、分布式或多 GPU 渲染。
-- 不实现 MTL、骨骼、动画、通用参与介质或通用非网格对象变换；flame 仅支持确定性异质吸收与自发光，不模拟散射、烟雾或燃烧化学。
-- water_surface 是静态、有限的解析顶界面，不自带侧壁/底部，要求不透明池体封闭且相机从水外开始；含水场景的普通 dielectric 仅支持严格嵌套的闭合 sphere。它没有流体动力学、泡沫、运动模糊或光滑多界面焦散求解；中间透明边界会阻断当前 NEE 连接，必须由后续 BSDF 顶点构造折线路径。粗糙界面能在当前边界执行 NEE，完美光滑界面则不执行普通 NEE；首个光滑水面命中只做一次有界 Fresnel 分裂。
-- HDR 输入只支持常见 `-Y +X` 朝向的 Radiance RGBE `.hdr`（现代 RLE 或未压缩 scanline）；不读取 OpenEXR。可选 PFM 保存贡献钳位之后、Denoiser 与显示变换之前的线性样本均值；只有 clamp 0/0 时才是无偏参考，且仍不是带元数据、色彩管理或压缩的通用 HDR 交换格式。
-- mesh emitter 可显示发光，但不能作为显式采样灯；显式灯为 rectangle、disk、sphere、flame、point 或 directional。point/directional 是理想 delta 模型，不提供软阴影、范围衰减开关、聚光锥或 IES。
-- 默认的 direct 64、indirect 16 贡献钳位会降低 firefly，但会改变有限样本估计量并引入偏差；需要验证物理均值时必须将两个阈值都设为 0。PFM 也不会绕过已启用的钳位。
-- Kinetic Foundry 截取固定第 300 步（2.5 秒）的撞击峰值；“熔岩圣殿的机械先知”截取第 24 步（0.2 秒）的径向爆发瞬间。二者都记录 0 个 sleeping dynamic actors，是清晰的单帧瞬时快照，不含 motion blur、交互或动画。封面物理场景共 130 个动态 actor，其中机械先知由 70 个预先分离的刚体组成，另有 12 块顶石和 48 颗火星；PhysX 计算其碰撞与运动，但不执行运行时拓扑 fracture。
-- 封面水池使用渲染器的有限解析 `water_surface`，不是 PhysX 流体；黑烟与破晓光柱是无散射 flame 体积的吸收/发光代理，不是燃烧、烟流或大气散射模拟。穹顶破口的冰晶外观由 12 个半径 0.11–0.20、大小与位置不规则且互不相交的非透明冷色粗糙金属 sphere 代理，不是半透明冰：含解析水面时，dielectric sphere 在高样本近切线路径上会触发稀有介质栈安全错误，而本场景不以修改渲染器来绕过该安全门。
-- PhysX GPU 不支持 enhanced determinism；固定 seed、步长和 actor 顺序约束输入，但重复生成的最终姿态仍可能不同。生成脚本会拒绝穿地或越界样本并有限重试，`--verify` 检查的是两份独立输出各自满足场景契约。
-- gallery 和 mesh 像素 golden 是一次 RTX 5090 结果，不是跨 GPU、驱动或编译器的逐字节承诺。
+- 单 GPU、离线 PNG/PFM；没有交互窗口、分布式、多 GPU 或 motion blur。
+- 不实现 MTL、骨骼、动画、通用参与介质、燃烧化学或流体动力学。
+- `water_surface` 是静态有限解析界面，需要不透明池壁和池底；它不是 PhysX 流体。
+- flame 是确定性吸收/自发光体积代理，不是烟流或燃烧模拟。
+- point/directional 是理想 delta 灯；软阴影需使用有限面积灯。
+- 默认 direct 64、indirect 16 的贡献钳位有偏；能量或收敛实验必须在 Python 调用中把两个阈值设为 0。
+- PhysX GPU 不承诺重复运行逐字节相同；固定 seed 和 actor 顺序约束输入，契约验证约束结果。
 
 ## 许可与商标
 
-- 代码、文档、场景、SVG 和生成器：Apache License 2.0。
-- 吉祥物 OBJ/manifest、为本项目生成的纹理和十张 gallery PNG：CC0 1.0 Universal。
-- tinyobjloader：保留其 MIT 许可证。
-- CUDA、OptiX、PhysX 及其他外部 SDK 不随仓库分发。
+代码、Python 示例、文档与生成器使用 Apache-2.0；明确列出的视觉资产和 gallery PNG 使用 CC0-1.0；tinyobjloader 保留 MIT。详见 [LICENSE](LICENSE)、[NOTICE](NOTICE)、[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) 和[素材清单](docs/ASSETS.md)。
 
-完整说明见 [LICENSE](LICENSE)、[NOTICE](NOTICE) 与[素材和许可清单](docs/ASSETS.md)。AI 生成纹理为本项目生成，按现状提供且不保证唯一性；其来源和处理记录见素材清单。
+NVIDIA、CUDA、OptiX、PhysX 和 RTX 是 NVIDIA Corporation 的商标或注册商标。SpectralDock 是独立的非官方项目，与 NVIDIA Corporation 无隶属关系，也未获得其赞助或背书。
 
-NVIDIA、CUDA、OptiX、PhysX 和 RTX 是 NVIDIA Corporation 在美国及其他国家和地区的商标或注册商标。SpectralDock 是独立的非官方项目，与 NVIDIA Corporation 无隶属关系，也未获得其赞助或背书。
-
-更多资料：[版本变更](CHANGELOG.md)、[渲染技术报告](docs/technical-report/README.md)、[场景格式](docs/SCENE_FORMAT.md)、[RTX 5090 运行记录](docs/BENCHMARK.md)、[示例画廊](docs/EXAMPLES.md)。
+更多资料：[版本变更](CHANGELOG.md)、[渲染技术报告](docs/technical-report/README.md)、[RTX 5090 运行记录](docs/BENCHMARK.md)。

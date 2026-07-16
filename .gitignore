@@ -3,7 +3,6 @@
 /output/
 /reports/
 /assets/examples/textures/sources/
-/scenes/generated/
 *.stats.json
 !docs/gallery/*.stats.json
 __pycache__/

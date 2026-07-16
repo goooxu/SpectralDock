@@ -121,8 +121,8 @@ TriangleMesh load_obj_mesh(const std::filesystem::path& input_path) {
   config.triangulate = true;
   config.vertex_color = false;
   tinyobj::ObjReader reader;
-  // ParseFromString intentionally ignores mtllib lines. JSON remains the sole
-  // source of material, texture, and face-sidedness information.
+  // ParseFromString intentionally ignores mtllib lines. The typed SceneBuilder
+  // remains the sole source of material, texture, and face-sidedness data.
   if (!reader.ParseFromString(source, std::string{}, config)) {
     const std::string detail = reader.Error().empty()
                                    ? "could not parse file"

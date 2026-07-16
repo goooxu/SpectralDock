@@ -105,7 +105,7 @@ $$
 }
 ```
 
-当前场景接口中的显式灯都是单面：rectangle/disk 只从法线正面发光，sphere 只向外发光。设备结构预留了 `two_sided` 分支，但加载器未暴露它。所有球外连续 BSDF 顶点使用可见立体角，球内或近球路径才均匀采整个球面。Moonlit Stepwell 的月灯是 disk，不使用这个球灯特例；水下 sphere 灯以及其他场景的球灯都会受益。
+当前 Python API 中的显式灯都是单面：rectangle/disk 只从法线正面发光，sphere 只向外发光。设备结构预留了 `two_sided` 分支，但 `Renderer.light()` 未暴露它。所有球外连续 BSDF 顶点使用可见立体角，球内或近球路径才均匀采整个球面。Moonlit Stepwell 的月灯是 disk，不使用这个球灯特例；水下 sphere 灯以及其他场景的球灯都会受益。
 
 ## 2. 二值可见性与当前介电事件
 
@@ -173,7 +173,7 @@ $$
 \qquad a(r)=\frac{1}{r^2};
 $$
 
-directional 的 `direction` 已由加载器归一化，直接作为从表面指向光源的 $\boldsymbol\omega_i$，且 $a=1$。源码用有限 shadow distance 连接 point，用 `kInfinity` 连接 directional：
+directional 的 `direction` 已由原生 SceneBuilder 归一化，直接作为从表面指向光源的 $\boldsymbol\omega_i$，且 $a=1$。源码用有限 shadow distance 连接 point，用 `kInfinity` 连接 directional：
 
 <!-- source-snippet id="delta-light-direction-and-distance" path="src/device_programs.cu" anchor="radiometric_distance2" -->
 ```cpp
@@ -401,7 +401,7 @@ $$
 - mesh emitter；
 - 任何绑定纹理的 emitter。
 
-它们仍可由 BSDF 路径命中或 miss 得到，因此不是必然缺失，但小而亮时可能有很高方差。schema v6 在普通空气顶点默认按亮度与面积/体积代理选择一个有限灯，粗糙水面为了同时照顾强月光与弱水下灯，确定性地各取一个全局分布样本和均匀索引样本，介质内的普通顶点则只用均匀选灯。HDR 环境方向仍按亮度乘 texel 立体角选择，不受有限灯顶点模式影响；delta 灯也不进入这个随机 CDF。完整构造见[第 13 章](13-hdr-environment-and-importance-sampling.md)。
+它们仍可由 BSDF 路径命中或 miss 得到，因此不是必然缺失，但小而亮时可能有很高方差。`Renderer.integrator(direct_light_sampling="importance")` 使普通空气顶点按亮度与面积/体积代理选择一个有限灯，粗糙水面为了同时照顾强月光与弱水下灯，确定性地各取一个全局分布样本和均匀索引样本，介质内的普通顶点则只用均匀选灯。HDR 环境方向仍按亮度乘 texel 立体角选择，不受有限灯顶点模式影响；delta 灯也不进入这个随机 CDF。完整构造见[第 13 章](13-hdr-environment-and-importance-sampling.md)。
 
 ## 8. 对应实现
 

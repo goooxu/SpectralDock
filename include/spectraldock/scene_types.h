@@ -76,15 +76,6 @@ struct Integrator {
   float clamp_indirect = 16.0f;
 };
 
-struct RenderDefaults {
-  std::uint32_t width = 1024;
-  std::uint32_t height = 1024;
-  std::uint32_t spp = 256;
-  std::uint32_t max_depth = 12;
-  std::uint64_t seed = 1;
-  bool denoise = false;
-};
-
 struct Texture {
   std::string name;
   TextureType type = TextureType::Constant;
@@ -253,20 +244,12 @@ struct Scene {
   Camera camera{};
   Background background{};
   Integrator integrator{};
-  RenderDefaults render{};
   std::vector<Texture> textures;
   std::vector<Material> materials;
   std::vector<MeshResource> meshes;
   std::vector<Object> objects;
   std::vector<Light> lights;
 };
-
-struct SceneLoadOptions {
-  bool require_assets = true;
-};
-
-Scene load_scene(const std::filesystem::path& path,
-                 const SceneLoadOptions& options = SceneLoadOptions{});
 
 struct ImageRgba8 {
   std::uint32_t width = 0;

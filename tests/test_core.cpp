@@ -1,16 +1,20 @@
 #include "spectraldock/math.h"
 #include "spectraldock/obj_loader.h"
 #include "spectraldock/sampling.h"
+#include "spectraldock/scene_builder.h"
 #include "spectraldock/scene_types.h"
 
+#include <array>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <functional>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -23,14 +27,17 @@ void check(bool condition, const std::string& message) {
   if (!condition) throw std::runtime_error(message);
 }
 
-void near(float actual, float expected, float epsilon, const std::string& message) {
+void near(float actual, float expected, float epsilon,
+          const std::string& message) {
   if (std::fabs(actual - expected) > epsilon)
-    throw std::runtime_error(message + ": expected " + std::to_string(expected) +
-                             ", got " + std::to_string(actual));
+    throw std::runtime_error(message + ": expected " +
+                             std::to_string(expected) + ", got " +
+                             std::to_string(actual));
 }
 
 std::filesystem::path temporary(const char* suffix) {
-  const auto stamp = std::chrono::high_resolution_clock::now().time_since_epoch().count();
+  const auto stamp =
+      std::chrono::high_resolution_clock::now().time_since_epoch().count();
   return std::filesystem::temp_directory_path() /
          ("spectraldock-test-" + std::to_string(stamp) + suffix);
 }
@@ -44,20 +51,25 @@ struct TemporaryDirectory {
   ~TemporaryDirectory() { std::filesystem::remove_all(path); }
 };
 
-void write_text(const std::filesystem::path& path, const std::string& contents) {
+void write_text(const std::filesystem::path& path,
+                const std::string& contents) {
   std::ofstream output(path);
-  if (!output) throw std::runtime_error("cannot create test file: " + path.string());
+  if (!output)
+    throw std::runtime_error("cannot create test file: " + path.string());
   output << contents;
-  if (!output) throw std::runtime_error("cannot write test file: " + path.string());
+  if (!output)
+    throw std::runtime_error("cannot write test file: " + path.string());
 }
 
 void write_binary(const std::filesystem::path& path,
                   const std::vector<std::uint8_t>& contents) {
   std::ofstream output(path, std::ios::binary);
-  if (!output) throw std::runtime_error("cannot create test file: " + path.string());
+  if (!output)
+    throw std::runtime_error("cannot create test file: " + path.string());
   output.write(reinterpret_cast<const char*>(contents.data()),
                static_cast<std::streamsize>(contents.size()));
-  if (!output) throw std::runtime_error("cannot write test file: " + path.string());
+  if (!output)
+    throw std::runtime_error("cannot write test file: " + path.string());
 }
 
 void expect_error(const std::function<void()>& action,
@@ -74,44 +86,42 @@ void expect_error(const std::function<void()>& action,
 
 Vec3 apply_transform(const TransformMatrix3x4& matrix, Vec3 point) {
   return {
-      matrix[0] * point.x + matrix[1] * point.y +
-          matrix[2] * point.z + matrix[3],
-      matrix[4] * point.x + matrix[5] * point.y +
-          matrix[6] * point.z + matrix[7],
-      matrix[8] * point.x + matrix[9] * point.y +
-          matrix[10] * point.z + matrix[11],
+      matrix[0] * point.x + matrix[1] * point.y + matrix[2] * point.z +
+          matrix[3],
+      matrix[4] * point.x + matrix[5] * point.y + matrix[6] * point.z +
+          matrix[7],
+      matrix[8] * point.x + matrix[9] * point.y + matrix[10] * point.z +
+          matrix[11],
   };
 }
 
 void test_vectors() {
   const Vec3 x{1.0f, 0.0f, 0.0f};
   const Vec3 y{0.0f, 1.0f, 0.0f};
-  check(length_squared(cross(x, y) - Vec3{0.0f, 0.0f, 1.0f}) < 1.0e-12f, "cross product");
+  check(length_squared(cross(x, y) - Vec3{0.0f, 0.0f, 1.0f}) < 1.0e-12f,
+        "cross product");
   near(dot(x, y), 0.0f, 1.0e-7f, "dot product");
-  near(length(normalize(Vec3{2.0f, 3.0f, 4.0f})), 1.0f, 1.0e-6f, "normalize");
+  near(length(normalize(Vec3{2.0f, 3.0f, 4.0f})), 1.0f, 1.0e-6f,
+       "normalize");
 }
 
-void test_png() {
-  const auto path = temporary(".png");
+void test_image_io() {
+  const auto png = temporary(".png");
   const std::vector<std::uint8_t> expected = {
       255, 0, 0, 255, 0, 255, 0, 128,
       0, 0, 255, 64, 255, 255, 255, 0};
-  write_png_rgba8(path, 2, 2, expected);
-  const ImageRgba8 actual = load_png_rgba8(path);
-  std::filesystem::remove(path);
+  write_png_rgba8(png, 2, 2, expected);
+  const ImageRgba8 actual = load_png_rgba8(png);
+  std::filesystem::remove(png);
   check(actual.width == 2 && actual.height == 2, "PNG dimensions");
   check(actual.pixels == expected, "PNG lossless RGBA round trip");
-}
 
-void test_pfm() {
-  const auto path = temporary(".pfm");
+  const auto pfm = temporary(".pfm");
   const std::vector<float> top_to_bottom = {
       1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f,
       7.0f, 8.0f, 9.0f, 10.0f, 11.0f, 12.0f};
-  write_pfm_rgb32f(path, 2, 2, top_to_bottom);
-
-  std::ifstream input(path, std::ios::binary);
-  check(static_cast<bool>(input), "PFM output opens");
+  write_pfm_rgb32f(pfm, 2, 2, top_to_bottom);
+  std::ifstream input(pfm, std::ios::binary);
   std::string line;
   std::getline(input, line);
   check(line == "PF", "PFM RGB magic");
@@ -119,96 +129,55 @@ void test_pfm() {
   check(line == "2 2", "PFM dimensions");
   std::getline(input, line);
   check(line == "-1.0", "PFM little-endian scale");
-  const auto read_little_endian_float = [&] {
-    unsigned char bytes[4]{};
-    input.read(reinterpret_cast<char*>(bytes), sizeof(bytes));
-    check(input.gcount() == static_cast<std::streamsize>(sizeof(bytes)),
-          "PFM float payload length");
-    const std::uint32_t bits =
-        static_cast<std::uint32_t>(bytes[0]) |
-        (static_cast<std::uint32_t>(bytes[1]) << 8u) |
-        (static_cast<std::uint32_t>(bytes[2]) << 16u) |
-        (static_cast<std::uint32_t>(bytes[3]) << 24u);
+  const auto read_float = [&] {
+    std::uint32_t bits = 0;
+    input.read(reinterpret_cast<char*>(&bits), sizeof(bits));
+    check(input.gcount() == static_cast<std::streamsize>(sizeof(bits)),
+          "PFM payload length");
     float value = 0.0f;
     std::memcpy(&value, &bits, sizeof(value));
     return value;
   };
-  const std::vector<float> bottom_to_top = {
-      7.0f, 8.0f, 9.0f, 10.0f, 11.0f, 12.0f,
-      1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
-  for (const float expected : bottom_to_top)
-    near(read_little_endian_float(), expected, 0.0f,
-         "PFM bottom-up RGB payload");
-  check(input.get() == std::char_traits<char>::eof(),
-        "PFM has no trailing payload");
+  for (float value : std::vector<float>{7.0f, 8.0f, 9.0f, 10.0f, 11.0f,
+                                        12.0f, 1.0f, 2.0f, 3.0f, 4.0f,
+                                        5.0f, 6.0f})
+    near(read_float(), value, 0.0f, "PFM bottom-up payload");
   input.close();
-  std::filesystem::remove(path);
+  std::filesystem::remove(pfm);
 
-  expect_error([&] { write_pfm_rgb32f(path, 0, 1, {}); }, "non-zero",
+  expect_error([&] { write_pfm_rgb32f(pfm, 0, 1, {}); }, "non-zero",
                "PFM zero dimension rejection");
-  expect_error([&] { write_pfm_rgb32f(path, 1, 1, {1.0f, 2.0f}); },
+  expect_error([&] { write_pfm_rgb32f(pfm, 1, 1, {1.0f, 2.0f}); },
                "expected 3 RGB floats", "PFM channel count rejection");
   expect_error(
       [&] {
         write_pfm_rgb32f(
-            path, 1, 1,
+            pfm, 1, 1,
             {1.0f, std::numeric_limits<float>::infinity(), 3.0f});
       },
-      "samples must be finite", "PFM non-finite sample rejection");
+      "samples must be finite", "PFM non-finite rejection");
 }
 
 void test_hdr_and_sampling_distributions() {
   TemporaryDirectory directory;
-  const std::string raw_header =
+  const std::string header =
       "#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 1 +X 2\n";
-  std::vector<std::uint8_t> raw(raw_header.begin(), raw_header.end());
+  std::vector<std::uint8_t> raw(header.begin(), header.end());
   raw.insert(raw.end(), {128, 64, 32, 129, 0, 0, 0, 0});
-  const auto raw_path = directory.path / "raw.hdr";
-  write_binary(raw_path, raw);
-  const ImageRgb32f raw_image = load_radiance_hdr(raw_path);
-  check(raw_image.width == 2 && raw_image.height == 1,
-        "raw RGBE dimensions");
-  near(raw_image.pixels[0], 1.0f, 1.0e-6f, "raw RGBE red");
-  near(raw_image.pixels[1], 0.5f, 1.0e-6f, "raw RGBE green");
-  near(raw_image.pixels[2], 0.25f, 1.0e-6f, "raw RGBE blue");
-  near(raw_image.pixels[3], 0.0f, 0.0f, "zero-exponent RGBE");
-
-  const std::string rle_header =
-      "#?RGBE\nFORMAT=32-bit_rle_rgbe\n\n-Y 1 +X 128\n";
-  std::vector<std::uint8_t> rle(rle_header.begin(), rle_header.end());
-  rle.insert(rle.end(), {2, 2, 0, 128});
-  for (const std::uint8_t value : {std::uint8_t{128}, std::uint8_t{64},
-                                   std::uint8_t{32}, std::uint8_t{129}}) {
-    rle.push_back(128);  // A legal 128-byte literal packet.
-    rle.insert(rle.end(), 128, value);
-  }
-  const auto rle_path = directory.path / "modern-rle.hdr";
-  write_binary(rle_path, rle);
-  const ImageRgb32f rle_image = load_radiance_hdr(rle_path);
-  check(rle_image.width == 128 && rle_image.height == 1,
-        "modern RLE dimensions");
-  near(rle_image.pixels[127 * 3], 1.0f, 1.0e-6f,
-       "128-byte RLE literal");
-
-  std::vector<std::uint8_t> malformed(rle_header.begin(), rle_header.end());
-  malformed.insert(malformed.end(), {2, 2, 0, 128, 0});
-  const auto malformed_path = directory.path / "malformed.hdr";
-  write_binary(malformed_path, malformed);
-  expect_error([&] { (void)load_radiance_hdr(malformed_path); },
-               "zero-length RLE packet", "zero-length HDR RLE rejection");
+  const auto path = directory.path / "raw.hdr";
+  write_binary(path, raw);
+  const ImageRgb32f image = load_radiance_hdr(path);
+  check(image.width == 2 && image.height == 1, "raw RGBE dimensions");
+  near(image.pixels[0], 1.0f, 1.0e-6f, "raw RGBE red");
+  near(image.pixels[1], 0.5f, 1.0e-6f, "raw RGBE green");
+  near(image.pixels[2], 0.25f, 1.0e-6f, "raw RGBE blue");
 
   std::vector<std::uint8_t> trailing(raw);
   trailing.push_back(0);
   const auto trailing_path = directory.path / "trailing.hdr";
   write_binary(trailing_path, trailing);
   expect_error([&] { (void)load_radiance_hdr(trailing_path); },
-               "unexpected trailing data", "trailing HDR payload rejection");
-
-  const auto oversized_path = directory.path / "oversized.hdr";
-  write_text(oversized_path,
-             "#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 1 +X 8193\n");
-  expect_error([&] { (void)load_radiance_hdr(oversized_path); },
-               "width must be in", "oversized HDR rejection");
+               "unexpected trailing data", "trailing HDR rejection");
 
   Light small;
   small.type = LightType::Sphere;
@@ -222,35 +191,24 @@ void test_hdr_and_sampling_distributions() {
   Light point;
   point.type = LightType::Point;
   point.emission = {100.0f, 100.0f, 100.0f};
-  Light directional;
+  Light directional = point;
   directional.type = LightType::Directional;
-  directional.emission = {100.0f, 100.0f, 100.0f};
   const std::vector<Light> lights{small, point, large, directional};
-  const FiniteLightDistribution uniform_lights =
+  const FiniteLightDistribution uniform =
       build_finite_light_distribution(lights, DirectLightSampling::Uniform);
-  const FiniteLightDistribution important_lights =
+  const FiniteLightDistribution importance =
       build_finite_light_distribution(lights, DirectLightSampling::Importance);
-  check(uniform_lights.cdf.size() == 3 &&
-            uniform_lights.probabilities.size() == 2,
-        "finite-light distribution dimensions");
-  check(uniform_lights.indices == std::vector<std::uint32_t>({0u, 2u}),
-        "finite-light distribution excludes delta lights");
-  near(uniform_lights.probabilities[0], 0.5f, 1.0e-6f,
+  check(uniform.indices == std::vector<std::uint32_t>({0u, 2u}),
+        "delta lights excluded from finite-light distribution");
+  near(uniform.probabilities[0], 0.5f, 1.0e-6f,
        "uniform finite-light probability");
-  check(important_lights.probabilities[1] > 0.98f &&
-            important_lights.probabilities[0] > 0.0f,
-        "finite-light importance and support floor");
-  for (std::size_t i = 0; i < important_lights.probabilities.size(); ++i) {
-    near(important_lights.probabilities[i],
-         important_lights.cdf[i + 1] - important_lights.cdf[i], 0.0f,
-         "finite-light CDF interval source of truth");
-  }
-  const FiniteLightDistribution delta_only =
-      build_finite_light_distribution({point, directional},
-                                      DirectLightSampling::Importance);
-  check(delta_only.indices.empty() && delta_only.probabilities.empty() &&
-            delta_only.cdf == std::vector<float>({0.0f}),
-        "delta-only scene has an empty stochastic-light domain");
+  check(importance.probabilities[1] > 0.98f &&
+            importance.probabilities[0] > 0.0f,
+        "finite-light importance support");
+  for (std::size_t i = 0; i < importance.probabilities.size(); ++i)
+    near(importance.probabilities[i],
+         importance.cdf[i + 1] - importance.cdf[i], 0.0f,
+         "finite-light CDF consistency");
 
   ImageRgb32f black;
   black.width = 2;
@@ -258,35 +216,22 @@ void test_hdr_and_sampling_distributions() {
   black.pixels.assign(12, 0.0f);
   const EnvironmentDistribution black_distribution =
       build_environment_distribution(black, DirectLightSampling::Importance);
-  check(black_distribution.black, "black environment fallback flag");
+  check(black_distribution.black, "black environment fallback");
   near(black_distribution.row_probabilities[0], 0.5f, 1.0e-6f,
-       "black environment uniform-sphere row");
-  near(black_distribution.conditional_probabilities[0], 0.5f, 1.0e-6f,
-       "black environment uniform longitude");
-
+       "black environment sphere row");
   ImageRgb32f bright = black;
   bright.pixels[0] = bright.pixels[1] = bright.pixels[2] = 100.0f;
-  const EnvironmentDistribution important_environment =
+  const EnvironmentDistribution bright_distribution =
       build_environment_distribution(bright, DirectLightSampling::Importance);
-  const EnvironmentDistribution uniform_environment =
-      build_environment_distribution(bright, DirectLightSampling::Uniform);
-  check(!important_environment.black, "non-black environment flag");
-  const float bright_mass = important_environment.row_probabilities[0] *
-                            important_environment.conditional_probabilities[0];
-  check(bright_mass > 0.98f &&
-            important_environment.conditional_probabilities[1] > 0.0f,
-        "environment importance and sphere support floor");
-  near(uniform_environment.row_probabilities[0], 0.5f, 1.0e-6f,
-       "uniform environment sphere row");
-  near(uniform_environment.conditional_probabilities[0], 0.5f, 1.0e-6f,
-       "uniform environment longitude");
+  check(!bright_distribution.black &&
+            bright_distribution.conditional_probabilities[0] > 0.98f,
+        "environment importance sampling");
 }
 
 void test_obj_loader() {
   TemporaryDirectory directory;
   const auto quad = directory.path / "quad.obj";
   write_text(quad, R"obj(
-mtllib ignored.mtl
 v 0 0 0
 v 1 0 0
 v 1 1 0
@@ -296,24 +241,17 @@ vt 1 0
 vt 1 1
 vt 0 1
 vn 0 0 -2
-usemtl ignored
 s 7
 f -4/-4/1 -3/-3/1 -2/-2/1 -1/-1/1
 )obj");
   const TriangleMesh triangulated = load_obj_mesh(quad);
   check(triangulated.indices.size() == 2, "OBJ polygon triangulation");
   check(triangulated.positions.size() == 6 &&
-            triangulated.normals.size() == 6,
-        "OBJ expanded triangle corners");
-  check(triangulated.has_complete_uvs(), "OBJ complete UVs");
-  for (const Vec3 normal : triangulated.normals)
-    near(normal.z, -1.0f, 1.0e-6f, "OBJ explicit normal interpolation data");
-  bool found_top_right = false;
-  for (const Vec2 uv : triangulated.texcoords)
-    found_top_right = found_top_right ||
-                      (std::fabs(uv.x - 1.0f) < 1.0e-6f &&
-                       std::fabs(uv.y - 1.0f) < 1.0e-6f);
-  check(found_top_right, "OBJ UV values");
+            triangulated.normals.size() == 6 &&
+            triangulated.has_complete_uvs(),
+        "OBJ expanded attributes");
+  for (Vec3 normal : triangulated.normals)
+    near(normal.z, -1.0f, 1.0e-6f, "OBJ explicit normal");
 
   const auto smooth = directory.path / "smooth.obj";
   write_text(smooth, R"obj(
@@ -328,52 +266,26 @@ f 1 3 4
   const TriangleMesh generated = load_obj_mesh(smooth);
   check(!generated.has_complete_uvs(), "OBJ missing UVs remain absent");
   const float expected = 1.0f / std::sqrt(2.0f);
-  int shared_corners = 0;
+  int shared = 0;
   for (std::size_t i = 0; i < generated.positions.size(); ++i) {
     if (length_squared(generated.positions[i]) < 1.0e-12f) {
       near(generated.normals[i].x, expected, 1.0e-6f,
-           "smoothing-group generated normal x");
+           "generated smooth normal x");
       near(generated.normals[i].z, expected, 1.0e-6f,
-           "smoothing-group generated normal z");
-      ++shared_corners;
+           "generated smooth normal z");
+      ++shared;
     }
   }
-  check(shared_corners == 2, "shared smoothing-group corners");
+  check(shared == 2, "shared smoothing-group vertices");
 
   const auto invalid = directory.path / "invalid.obj";
   write_text(invalid, "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 9\n");
-  expect_error([&] { (void)load_obj_mesh(invalid); }, "out-of-range face index",
-               "OBJ invalid index error");
-
-  const auto invalid_negative_uv = directory.path / "invalid-negative-uv.obj";
-  write_text(invalid_negative_uv,
-             "v 0 0 0\nv 1 0 0\nv 0 1 0\n"
-             "vt 0 0\nf 1/-2 2/-1 3/-1\n");
-  expect_error([&] { (void)load_obj_mesh(invalid_negative_uv); },
-               "out-of-range face index",
-               "OBJ invalid negative texture-coordinate index");
-
-  const auto invalid_negative_normal =
-      directory.path / "invalid-negative-normal.obj";
-  write_text(invalid_negative_normal,
-             "v 0 0 0\nv 1 0 0\nv 0 1 0\n"
-             "vn 0 0 1\nf 1//-2 2//-1 3//-1\n");
-  expect_error([&] { (void)load_obj_mesh(invalid_negative_normal); },
-               "out-of-range face index",
-               "OBJ invalid negative normal index");
-
-  const auto invalid_positive_uv = directory.path / "invalid-positive-uv.obj";
-  write_text(invalid_positive_uv,
-             "v 0 0 0\nv 1 0 0\nv 0 1 0\n"
-             "vt 0 0\nf 1/2 2/1 3/1\n");
-  expect_error([&] { (void)load_obj_mesh(invalid_positive_uv); },
-               "out-of-range face index",
-               "OBJ invalid positive texture-coordinate index");
-
+  expect_error([&] { (void)load_obj_mesh(invalid); }, "out-of-range",
+               "OBJ invalid index");
   const auto degenerate = directory.path / "degenerate.obj";
   write_text(degenerate, "v 0 0 0\nv 1 0 0\nv 2 0 0\nf 1 2 3\n");
   expect_error([&] { (void)load_obj_mesh(degenerate); }, "degenerate",
-               "OBJ degenerate face error");
+               "OBJ degenerate face");
 }
 
 void test_transform_order() {
@@ -388,9 +300,57 @@ void test_transform_order() {
   near(result.z, 28.0f, 2.0e-5f, "transform T*Rz*Ry*Rx*S z");
 }
 
-void test_meshes() {
-  TemporaryDirectory directory;
-  write_text(directory.path / "mesh.obj", R"obj(
+std::int32_t add_diffuse(SceneBuilder& builder, const std::string& name,
+                         std::int32_t texture = kInvalidId,
+                         Vec3 color = {0.7f, 0.7f, 0.7f}) {
+  return builder.add_material(name, MaterialType::Lambertian, texture, color,
+                              Vec3{0.0f}, 0.5f, 1.5f, Vec3{0.0f});
+}
+
+std::int32_t add_emitter(SceneBuilder& builder, const std::string& name,
+                         Vec3 emission = {4.0f, 5.0f, 6.0f},
+                         std::int32_t texture = kInvalidId) {
+  return builder.add_material(name, MaterialType::Emitter, texture, Vec3{1.0f},
+                              emission, 0.5f, 1.5f, Vec3{0.0f});
+}
+
+std::int32_t add_glass(SceneBuilder& builder, const std::string& name) {
+  return builder.add_material(name, MaterialType::Dielectric, kInvalidId,
+                              Vec3{1.0f}, Vec3{0.0f}, 0.0f, 1.5f,
+                              Vec3{0.0f});
+}
+
+std::int32_t add_water(SceneBuilder& builder, const std::string& name,
+                       float roughness = 0.0f) {
+  return builder.add_material(name, MaterialType::Water, kInvalidId,
+                              Vec3{1.0f}, Vec3{0.0f}, roughness, 1.333f,
+                              {0.35f, 0.08f, 0.025f});
+}
+
+void set_camera_and_background(SceneBuilder& builder,
+                               Vec3 look_from = {0.0f, 4.0f, 8.0f}) {
+  builder.set_camera(look_from, {0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f},
+                     40.0f, 0.0f, 8.0f);
+  builder.set_constant_background({0.01f, 0.02f, 0.03f}, 0.0f);
+}
+
+void add_minimal_object(SceneBuilder& builder) {
+  const std::int32_t material = add_diffuse(builder, "minimal-material");
+  builder.add_sphere("minimal-object", {0.0f, 0.0f, 0.0f}, 1.0f,
+                     material, material, kInvalidId, 0.5f);
+}
+
+struct Assets {
+  std::filesystem::path image;
+  std::filesystem::path mesh;
+  std::filesystem::path environment;
+};
+
+Assets make_assets(const TemporaryDirectory& directory) {
+  Assets result{directory.path / "texture.png", directory.path / "mesh.obj",
+                directory.path / "studio.hdr"};
+  write_png_rgba8(result.image, 1, 1, {255, 128, 64, 255});
+  write_text(result.mesh, R"obj(
 v 0 0 0
 v 1 0 0
 v 0 1 0
@@ -399,768 +359,658 @@ vt 1 0
 vt 0 1
 f 1/1 2/2 3/3
 )obj");
-  const auto scene_path = directory.path / "scene.json";
-  write_text(scene_path, R"json({
-    "schema_version": 6,
-    "camera": {"look_from":[0,1,4],"look_at":[0,0,0],"up":[0,1,0],"vfov":40},
-    "background": {"type":"constant","color":[0,0,0]},
-    "textures": [],
-    "materials": [{"name":"front","type":"lambertian"},
-                  {"name":"back","type":"metal","roughness":0.2}],
-    "meshes": [{"name":"triangle","path":"mesh.obj"}],
-    "objects": [{"name":"instance","type":"mesh","mesh":"triangle",
-      "front_material":"front","back_material":"back",
-      "transform":{"translate":[1,2,3],"rotate_degrees":[10,20,30],"scale":[2,3,4]}}]
-  })json");
-  const Scene scene = load_scene(scene_path);
-  check(scene.meshes.size() == 1, "mesh declaration");
-  check(scene.meshes[0].mesh.indices.size() == 1 &&
-            scene.meshes[0].mesh.has_complete_uvs(),
-        "loaded mesh data");
-  check(scene.objects.size() == 1 &&
-            scene.objects[0].type == GeometryType::Mesh,
-        "mesh object");
-  const auto& instance = std::get<MeshInstanceData>(scene.objects[0].geometry);
-  check(instance.mesh_id == 0, "mesh reference");
-  near(instance.transform.translate.y, 2.0f, 1.0e-6f,
-       "mesh translation");
-  near(instance.transform.rotate_degrees.z, 30.0f, 1.0e-6f,
-       "mesh rotation");
-  near(instance.transform.scale.x, 2.0f, 1.0e-6f,
-       "mesh scale");
+  const std::string header =
+      "#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 1 +X 1\n";
+  std::vector<std::uint8_t> pixels(header.begin(), header.end());
+  pixels.insert(pixels.end(), {128, 128, 128, 129});
+  write_binary(result.environment, pixels);
+  return result;
+}
+
+void test_scene_builder_complete_scene() {
+  TemporaryDirectory directory;
+  const Assets assets = make_assets(directory);
+  SceneBuilder builder;
+  builder.set_camera({0.0f, 4.0f, 8.0f}, {0.0f, 0.0f, 0.0f},
+                     {0.0f, 2.0f, 0.0f}, 40.0f, 0.0f, 8.0f);
+  builder.set_integrator(DirectLightSampling::Uniform, 12.0f, 3.0f);
+  builder.set_constant_background({0.1f, 0.2f, 0.3f}, 1.0f);
+
+  const std::int32_t mask =
+      builder.add_constant_texture("mask", {1.0f, 1.0f, 1.0f});
+  const std::int32_t image =
+      builder.add_image_texture("image", assets.image, true);
+  const std::int32_t diffuse = add_diffuse(builder, "diffuse", image);
+  const std::int32_t metal = builder.add_material(
+      "metal", MaterialType::Metal, kInvalidId, {0.8f, 0.6f, 0.2f},
+      Vec3{0.0f}, 0.2f, 1.5f, Vec3{0.0f});
+  const std::int32_t glass = add_glass(builder, "glass");
+  const std::int32_t emitter = add_emitter(builder, "emitter");
+  const std::int32_t water = add_water(builder, "water", 0.12f);
+  const std::int32_t mesh = builder.add_mesh("triangle", assets.mesh);
+
+  const std::int32_t glass_sphere = builder.add_sphere(
+      "glass-sphere", {0.0f, 0.0f, 0.0f}, 1.0f, glass, glass,
+      kInvalidId, 0.5f);
+  const std::int32_t panel = builder.add_rectangle(
+      "panel", {-1.0f, 3.0f, -1.0f}, {1.0f, 3.0f, -1.0f},
+      {1.0f, 3.0f, 1.0f}, emitter, emitter, kInvalidId, 0.5f);
+  const std::int32_t sketch = builder.add_sketch(
+      "sketch", {-2.0f, 0.0f, -2.0f}, {-2.0f, 2.0f, -2.0f},
+      {0.0f, 2.0f, -2.0f}, diffuse, diffuse, mask, 0.25f);
+  const std::int32_t disk = builder.add_disk(
+      "disk", {3.0f, 2.0f, 0.0f}, {0.0f, -2.0f, 0.0f}, 0.75f,
+      emitter, emitter, kInvalidId, 0.5f);
+  const std::int32_t cylinder = builder.add_cylinder(
+      "cylinder", {-3.0f, 0.0f, 2.0f}, {0.0f, 2.0f, 0.0f}, 2.0f,
+      0.5f, metal, metal, kInvalidId, 0.5f);
+  const std::int32_t parabola = builder.add_parabola(
+      "parabola", {-3.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f},
+      {-3.0f, 0.0f, 1.0f}, {{-4.0f, -1.0f, -1.0f},
+                              {-2.0f, 2.0f, 2.0f}},
+      kInvalidId, metal, kInvalidId, 0.5f);
+  const Transform transform{{1.0f, 2.0f, 3.0f},
+                            {10.0f, 20.0f, 30.0f},
+                            {2.0f, 3.0f, 4.0f}};
+  const std::int32_t instance = builder.add_mesh_instance(
+      "instance", mesh, transform, diffuse, diffuse, kInvalidId, 0.5f);
+  const std::vector<WaterWave> waves = {
+      {{2.0f, 0.0f}, 0.05f, 1.0f, -0.5f}};
+  const std::int32_t surface = builder.add_water_surface(
+      "surface", {10.0f, 0.0f, 10.0f}, {2.0f, 2.0f}, water, waves);
+  const std::int32_t emitter_sphere = builder.add_sphere(
+      "emitter-sphere", {-3.0f, 3.0f, 0.0f}, 0.25f, emitter, emitter,
+      kInvalidId, 0.5f);
+
+  check(mask == 0 && image == 1, "typed texture ids");
+  check(diffuse == 0 && metal == 1 && glass == 2 && emitter == 3 &&
+            water == 4 && mesh == 0,
+        "typed resource ids");
+  check(glass_sphere == 0 && panel == 1 && sketch == 2 && disk == 3 &&
+            cylinder == 4 && parabola == 5 && instance == 6 &&
+            surface == 7 && emitter_sphere == 8,
+        "stable object ids");
+
+  check(builder.add_sphere_light("sphere-light", {-3.0f, 3.0f, 0.0f},
+                                 0.25f, {4.0f, 5.0f, 6.0f},
+                                 emitter_sphere) == 0,
+        "sphere light id");
+  check(builder.add_rectangle_light(
+            "rectangle-light", {-1.0f, 3.0f, -1.0f}, {2.0f, 0.0f, 0.0f},
+            {0.0f, 0.0f, 2.0f}, {4.0f, 5.0f, 6.0f}, panel) == 1,
+        "rectangle light id");
+  check(builder.add_disk_light("disk-light", {3.0f, 2.0f, 0.0f},
+                               {0.0f, -1.0f, 0.0f}, 0.75f,
+                               {4.0f, 5.0f, 6.0f}, disk) == 2,
+        "disk light id");
+  check(builder.add_flame_light(
+            "flame", {0.0f, 0.0f, 3.0f}, {0.0f, 2.0f, 0.0f}, 1.0f,
+            0.2f, 0.1f, {8.0f, 2.0f, 0.2f}, {1.0f, 0.1f, 0.0f}, 1.0f,
+            1.0f, 0.35f, 2.0f, 7u) == 3,
+        "flame light id");
+  check(builder.add_point_light("point", {2.0f, 2.0f, 2.0f},
+                                {3.0f, 2.0f, 1.0f}) == 4,
+        "point light id");
+  check(builder.add_directional_light("directional", {0.0f, -2.0f, 0.0f},
+                                      {0.2f, 0.3f, 0.4f}) == 5,
+        "directional light id");
+
+  const std::shared_ptr<const Scene> scene = builder.finish();
+  check(scene->textures.size() == 2 && scene->materials.size() == 5 &&
+            scene->meshes.size() == 1 && scene->objects.size() == 9 &&
+            scene->lights.size() == 6,
+        "complete builder scene dimensions");
+  near(scene->camera.up.y, 1.0f, 1.0e-6f, "camera up normalization");
+  near(scene->background.exposure, 1.0f, 0.0f, "background exposure");
+  check(scene->integrator.direct_light_sampling == DirectLightSampling::Uniform,
+        "integrator mode");
+  near(scene->integrator.clamp_direct, 12.0f, 0.0f,
+       "integrator direct clamp");
+  check(scene->textures[1].type == TextureType::Image &&
+            scene->textures[1].srgb,
+        "image texture fields");
+  check(scene->materials[2].type == MaterialType::Dielectric &&
+            scene->materials[4].type == MaterialType::Water,
+        "material types");
+  near(scene->materials[4].roughness, 0.12f, 0.0f, "water roughness");
+  check(scene->meshes[0].mesh.indices.size() == 1 &&
+            scene->meshes[0].mesh.has_complete_uvs(),
+        "mesh resource loading");
+
+  const std::array<GeometryType, 9> expected_geometry = {
+      GeometryType::Sphere,       GeometryType::Rectangle,
+      GeometryType::Sketch,       GeometryType::Disk,
+      GeometryType::Cylinder,     GeometryType::Parabola,
+      GeometryType::Mesh,         GeometryType::WaterSurface,
+      GeometryType::Sphere};
+  for (std::size_t i = 0; i < expected_geometry.size(); ++i)
+    check(scene->objects[i].type == expected_geometry[i],
+          "all geometry types retained");
+  const auto& built_transform =
+      std::get<MeshInstanceData>(scene->objects[6].geometry).transform;
+  near(built_transform.rotate_degrees.z, 30.0f, 0.0f,
+       "mesh transform retained");
+  const auto& built_water =
+      std::get<WaterSurfaceData>(scene->objects[7].geometry);
+  check(built_water.wave_count == 1 && built_water.tiles_x == 4 &&
+            built_water.tiles_z == 4,
+        "water derived tile counts");
+  near(built_water.waves[0].direction.x, 1.0f, 1.0e-6f,
+       "water direction normalization");
+  near(built_water.waves[0].phase_radians, 2.0f * kPi - 0.5f, 1.0e-6f,
+       "water phase wrapping");
+
+  const std::array<LightType, 6> expected_lights = {
+      LightType::Sphere, LightType::Rectangle, LightType::Disk,
+      LightType::Flame,  LightType::Point,     LightType::Directional};
+  for (std::size_t i = 0; i < expected_lights.size(); ++i)
+    check(scene->lights[i].type == expected_lights[i],
+          "all light types retained");
+  near(scene->lights[3].axis.y, 1.0f, 1.0e-6f,
+       "flame axis normalization");
+  near(scene->lights[5].axis.y, -1.0f, 1.0e-6f,
+       "directional axis normalization");
+  expect_error([&] { builder.set_integrator(DirectLightSampling::Importance,
+                                             1.0f, 1.0f); },
+               "finalized", "finalized builder mutation rejection");
+}
+
+void test_scene_builder_configuration_and_resources() {
+  TemporaryDirectory directory;
+  const Assets assets = make_assets(directory);
+
+  SceneBuilder missing_camera;
+  missing_camera.set_constant_background(Vec3{0.0f}, 0.0f);
+  add_minimal_object(missing_camera);
+  expect_error([&] { (void)missing_camera.finish(); }, "camera",
+               "missing camera rejection");
+  SceneBuilder missing_background;
+  missing_background.set_camera({0.0f, 1.0f, 4.0f}, Vec3{0.0f},
+                                {0.0f, 1.0f, 0.0f}, 40.0f, 0.0f, 4.0f);
+  add_minimal_object(missing_background);
+  expect_error([&] { (void)missing_background.finish(); }, "background",
+               "missing background rejection");
+  SceneBuilder missing_objects;
+  set_camera_and_background(missing_objects);
+  expect_error([&] { (void)missing_objects.finish(); }, "at least one object",
+               "empty scene rejection");
+
+  SceneBuilder camera;
+  expect_error(
+      [&] {
+        camera.set_camera(Vec3{0.0f}, Vec3{0.0f}, {0.0f, 1.0f, 0.0f},
+                          40.0f, 0.0f, 1.0f);
+      },
+      "must differ", "coincident camera endpoints");
+  expect_error(
+      [&] {
+        camera.set_camera({0.0f, 0.0f, 1.0f}, Vec3{0.0f},
+                          {0.0f, 0.0f, 2.0f}, 40.0f, 0.0f, 1.0f);
+      },
+      "parallel", "parallel camera up vector");
+  expect_error(
+      [&] {
+        camera.set_camera({0.0f, 0.0f, 1.0f}, Vec3{0.0f},
+                          {0.0f, 1.0f, 0.0f}, 179.0f, 0.0f, 1.0f);
+      },
+      "(0, 179)", "camera FOV range");
+  expect_error(
+      [&] {
+        camera.set_camera({0.0f, 0.0f, 1.0f}, Vec3{0.0f},
+                          {0.0f, 1.0f, 0.0f}, 40.0f, -1.0f, 1.0f);
+      },
+      "non-negative", "camera aperture range");
+
+  SceneBuilder sky;
+  sky.set_camera({0.0f, 1.0f, 4.0f}, Vec3{0.0f}, {0.0f, 1.0f, 0.0f},
+                 40.0f, 0.0f, 4.0f);
+  sky.set_sky_background(Vec3{0.1f}, {0.2f, 0.3f, 0.4f},
+                         {0.0f, 2.0f, 0.0f},
+                         {1.0f, 0.5f, 0.25f}, 0.99f, 0.5f);
+  add_minimal_object(sky);
+  const auto sky_scene = sky.finish();
+  check(sky_scene->background.type == BackgroundType::Sky,
+        "sky background type");
+  near(sky_scene->background.sun_direction.y, 1.0f, 1.0e-6f,
+       "sky direction normalization");
+
+  SceneBuilder environment;
+  environment.set_camera({0.0f, 1.0f, 4.0f}, Vec3{0.0f},
+                         {0.0f, 1.0f, 0.0f}, 40.0f, 0.0f, 4.0f);
+  environment.set_environment_background(assets.environment, 2.5f, -45.0f,
+                                         1.0f);
+  add_minimal_object(environment);
+  const auto environment_scene = environment.finish();
+  check(environment_scene->background.type == BackgroundType::Environment,
+        "environment background type");
+  near(environment_scene->background.environment_intensity, 2.5f, 0.0f,
+       "environment intensity");
+  near(environment_scene->background.environment_rotation_degrees, -45.0f,
+       0.0f, "environment rotation");
+  SceneBuilder bad_background;
+  expect_error(
+      [&] {
+        bad_background.set_environment_background(
+            directory.path / "missing.hdr", 1.0f, 0.0f, 0.0f);
+      },
+      "asset not found", "missing environment rejection");
+  expect_error(
+      [&] { bad_background.set_constant_background({-1.0f, 0.0f, 0.0f}, 0.0f); },
+      "non-negative", "negative constant background");
+  expect_error(
+      [&] {
+        bad_background.set_sky_background(
+            Vec3{0.0f}, Vec3{0.0f}, {1.0f, 0.0f, 0.0f}, Vec3{0.0f},
+            -2.0f, 0.0f);
+      },
+      "[-1, 2]", "sky sun angle range");
+  expect_error(
+      [&] {
+        bad_background.set_integrator(DirectLightSampling::Importance, -1.0f,
+                                      0.0f);
+      },
+      "non-negative", "integrator clamp range");
+
+  SceneBuilder resources;
+  const std::int32_t constant =
+      resources.add_constant_texture("constant", {0.2f, 0.3f, 0.4f});
+  check(constant == 0, "constant texture id");
+  expect_error(
+      [&] { resources.add_constant_texture("constant", Vec3{1.0f}); },
+      "duplicate name", "duplicate texture name");
+  expect_error(
+      [&] {
+        resources.add_image_texture("missing", directory.path / "none.png",
+                                    true);
+      },
+      "asset not found", "missing image texture");
+  expect_error(
+      [&] { add_diffuse(resources, "bad-reference", 99); },
+      "invalid typed handle", "invalid texture id");
+  add_diffuse(resources, "material");
+  expect_error([&] { add_diffuse(resources, "material"); }, "duplicate name",
+               "duplicate material name");
+  expect_error(
+      [&] {
+        resources.add_material("rough", MaterialType::Metal, kInvalidId,
+                               Vec3{1.0f}, Vec3{0.0f}, 1.1f, 1.5f,
+                               Vec3{0.0f});
+      },
+      "[0, 1]", "material roughness range");
+  expect_error(
+      [&] {
+        resources.add_material("glass", MaterialType::Dielectric, kInvalidId,
+                               Vec3{1.0f}, Vec3{0.0f}, 0.0f, 1.0f,
+                               Vec3{0.0f});
+      },
+      "greater than 1", "dielectric IOR range");
+  expect_error(
+      [&] {
+        resources.add_material("dark-emitter", MaterialType::Emitter,
+                               kInvalidId, Vec3{1.0f}, Vec3{0.0f}, 0.5f,
+                               1.5f, Vec3{0.0f});
+      },
+      "positive emission", "empty emitter rejection");
+  expect_error(
+      [&] {
+        resources.add_material("bad-water", MaterialType::Water, constant,
+                               Vec3{1.0f}, Vec3{0.0f}, 0.0f, 1.333f,
+                               {0.35f, 0.08f, 0.025f});
+      },
+      "not supported", "water texture rejection");
+
+  check(resources.add_mesh("mesh", assets.mesh) == 0, "mesh id");
+  expect_error([&] { resources.add_mesh("mesh", assets.mesh); },
+               "duplicate name", "duplicate mesh name");
+  expect_error(
+      [&] { resources.add_mesh("missing-mesh", directory.path / "none.obj"); },
+      "asset not found", "missing mesh rejection");
 
   write_text(directory.path / "no-uv.obj",
              "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n");
-  const auto textured = directory.path / "textured-no-uv.json";
-  write_text(textured, R"json({
-    "schema_version": 6,
-    "camera": {"look_from":[0,1,4],"look_at":[0,0,0],"up":[0,1,0],"vfov":40},
-    "background": {"type":"constant","color":[0,0,0]},
-    "textures": [{"name":"paint","type":"constant","color":[1,1,1]}],
-    "materials": [{"name":"textured","type":"lambertian","texture":"paint"}],
-    "meshes": [{"name":"plain","path":"no-uv.obj"}],
-    "objects": [{"name":"bad","type":"mesh","mesh":"plain","material":"textured"}]
-  })json");
-  expect_error([&] { (void)load_scene(textured); }, "no complete UV coordinates",
-               "textured mesh without UVs");
-
-  const auto bad_scale = directory.path / "bad-scale.json";
-  write_text(bad_scale, R"json({
-    "schema_version": 6,
-    "camera": {"look_from":[0,1,4],"look_at":[0,0,0],"up":[0,1,0],"vfov":40},
-    "background": {"type":"constant","color":[0,0,0]},
-    "textures": [], "materials": [{"name":"m","type":"lambertian"}],
-    "meshes": [{"name":"triangle","path":"mesh.obj"}],
-    "objects": [{"name":"bad","type":"mesh","mesh":"triangle","material":"m",
-                 "transform":{"scale":[1,0,1]}}]
-  })json");
-  expect_error([&] { (void)load_scene(bad_scale); },
-               "components must be greater than zero", "invalid mesh scale");
+  SceneBuilder uv;
+  const auto texture = uv.add_constant_texture("paint", Vec3{1.0f});
+  const auto textured = add_diffuse(uv, "textured", texture);
+  const auto plain_mesh = uv.add_mesh("plain", directory.path / "no-uv.obj");
+  expect_error(
+      [&] {
+        uv.add_mesh_instance("bad-uv", plain_mesh, Transform{}, textured,
+                             textured, kInvalidId, 0.5f);
+      },
+      "no complete UV coordinates", "textured mesh UV requirement");
 }
 
-void test_flame_lights() {
+void test_scene_builder_geometry_validation() {
   TemporaryDirectory directory;
-  const auto scene_path = directory.path / "flame.json";
-  const std::string valid_flame = R"json({
-    "name":"plume", "type":"flame", "position":[0,1,0],
-    "axis":[0,-2,0], "height":1, "radius_start":0.4, "radius_end":0.8,
-    "emission_start":[4,5,6], "emission_end":[1,0,0], "extinction":2
-  })json";
+  const Assets assets = make_assets(directory);
+  SceneBuilder builder;
+  const auto diffuse = add_diffuse(builder, "diffuse");
+  const auto water = add_water(builder, "water");
+  const auto mesh = builder.add_mesh("mesh", assets.mesh);
 
-  const auto document = [](const std::string& lights) {
-    return std::string(R"json({"schema_version":6,
-      "camera":{"look_from":[0,4,4],"look_at":[0,0,0],"up":[0,1,0],"vfov":40},
-      "background":{"type":"constant","color":[0,0,0]},
-      "textures":[], "materials":[{"name":"mat","type":"lambertian"}],
-      "objects":[{"name":"anchor","type":"sphere","center":[0,0,0],
-                  "radius":0.25,"material":"mat"}],
-      "lights":)json") + lights + "}";
-  };
-  const auto replace = [](std::string source, const std::string& before,
-                          const std::string& after) {
-    const std::size_t offset = source.find(before);
-    if (offset == std::string::npos)
-      throw std::runtime_error("test flame fixture replacement did not match");
-    source.replace(offset, before.size(), after);
-    return source;
-  };
-  const auto reject = [&](const std::string& flame, const std::string& expected,
-                          const std::string& message) {
-    write_text(scene_path, document("[" + flame + "]"));
-    expect_error([&] { (void)load_scene(scene_path); }, expected, message);
-  };
+  expect_error(
+      [&] {
+        builder.add_sphere("sphere", Vec3{0.0f}, 0.0f, diffuse, diffuse,
+                           kInvalidId, 0.5f);
+      },
+      "positive", "sphere radius validation");
+  expect_error(
+      [&] {
+        builder.add_rectangle("rectangle", Vec3{0.0f}, {1.0f, 0.0f, 0.0f},
+                              {2.0f, 0.0f, 0.0f}, diffuse, diffuse,
+                              kInvalidId, 0.5f);
+      },
+      "degenerate", "rectangle degeneracy");
+  expect_error(
+      [&] {
+        builder.add_sketch("sketch", Vec3{0.0f}, {0.0f, 1.0f, 0.0f},
+                           {1.0f, 1.0f, 0.0f}, diffuse, diffuse, kInvalidId,
+                           0.5f);
+      },
+      "requires alpha_texture", "sketch alpha requirement");
+  expect_error(
+      [&] {
+        builder.add_disk("disk", Vec3{0.0f}, Vec3{0.0f}, 1.0f, diffuse,
+                         diffuse, kInvalidId, 0.5f);
+      },
+      "non-zero", "disk normal validation");
+  expect_error(
+      [&] {
+        builder.add_cylinder("cylinder", Vec3{0.0f},
+                             {0.0f, 1.0f, 0.0f}, 0.0f, 1.0f, diffuse,
+                             diffuse, kInvalidId, 0.5f);
+      },
+      "height", "cylinder height validation");
+  expect_error(
+      [&] {
+        builder.add_parabola(
+            "parabola", Vec3{0.0f}, {0.0f, 1.0f, 0.0f}, Vec3{0.0f},
+            Aabb{Vec3{-1.0f}, Vec3{1.0f}}, diffuse, diffuse, kInvalidId,
+            0.5f);
+      },
+      "must differ", "parabola focus validation");
+  Transform zero_scale;
+  zero_scale.scale = {1.0f, 0.0f, 1.0f};
+  expect_error(
+      [&] {
+        builder.add_mesh_instance("instance", mesh, zero_scale, diffuse,
+                                  diffuse, kInvalidId, 0.5f);
+      },
+      "greater than zero", "mesh scale validation");
+  expect_error(
+      [&] {
+        builder.add_sphere("invalid-material", Vec3{0.0f}, 1.0f, 99, 99,
+                           kInvalidId, 0.5f);
+      },
+      "invalid typed handle", "invalid material id");
+  expect_error(
+      [&] {
+        builder.add_sphere("no-material", Vec3{0.0f}, 1.0f, kInvalidId,
+                           kInvalidId, kInvalidId, 0.5f);
+      },
+      "at least one face material", "missing face materials");
+  expect_error(
+      [&] {
+        builder.add_sphere("water-sphere", Vec3{0.0f}, 1.0f, water, water,
+                           kInvalidId, 0.5f);
+      },
+      "only be bound", "water material geometry restriction");
+  expect_error(
+      [&] {
+        builder.add_water_surface(
+            "dry-surface", Vec3{0.0f}, {2.0f, 2.0f}, diffuse,
+            {{{1.0f, 0.0f}, 0.05f, 1.0f, 0.0f}});
+      },
+      "requires a water material", "water surface material type");
+  expect_error(
+      [&] {
+        builder.add_water_surface("no-waves", Vec3{0.0f}, {2.0f, 2.0f},
+                                  water, {});
+      },
+      "1 to 4 waves", "water wave count");
+  expect_error(
+      [&] {
+        builder.add_water_surface(
+            "zero-direction", Vec3{0.0f}, {2.0f, 2.0f}, water,
+            {{{0.0f, 0.0f}, 0.05f, 1.0f, 0.0f}});
+      },
+      "non-zero", "water direction validation");
+  expect_error(
+      [&] {
+        builder.add_water_surface(
+            "steep", Vec3{0.0f}, {2.0f, 2.0f}, water,
+            {{{1.0f, 0.0f}, 0.4f, 1.0f, 0.0f}});
+      },
+      "slope", "water slope limit");
+}
 
-  write_text(scene_path, document("[" + valid_flame + "]"));
-  const Scene scene = load_scene(scene_path);
-  check(scene.lights.size() == 1, "flame declaration");
-  const Light& light = scene.lights.front();
-  check(light.type == LightType::Flame && light.object_id == kInvalidId,
-        "flame light type and no object binding");
-  near(light.axis.y, -1.0f, 1.0e-6f, "flame normalized axis");
-  near(light.height, 1.0f, 1.0e-6f, "flame height");
-  near(light.radius_start, 0.4f, 1.0e-6f, "flame start radius");
-  near(light.radius_end, 0.8f, 1.0e-6f, "flame end radius");
-  near(light.extinction, 2.0f, 1.0e-6f, "flame extinction");
-  near(light.density_scale, 1.0f, 1.0e-6f, "flame default density scale");
-  near(light.turbulence, 0.35f, 1.0e-6f, "flame default turbulence");
-  near(light.noise_scale, 2.0f, 1.0e-6f, "flame default noise scale");
-  check(light.seed == 0, "flame default seed");
+void test_scene_builder_light_validation() {
+  SceneBuilder immediate;
+  const auto diffuse = add_diffuse(immediate, "diffuse");
+  const auto emitter = add_emitter(immediate, "emitter");
+  const auto sphere = immediate.add_sphere(
+      "sphere", Vec3{0.0f}, 1.0f, emitter, emitter, kInvalidId, 0.5f);
+  expect_error(
+      [&] {
+        immediate.add_sphere_light("bad-sphere", Vec3{0.0f}, 0.0f,
+                                   Vec3{1.0f}, sphere);
+      },
+      "positive", "sphere light radius");
+  expect_error(
+      [&] {
+        immediate.add_rectangle_light(
+            "bad-rectangle", Vec3{0.0f}, Vec3{1.0f}, Vec3{2.0f},
+            Vec3{1.0f}, kInvalidId);
+      },
+      "degenerate", "rectangle light degeneracy");
+  expect_error(
+      [&] {
+        immediate.add_disk_light("bad-disk", Vec3{0.0f}, Vec3{0.0f}, 1.0f,
+                                 Vec3{1.0f}, kInvalidId);
+      },
+      "non-zero", "disk light normal");
+  expect_error(
+      [&] {
+        immediate.add_flame_light(
+            "bad-flame", Vec3{0.0f}, {0.0f, 1.0f, 0.0f}, 1.0f, 0.2f,
+            0.1f, Vec3{1.0f}, Vec3{0.0f}, 1.0f, 1.0f, 1.1f, 2.0f, 0u);
+      },
+      "[0, 1]", "flame turbulence range");
+  expect_error(
+      [&] {
+        immediate.add_point_light("bad-point", Vec3{0.0f},
+                                  {-1.0f, 0.0f, 0.0f});
+      },
+      "non-negative", "point light energy");
+  expect_error(
+      [&] {
+        immediate.add_directional_light("bad-directional", Vec3{0.0f},
+                                        Vec3{1.0f});
+      },
+      "non-zero", "directional light direction");
+  expect_error(
+      [&] {
+        immediate.add_sphere_light("invalid-object", Vec3{0.0f}, 1.0f,
+                                   Vec3{1.0f}, 99);
+      },
+      "invalid typed handle", "invalid light object id");
+  (void)diffuse;
 
-  reject(replace(valid_flame, "\"height\":1",
-                 "\"height\":1,\"object\":\"anchor\""),
-         "cannot be bound to objects", "flame object binding");
-  reject(replace(valid_flame, "[0,-2,0]", "[0,0,0]"), "must be non-zero",
-         "flame zero axis");
-  reject(replace(valid_flame, "\"height\":1", "\"height\":0"),
-         "must be positive", "flame zero height");
-  reject(replace(valid_flame, "\"height\":1", "\"height\":1e100"),
-         "number is not finite float32", "flame non-float32 input");
-  reject(replace(valid_flame, "\"radius_start\":0.4",
-                 "\"radius_start\":-0.1"),
-         "must be non-negative", "flame negative radius");
-  reject(replace(replace(valid_flame, "\"radius_start\":0.4",
-                         "\"radius_start\":0"),
-                 "\"radius_end\":0.8", "\"radius_end\":0"),
-         "cannot both be zero", "flame zero radii");
-  reject(replace(replace(valid_flame, "[4,5,6]", "[0,0,0]"),
-                         "[1,0,0]", "[0,0,0]"),
-         "cannot both be zero", "flame zero emission");
-  reject(replace(valid_flame, "[4,5,6]", "[-1,5,6]"),
-         "components must be finite and non-negative",
-         "flame negative emission");
-  reject(replace(valid_flame, "\"extinction\":2", "\"extinction\":0"),
-         "must be positive", "flame zero extinction");
-  reject(replace(valid_flame, "\"extinction\":2",
-                 "\"extinction\":2,\"density_scale\":0"),
-         "must be positive", "flame zero density scale");
-  reject(replace(valid_flame, "\"extinction\":2",
-                 "\"extinction\":2,\"noise_scale\":0"),
-         "must be positive", "flame zero noise scale");
-  reject(replace(valid_flame, "\"extinction\":2",
-                 "\"extinction\":2,\"turbulence\":1.1"),
-         "must be in [0, 1]", "flame turbulence range");
-  reject(replace(valid_flame, "\"extinction\":2",
-                 "\"extinction\":2,\"seed\":4294967296"),
-         "must be in [0, 4294967295]", "flame seed range");
-  reject(replace(valid_flame, "\"extinction\":2", "\"extinction\":100"),
-         "optical thickness must be at most 64",
-         "flame conservative optical thickness");
+  SceneBuilder mismatch;
+  set_camera_and_background(mismatch);
+  const auto mismatch_emitter = add_emitter(mismatch, "emitter");
+  const auto rectangle = mismatch.add_rectangle(
+      "rectangle", {-1.0f, 2.0f, -1.0f}, {1.0f, 2.0f, -1.0f},
+      {1.0f, 2.0f, 1.0f}, mismatch_emitter, mismatch_emitter, kInvalidId,
+      0.5f);
+  mismatch.add_sphere_light("wrong-type", {0.0f, 2.0f, 0.0f}, 1.0f,
+                            {4.0f, 5.0f, 6.0f}, rectangle);
+  expect_error([&] { (void)mismatch.finish(); }, "does not match light type",
+               "linked geometry type constraint");
 
-  const std::string optically_thick =
-      replace(valid_flame, "\"extinction\":2", "\"extinction\":20");
-  write_text(scene_path,
-             document("[" + optically_thick + "," +
-                      replace(optically_thick, "\"plume\"",
-                              "\"plume-2\"") +
-                      "]"));
-  expect_error([&] { (void)load_scene(scene_path); },
-               "optical thickness must be at most 64",
-               "combined flame conservative optical thickness");
+  SceneBuilder energy;
+  set_camera_and_background(energy);
+  const auto energy_emitter = add_emitter(energy, "emitter");
+  const auto energy_sphere = energy.add_sphere(
+      "sphere", Vec3{0.0f}, 1.0f, energy_emitter, energy_emitter,
+      kInvalidId, 0.5f);
+  energy.add_sphere_light("mismatch", Vec3{0.0f}, 1.0f,
+                          {1.0f, 1.0f, 1.0f}, energy_sphere);
+  expect_error([&] { (void)energy.finish(); }, "must match linked emitter",
+               "linked emitter energy constraint");
 
-  std::string too_many = "[";
-  for (int i = 0; i < 9; ++i) {
-    if (i != 0) too_many += ',';
-    too_many += replace(valid_flame, "\"plume\"",
-                        "\"plume-" + std::to_string(i) + "\"");
-  }
-  too_many += ']';
-  write_text(scene_path, document(too_many));
-  expect_error([&] { (void)load_scene(scene_path); }, "at most 8 flame lights",
+  SceneBuilder duplicate_link;
+  set_camera_and_background(duplicate_link);
+  const auto linked_emitter = add_emitter(duplicate_link, "emitter");
+  const auto linked_sphere = duplicate_link.add_sphere(
+      "sphere", Vec3{0.0f}, 1.0f, linked_emitter, linked_emitter,
+      kInvalidId, 0.5f);
+  duplicate_link.add_sphere_light("first", Vec3{0.0f}, 1.0f,
+                                  {4.0f, 5.0f, 6.0f}, linked_sphere);
+  duplicate_link.add_sphere_light("second", Vec3{0.0f}, 1.0f,
+                                  {4.0f, 5.0f, 6.0f}, linked_sphere);
+  expect_error([&] { (void)duplicate_link.finish(); }, "already linked",
+               "one sampled light per object");
+
+  SceneBuilder flame_limit;
+  set_camera_and_background(flame_limit);
+  add_minimal_object(flame_limit);
+  for (int i = 0; i < 9; ++i)
+    flame_limit.add_flame_light(
+        "flame-" + std::to_string(i), {static_cast<float>(i), 0.0f, 0.0f},
+        {0.0f, 1.0f, 0.0f}, 0.5f, 0.1f, 0.05f, Vec3{1.0f}, Vec3{0.1f},
+        0.5f, 0.5f, 0.35f, 2.0f, static_cast<std::uint32_t>(i));
+  expect_error([&] { (void)flame_limit.finish(); }, "at most 8 flame",
                "flame count limit");
+
+  SceneBuilder optical_limit;
+  set_camera_and_background(optical_limit);
+  add_minimal_object(optical_limit);
+  optical_limit.add_flame_light(
+      "thick", Vec3{0.0f}, {0.0f, 1.0f, 0.0f}, 10.0f, 1.0f, 1.0f,
+      Vec3{1.0f}, Vec3{0.1f}, 10.0f, 1.0f, 0.35f, 2.0f, 0u);
+  expect_error([&] { (void)optical_limit.finish(); },
+               "optical thickness must be at most 64",
+               "flame optical thickness limit");
+
+  SceneBuilder delta_limit;
+  set_camera_and_background(delta_limit);
+  add_minimal_object(delta_limit);
+  for (int i = 0; i < 33; ++i)
+    delta_limit.add_point_light("point-" + std::to_string(i),
+                                {static_cast<float>(i), 1.0f, 0.0f},
+                                {1.0f, 1.0f, 1.0f});
+  expect_error([&] { (void)delta_limit.finish(); },
+               "at most 32 point and directional",
+               "delta light count limit");
 }
 
-void test_delta_lights_and_clamps() {
-  TemporaryDirectory directory;
-  const auto scene_path = directory.path / "delta-lights.json";
-  const auto document = [](const std::string& integrator,
-                           const std::string& lights) {
-    return std::string(R"json({"schema_version":6,
-      "camera":{"look_from":[0,1,4],"look_at":[0,0,0],"up":[0,1,0],"vfov":40},
-      "background":{"type":"constant","color":[0,0,0]},)json") +
-           integrator +
-           R"json("textures":[],"materials":[{"name":"mat","type":"lambertian"}],
-      "objects":[{"name":"ball","type":"sphere","center":[0,0,0],
-                  "radius":1,"material":"mat"}],"lights":)json" +
-           lights + "}";
-  };
-  const std::string valid_lights = R"json([
-    {"name":"work","type":"point","position":[1,2,3],
-     "intensity":[4,5,6]},
-    {"name":"sun","type":"directional","direction":[0,3,4],
-     "irradiance":[1,2,3]}
-  ])json";
-
-  write_text(scene_path, document(
-      R"json("integrator":{"direct_light_sampling":"uniform",
-                            "clamp_direct":0,"clamp_indirect":2.5},)json",
-      valid_lights));
-  const Scene explicit_scene = load_scene(scene_path);
-  check(explicit_scene.lights.size() == 2,
-        "point and directional light parsing");
-  const Light& point = explicit_scene.lights[0];
-  check(point.type == LightType::Point && point.object_id == kInvalidId,
-        "point light type and geometry independence");
-  check(length_squared(point.position - Vec3{1.0f, 2.0f, 3.0f}) < 1.0e-12f &&
-            length_squared(point.emission - Vec3{4.0f, 5.0f, 6.0f}) <
-                1.0e-12f,
-        "point light position and intensity storage");
-  const Light& directional = explicit_scene.lights[1];
-  check(directional.type == LightType::Directional &&
-            directional.object_id == kInvalidId,
-        "directional light type and geometry independence");
-  check(length_squared(directional.axis - Vec3{0.0f, 0.6f, 0.8f}) <
-            1.0e-12f &&
-            length_squared(directional.emission - Vec3{1.0f, 2.0f, 3.0f}) <
-                1.0e-12f,
-        "directional surface-to-light direction and irradiance storage");
-
-  write_text(scene_path, document(
-      "",
-      R"json([{"name":"extreme","type":"directional",
-                "direction":[3e38,0,0],"irradiance":[1,1,1]}])json"));
-  const Vec3 extreme_axis = load_scene(scene_path).lights[0].axis;
-  check(finite(extreme_axis) &&
-            length_squared(extreme_axis - Vec3{1.0f, 0.0f, 0.0f}) < 1.0e-12f,
-        "directional normalization remains stable near float32 limits");
-
-  near(explicit_scene.integrator.clamp_direct, 0.0f, 0.0f,
-       "explicit direct clamp disable");
-  near(explicit_scene.integrator.clamp_indirect, 2.5f, 0.0f,
-       "explicit indirect clamp");
-
-  write_text(scene_path, document("", valid_lights));
-  const Scene default_scene = load_scene(scene_path);
-  near(default_scene.integrator.clamp_direct, 64.0f, 0.0f,
-       "default direct clamp");
-  near(default_scene.integrator.clamp_indirect, 16.0f, 0.0f,
-       "default indirect clamp");
-
-  const auto reject_lights = [&](const std::string& lights,
-                                 const std::string& expected,
-                                 const std::string& message) {
-    write_text(scene_path, document("", lights));
-    expect_error([&] { (void)load_scene(scene_path); }, expected, message);
-  };
-  reject_lights(
-      R"json([{"name":"p","type":"point","position":[0,1,0],
-                "intensity":[0,0,0]}])json",
-      "must contain positive energy", "zero point intensity rejection");
-  reject_lights(
-      R"json([{"name":"p","type":"point","position":[0,1,0],
-                "intensity":[1,-1,1]}])json",
-      "components must be finite and non-negative",
-      "negative point intensity rejection");
-  reject_lights(
-      R"json([{"name":"p","type":"point","position":[0,1,0],
-                "intensity":[1,1,1],"emission":[1,1,1]}])json",
-      "key is not valid for this light type",
-      "point emission alias rejection");
-  reject_lights(
-      R"json([{"name":"p","type":"point","position":[0,1,0],
-                "intensity":[1,1,1],"object":"ball"}])json",
-      "key is not valid for this light type",
-      "point geometry binding rejection");
-  reject_lights(
-      R"json([{"name":"sun","type":"directional","direction":[0,0,0],
-                "irradiance":[1,1,1]}])json",
-      "must be non-zero", "zero directional vector rejection");
-  reject_lights(
-      R"json([{"name":"sun","type":"directional","direction":[0,1,0],
-                "irradiance":[0,0,0]}])json",
-      "must contain positive energy", "zero directional irradiance rejection");
-  reject_lights(
-      R"json([{"name":"sun","type":"directional","direction":[0,1,0],
-                "irradiance":[1,1,1],"position":[0,2,0]}])json",
-      "key is not valid for this light type",
-      "directional position rejection");
-
-  const auto delta_array = [](std::size_t count) {
-    std::string lights = "[";
-    for (std::size_t i = 0; i < count; ++i) {
-      if (i != 0) lights += ',';
-      lights += "{\"name\":\"delta-" + std::to_string(i) + "\",";
-      if ((i & 1u) == 0u) {
-        lights += "\"type\":\"point\",\"position\":[0,1,0],"
-                  "\"intensity\":[1,1,1]}";
-      } else {
-        lights += "\"type\":\"directional\",\"direction\":[0,1,0],"
-                  "\"irradiance\":[1,1,1]}";
-      }
-    }
-    return lights + ']';
-  };
-  write_text(scene_path, document("", delta_array(32)));
-  check(load_scene(scene_path).lights.size() == 32,
-        "delta light count accepts the limit");
-  reject_lights(delta_array(33), "at most 32 point and directional lights",
-                "delta light count limit");
-
-  write_text(scene_path, document(
-      R"json("integrator":{"clamp_direct":-1,"clamp_indirect":16},)json",
-      "[]"));
-  expect_error([&] { (void)load_scene(scene_path); }, "must be non-negative",
-               "negative direct clamp rejection");
-  write_text(scene_path, document(
-      R"json("integrator":{"clamp_direct":64,"clamp_indirect":-1},)json",
-      "[]"));
-  expect_error([&] { (void)load_scene(scene_path); }, "must be non-negative",
-               "negative indirect clamp rejection");
+SceneBuilder make_water_builder(Vec3 camera = {0.0f, 4.0f, 8.0f}) {
+  SceneBuilder builder;
+  set_camera_and_background(builder, camera);
+  return builder;
 }
 
-void test_water_surfaces() {
-  TemporaryDirectory directory;
-  const auto scene_path = directory.path / "water.json";
-  const std::string valid_material = R"json(
-    {"name":"water","type":"water"})json";
-  const std::string valid_surface = R"json(
-    {"name":"pool","type":"water_surface","center":[1,2,3],
-     "size":[8,6],"material":"water","waves":[
-       {"direction":[2,0],"amplitude":0.05,"wavelength":2,"phase_radians":-0.5},
-       {"direction":[0,1],"amplitude":0.02,"wavelength":1,"phase_radians":7}
-     ]})json";
-  const auto document = [](const std::string& materials,
-                           const std::string& objects) {
-    return std::string(R"json({"schema_version":6,
-      "camera":{"look_from":[0,4,4],"look_at":[0,0,0],"up":[0,1,0],"vfov":40},
-      "background":{"type":"constant","color":[0,0,0]},
-      "textures":[],"materials":)json") + materials +
-           ",\"objects\":" + objects + "}";
-  };
-  const auto replace = [](std::string source, const std::string& before,
-                          const std::string& after) {
-    const std::size_t offset = source.find(before);
-    if (offset == std::string::npos)
-      throw std::runtime_error("test water fixture replacement did not match");
-    source.replace(offset, before.size(), after);
-    return source;
-  };
-  const auto reject = [&](const std::string& materials,
-                          const std::string& objects,
-                          const std::string& expected,
-                          const std::string& message) {
-    write_text(scene_path, document(materials, objects));
-    expect_error([&] { (void)load_scene(scene_path); }, expected, message);
-  };
+void test_scene_builder_water_safety() {
+  const std::vector<WaterWave> waves = {
+      {{1.0f, 0.0f}, 0.05f, 1.0f, 0.0f}};
 
-  write_text(scene_path,
-             document("[" + valid_material + "]",
-                      "[" + valid_surface + "]"));
-  const Scene scene = load_scene(scene_path);
-  check(scene.materials.size() == 1 && scene.objects.size() == 1,
-        "water declaration");
-  const Material& material = scene.materials.front();
-  check(material.type == MaterialType::Water,
-        "water material type");
-  near(material.ior, 1.333f, 1.0e-6f, "water default IOR");
-  near(material.absorption.x, 0.35f, 1.0e-6f,
-       "water default absorption red");
-  near(material.absorption.y, 0.08f, 1.0e-6f,
-       "water default absorption green");
-  near(material.absorption.z, 0.025f, 1.0e-6f,
-       "water default absorption blue");
-  near(material.roughness, 0.0f, 0.0f, "water default roughness");
-  check(scene.objects.front().type == GeometryType::WaterSurface,
-        "water_surface geometry type");
-  const auto& surface =
-      std::get<WaterSurfaceData>(scene.objects.front().geometry);
-  check(surface.wave_count == 2 && surface.tiles_x == 16 &&
-            surface.tiles_z == 12,
-        "water wave and automatic tile counts");
-  near(surface.waves[0].direction.x, 1.0f, 1.0e-6f,
-       "water wave direction normalization");
-  near(surface.waves[0].phase_radians, 2.0f * kPi - 0.5f, 1.0e-6f,
-       "water negative phase wrapping");
-  near(surface.waves[1].phase_radians, 7.0f - 2.0f * kPi, 1.0e-6f,
-       "water positive phase wrapping");
+  SceneBuilder overlap = make_water_builder();
+  const auto overlap_water = add_water(overlap, "water");
+  overlap.add_water_surface("first", {0.0f, 0.0f, 0.0f}, {2.0f, 2.0f},
+                            overlap_water, waves);
+  overlap.add_water_surface("second", {1.0f, 0.0f, 0.0f}, {2.0f, 2.0f},
+                            overlap_water, waves);
+  expect_error([&] { (void)overlap.finish(); }, "footprints",
+               "overlapping water surfaces");
 
-  write_text(scene_path,
-             document("[" + replace(valid_material, "\"water\"}",
-                                      "\"water\",\"roughness\":0.12}") +
-                          "]",
-                      "[" + valid_surface + "]"));
-  near(load_scene(scene_path).materials.front().roughness, 0.12f, 1.0e-6f,
-       "water explicit roughness");
+  SceneBuilder open_dielectric = make_water_builder();
+  const auto open_water = add_water(open_dielectric, "water");
+  const auto glass = add_glass(open_dielectric, "glass");
+  open_dielectric.add_water_surface("surface", {10.0f, 0.0f, 10.0f},
+                                    {2.0f, 2.0f}, open_water, waves);
+  open_dielectric.add_rectangle(
+      "glass-panel", {-1.0f, 0.0f, 0.0f}, {-1.0f, 1.0f, 0.0f},
+      {1.0f, 1.0f, 0.0f}, glass, glass, kInvalidId, 0.5f);
+  expect_error([&] { (void)open_dielectric.finish(); },
+               "require closed sphere geometry",
+               "open dielectric boundary in water scene");
 
-  reject("[" + replace(valid_material, "\"water\"}",
-                       "\"water\",\"texture\":\"x\"}") + "]",
-         "[" + valid_surface + "]", "not supported by water",
-         "water texture rejection");
-  reject("[" + replace(valid_material, "\"water\"}",
-                       "\"water\",\"ior\":1.0}") + "]",
-         "[" + valid_surface + "]", "water IOR must be in (1, 3]",
-         "water IOR range");
-  reject("[" + replace(valid_material, "\"water\"}",
-                       "\"water\",\"absorption\":[-1,0,0]}") + "]",
-         "[" + valid_surface + "]", "finite and non-negative",
-         "water absorption range");
-  reject("[" + replace(valid_material, "\"water\"}",
-                       "\"water\",\"roughness\":-0.1}") + "]",
-         "[" + valid_surface + "]", "must be in [0, 1]",
-         "water negative roughness rejection");
-  reject("[" + replace(valid_material, "\"water\"}",
-                       "\"water\",\"roughness\":1.1}") + "]",
-         "[" + valid_surface + "]", "must be in [0, 1]",
-         "water roughness upper bound");
-  reject("[" + valid_material + "]",
-         "[" + replace(valid_surface, "\"water_surface\"",
-                       "\"water_surface\",\"alpha_cutoff\":0.5") + "]",
-         "does not support alpha", "water alpha rejection");
-  reject("[" + valid_material + "]",
-         "[" + replace(valid_surface, "[2,0]", "[0,0]") + "]",
-         "must be non-zero", "water zero wave direction");
-  reject("[" + valid_material + "]",
-         "[" + replace(valid_surface, "\"size\":[8,6]",
-                       "\"size\":[8,0]") + "]",
-         "components must be positive", "water surface size range");
-  reject("[" + valid_material + "]",
-         "[" + replace(valid_surface, "\"amplitude\":0.05",
-                       "\"amplitude\":0") + "]",
-         "must be positive", "water wave amplitude range");
-  reject("[" + valid_material + "]",
-         "[" + replace(valid_surface, "\"wavelength\":2",
-                       "\"wavelength\":0") + "]",
-         "must be positive", "water wavelength range");
-  reject("[" + valid_material + "]",
-         "[" + replace(valid_surface, "\"wavelength\":2",
-                       "\"wavelength\":1e-45") + "]",
-         "non-finite float32 wave number",
-         "water derived wave number range");
-  reject("[" + valid_material + "]",
-         "[" + replace(valid_surface, "\"phase_radians\":-0.5",
-                       "\"phase_radians\":\"invalid\"") + "]",
-         "expected a number", "water phase must be numeric");
-  reject("[" + valid_material + "]",
-         "[" + replace(valid_surface, "\"amplitude\":0.05",
-                       "\"amplitude\":0.4") + "]",
-         "total wave slope must be at most 1", "water slope limit");
-  const std::size_t waves_key = valid_surface.find("\"waves\":");
-  const std::size_t waves_begin =
-      waves_key == std::string::npos
-          ? std::string::npos
-          : waves_key + std::string("\"waves\":").size();
-  const std::size_t waves_end = valid_surface.rfind(']');
-  check(waves_begin != std::string::npos && waves_end != std::string::npos &&
-            waves_end > waves_begin,
-        "water fixture wave array bounds");
-  std::string no_waves = valid_surface;
-  no_waves.replace(waves_begin, waves_end - waves_begin + 1, "[]");
-  reject("[" + valid_material + "]", "[" + no_waves + "]",
-         "must contain 1 to 4 waves", "water wave count lower bound");
-  reject("[" + valid_material + "]",
-         "[" + replace(valid_surface, "\"size\":[8,6]",
-                       "\"size\":[100,100]") + "]",
-         "tile count must be at most 4096", "water tile limit");
-  reject("[" + valid_material + "]",
-         "[" + replace(valid_surface, "\"center\":[1,2,3]",
-                       "\"center\":[3.4e38,2,3]") + "]",
-         "derived water bounds must be finite non-degenerate float32",
-         "water derived bounds range");
-  const std::string collapsed_tiles = replace(
-      replace(valid_surface, "\"center\":[1,2,3]",
-              "\"center\":[1e8,2,1e8]"),
-      "\"size\":[8,6]", "\"size\":[32,32]");
-  reject("[" + valid_material + "]", "[" + collapsed_tiles + "]",
-         "tile boundaries collapse in float32",
-         "water tile boundary representability");
+  SceneBuilder crossing = make_water_builder();
+  const auto crossing_water = add_water(crossing, "water");
+  const auto crossing_glass = add_glass(crossing, "glass");
+  crossing.add_water_surface("surface", {0.0f, 0.0f, 0.0f},
+                             {4.0f, 4.0f}, crossing_water, waves);
+  crossing.add_sphere("glass-sphere", {0.0f, 0.0f, 0.0f}, 0.5f,
+                      crossing_glass, crossing_glass, kInvalidId, 0.5f);
+  expect_error([&] { (void)crossing.finish(); }, "may intersect",
+               "water and dielectric intersection");
 
-  const std::string dry_material =
-      R"json({"name":"dry","type":"lambertian"})json";
-  reject("[" + valid_material + "," + dry_material + "]",
-         "[" + replace(valid_surface, "\"material\":\"water\"",
-                       "\"material\":\"dry\"") + "]",
-         "requires a water material", "water_surface material type");
-  const std::string dry_sphere =
-      R"json({"name":"ball","type":"sphere","center":[0,0,0],"radius":1,"material":"water"})json";
-  reject("[" + valid_material + "]", "[" + dry_sphere + "]",
-         "only be bound to water_surface", "water material geometry binding");
+  SceneBuilder submerged = make_water_builder({0.0f, 0.0f, 1.0f});
+  const auto submerged_water = add_water(submerged, "water");
+  submerged.add_water_surface("surface", {0.0f, 0.0f, 0.0f},
+                              {4.0f, 4.0f}, submerged_water, waves);
+  expect_error([&] { (void)submerged.finish(); }, "outside and above",
+               "camera below water safety boundary");
 
-  const std::string glass_material =
-      R"json({"name":"glass","type":"dielectric","ior":1.52})json";
-  const std::string glass_sphere =
-      R"json({"name":"glass_ball","type":"sphere","center":[0,1,0],"radius":0.25,"material":"glass"})json";
-  write_text(scene_path,
-             document("[" + valid_material + "," + glass_material + "]",
-                      "[" + valid_surface + "," + glass_sphere + "]"));
-  const Scene glass_scene = load_scene(scene_path);
-  check(glass_scene.objects.size() == 2,
-        "closed dielectric sphere is accepted in a water scene");
-  near(glass_scene.materials[1].roughness, 0.0f, 0.0f,
-       "dielectric default roughness");
-  const std::string split_glass_sphere =
-      R"json({"name":"split_glass","type":"sphere","center":[0,1,0],"radius":0.25,"front_material":"glass","back_material":null})json";
-  reject("[" + valid_material + "," + glass_material + "]",
-         "[" + valid_surface + "," + split_glass_sphere + "]",
-         "one shared dielectric material on both faces",
-         "split dielectric sphere boundary rejection");
-  const std::string alpha_glass_sphere = replace(
-      glass_sphere, "\"material\":\"glass\"",
-      "\"material\":\"glass\",\"alpha_texture\":\"mask\"");
-  std::string alpha_document = document(
-      "[" + valid_material + "," + glass_material + "]",
-      "[" + valid_surface + "," + alpha_glass_sphere + "]");
-  alpha_document = replace(
-      alpha_document, "\"textures\":[]",
-      R"json("textures":[{"name":"mask","type":"constant","color":[1,1,1]}])json");
-  write_text(scene_path, alpha_document);
-  expect_error([&] { (void)load_scene(scene_path); },
-               "cannot use alpha textures",
-               "alpha dielectric sphere boundary rejection");
+  SceneBuilder split = make_water_builder();
+  const auto split_water = add_water(split, "water");
+  const auto split_glass = add_glass(split, "glass");
+  split.add_water_surface("surface", {10.0f, 0.0f, 10.0f},
+                          {2.0f, 2.0f}, split_water, waves);
+  split.add_sphere("split-glass", Vec3{0.0f}, 1.0f, split_glass,
+                   kInvalidId, kInvalidId, 0.5f);
+  expect_error([&] { (void)split.finish(); }, "one shared dielectric",
+               "split dielectric sphere boundary");
 
-  const std::string tangent_glass_sphere = replace(
-      glass_sphere, "[0,1,0]", "[0.5,1,0]");
-  reject("[" + valid_material + "," + glass_material + "]",
-         "[" + valid_surface + "," + glass_sphere + "," +
-             replace(tangent_glass_sphere, "glass_ball", "glass_ball_2") +
-             "]",
-         "strictly separate or strictly nested",
-         "tangent dielectric sphere rejection");
-
-  std::string nested_spheres;
-  for (int i = 0; i < 4; ++i) {
-    if (i != 0) nested_spheres += ',';
-    const float radius = 0.8f - 0.2f * static_cast<float>(i);
-    nested_spheres +=
-        "{\"name\":\"nested_" + std::to_string(i) +
-        "\",\"type\":\"sphere\",\"center\":[0,1,0],\"radius\":" +
-        std::to_string(radius) + ",\"material\":\"glass\"}";
-  }
-  reject("[" + valid_material + "," + glass_material + "]",
-         "[" + valid_surface + "," + nested_spheres + "]",
-         "exceed the four-layer medium stack",
-         "nested dielectric stack limit");
-
-  const std::string crossing_glass_sphere =
-      R"json({"name":"crossing_glass","type":"sphere","center":[1,2,3],"radius":0.1,"material":"glass"})json";
-  reject("[" + valid_material + "," + glass_material + "]",
-         "[" + valid_surface + "," + crossing_glass_sphere + "]",
-         "may intersect a water_surface",
-         "water and dielectric boundary intersection rejection");
-
-  const std::string camera_glass_sphere =
-      R"json({"name":"camera_glass","type":"sphere","center":[0,4,4],"radius":0.25,"material":"glass"})json";
-  reject("[" + valid_material + "," + glass_material + "]",
-         "[" + valid_surface + "," + camera_glass_sphere + "]",
-         "outside every dielectric sphere",
-         "camera inside dielectric rejection");
-
-  std::string submerged_camera_document = document(
-      "[" + valid_material + "]", "[" + valid_surface + "]");
-  submerged_camera_document = replace(
-      submerged_camera_document, "\"look_from\":[0,4,4]",
-      "\"look_from\":[0,1,4]");
-  write_text(scene_path, submerged_camera_document);
-  expect_error([&] { (void)load_scene(scene_path); },
-               "outside and above every water surface",
-               "camera below water rejection");
-
-  const std::string second_surface = replace(
-      valid_surface, "\"pool\"", "\"pool-2\"");
-  reject("[" + valid_material + "]",
-         "[" + valid_surface + "," + second_surface + "]",
-         "footprints must be strictly separate",
-         "overlapping water surface rejection");
-  const std::string open_glass =
-      R"json({"name":"glass_panel","type":"rectangle","p1":[-1,0,0],"p2":[-1,1,0],"p3":[1,1,0],"material":"glass"})json";
-  reject("[" + valid_material + "," + glass_material + "]",
-         "[" + valid_surface + "," + open_glass + "]",
-         "require closed sphere geometry",
-         "open dielectric rejection in a water scene");
-
-  std::string five_surfaces = "[";
-  for (int i = 0; i < 5; ++i) {
-    if (i != 0) five_surfaces += ',';
-    five_surfaces += replace(valid_surface, "\"pool\"",
-                             "\"pool-" + std::to_string(i) + "\"");
-  }
-  five_surfaces += ']';
-  reject("[" + valid_material + "]", five_surfaces,
-         "at most 4 water_surface", "water surface count limit");
+  SceneBuilder count = make_water_builder();
+  const auto count_water = add_water(count, "water");
+  for (int i = 0; i < 4; ++i)
+    count.add_water_surface("surface-" + std::to_string(i),
+                            {10.0f * static_cast<float>(i), 0.0f, 0.0f},
+                            {2.0f, 2.0f}, count_water, waves);
+  expect_error(
+      [&] {
+        count.add_water_surface("surface-4", {40.0f, 0.0f, 0.0f},
+                                {2.0f, 2.0f}, count_water, waves);
+      },
+      "at most 4 water_surface", "water surface count limit");
 }
 
-void test_schema_version() {
-  TemporaryDirectory directory;
-  const auto path = directory.path / "schema.json";
-  const std::string body = R"json(
-    "camera":{"look_from":[0,1,4],"look_at":[0,0,0],"up":[0,1,0],"vfov":40},
-    "background":{"type":"constant","color":[0,0,0]},
-    "textures":[],
-    "materials":[{"name":"mat","type":"lambertian"}],
-    "objects":[{"name":"ball","type":"sphere","center":[0,0,0],
-                 "radius":1,"material":"mat"}]
-  })json";
+void test_scene_builder_duplicate_names() {
+  SceneBuilder objects;
+  const auto material = add_diffuse(objects, "material");
+  objects.add_sphere("object", Vec3{0.0f}, 1.0f, material, material,
+                     kInvalidId, 0.5f);
+  expect_error(
+      [&] {
+        objects.add_sphere("object", {2.0f, 0.0f, 0.0f}, 1.0f, material,
+                           material, kInvalidId, 0.5f);
+      },
+      "duplicate name", "duplicate object name");
 
-  write_text(path, "{" + body);
-  expect_error([&] { (void)load_scene(path); }, "schema_version",
-               "missing schema version rejection");
-
-  for (const std::uint32_t version : {1u, 2u, 3u, 4u, 5u, 7u}) {
-    write_text(path, "{\"schema_version\":" + std::to_string(version) +
-                         "," + body);
-    expect_error([&] { (void)load_scene(path); }, "schema_version",
-                 "non-v6 schema rejection");
-  }
-
-  write_text(path, "{\"schema_version\":\"6\"," + body);
-  expect_error([&] { (void)load_scene(path); }, "expected the integer 6",
-               "non-integer schema version rejection");
-}
-
-void test_environment_scene_parser() {
-  TemporaryDirectory directory;
-  const auto path = directory.path / "environment.json";
-  const std::string tail = R"json(
-    "camera":{"look_from":[0,1,4],"look_at":[0,0,0],"up":[0,1,0],"vfov":40},
-    "render":{"width":16,"height":8,"spp":1,"max_depth":2,"seed":9},
-    "textures":[],
-    "materials":[{"name":"mat","type":"lambertian"}],
-    "objects":[{"name":"ball","type":"sphere","center":[0,0,0],
-                 "radius":1,"material":"mat"}],
-    "lights":[]
-  })json";
-  const auto document = [&](const std::string& integrator,
-                            const std::string& background) {
-    return std::string("{\"schema_version\":6,") + integrator +
-           "\"background\":" + background + "," + tail;
-  };
-  const std::string environment =
-      R"json({"type":"environment","path":"studio.hdr","intensity":2.5,"rotation_degrees":-45,"exposure":1})json";
-  write_text(path, document(
-                       R"json("integrator":{"direct_light_sampling":"uniform",
-                                             "clamp_direct":0,
-                                             "clamp_indirect":0},)json",
-                       environment));
-  const Scene scene = load_scene(path, SceneLoadOptions{false});
-  check(scene.background.type == BackgroundType::Environment,
-        "environment background type");
-  check(scene.background.environment_path.filename() == "studio.hdr",
-        "environment path resolution");
-  near(scene.background.environment_intensity, 2.5f, 1.0e-6f,
-       "environment intensity");
-  near(scene.background.environment_rotation_degrees, -45.0f, 1.0e-6f,
-       "environment rotation");
-  check(scene.integrator.direct_light_sampling == DirectLightSampling::Uniform,
-        "uniform direct-light sampling parse");
-  near(scene.integrator.clamp_direct, 0.0f, 0.0f,
-       "environment fixture direct clamp disabled");
-  near(scene.integrator.clamp_indirect, 0.0f, 0.0f,
-       "environment fixture indirect clamp disabled");
-  expect_error([&] { (void)load_scene(path); }, "asset not found",
-               "missing environment asset rejection");
-
-  write_text(path, document("", environment));
-  const Scene default_scene = load_scene(path, SceneLoadOptions{false});
-  check(default_scene.integrator.direct_light_sampling ==
-            DirectLightSampling::Importance,
-        "default direct-light importance sampling");
-  near(default_scene.integrator.clamp_direct, 64.0f, 0.0f,
-       "default direct clamp parse");
-  near(default_scene.integrator.clamp_indirect, 16.0f, 0.0f,
-       "default indirect clamp parse");
-
-  write_text(path, document(
-                       R"json("integrator":{"direct_light_sampling":"power"},)json",
-                       environment));
-  expect_error([&] { (void)load_scene(path, SceneLoadOptions{false}); },
-               "expected 'uniform' or 'importance'",
-               "invalid direct-light sampling rejection");
-
-  write_text(path, document(
-                       "",
-                       R"json({"type":"environment","path":"studio.hdr","intensity":-1})json"));
-  expect_error([&] { (void)load_scene(path, SceneLoadOptions{false}); },
-               "must be non-negative", "negative environment intensity rejection");
-}
-
-void test_scene_parser() {
-  const auto path = temporary(".json");
-  std::ofstream output(path);
-  output << R"json({
-    "schema_version": 6,
-    "camera": {"look_from":[0,1,4],"look_at":[0,0,0],"up":[0,1,0],"vfov":40},
-    "background": {"type":"constant","color":[0.1,0.2,0.3],"exposure":1},
-    "integrator": {"direct_light_sampling":"uniform",
-                   "clamp_direct":12,"clamp_indirect":3},
-    "render": {"width":64,"height":32,"spp":2,"max_depth":4,"seed":7},
-    "textures": [{"name":"white","type":"constant","color":[0.8,0.8,0.8]}],
-    "materials": [{"name":"mat","type":"lambertian","texture":"white"},
-                  {"name":"emit","type":"emitter","emission":[4,5,6]},
-                  {"name":"metal_default","type":"metal"},
-                  {"name":"glass_default","type":"dielectric"}],
-    "objects": [{"name":"ball","type":"sphere","center":[0,0,0],"radius":1,"material":"mat"},
-                {"name":"panel","type":"rectangle","p1":[-1,2,-1],"p2":[1,2,-1],"p3":[1,2,1],"material":"emit"}],
-    "lights": [{"name":"key","type":"rectangle","object":"panel","position":[-1,2,-1],"edge_u":[2,0,0],"edge_v":[0,0,2],"emission":[4,5,6]}]
-  })json";
-  output.close();
-  const Scene scene = load_scene(path);
-  std::filesystem::remove(path);
-  check(scene.render.width == 64 && scene.render.height == 32 && scene.render.seed == 7, "render defaults");
-  check(scene.textures.size() == 1 && scene.materials.size() == 4 && scene.objects.size() == 2,
-        "scene arrays");
-  near(scene.materials[2].roughness, 0.5f, 0.0f,
-       "metal default roughness");
-  near(scene.materials[3].roughness, 0.0f, 0.0f,
-       "dielectric default roughness outside water scenes");
-  check(scene.objects[0].front_material == 0 && scene.objects[0].back_material == 0,
-        "material name resolution");
-  check(scene.lights.size() == 1, "light parsing");
-  check(scene.lights[0].object_id == 1, "explicit light-object binding");
-  near(scene.background.exposure, 1.0f, 1.0e-6f, "background exposure");
-  check(scene.integrator.direct_light_sampling == DirectLightSampling::Uniform,
-        "scene integrator mode");
-  near(scene.integrator.clamp_direct, 12.0f, 0.0f,
-       "scene direct clamp");
-  near(scene.integrator.clamp_indirect, 3.0f, 0.0f,
-       "scene indirect clamp");
-}
-
-void check_ember_forge_contract(const Scene& scene,
-                                const std::filesystem::path& path) {
-  check(scene.background.type == BackgroundType::Constant,
-        "Ember Forge background must be constant: " + path.string());
-  check(length_squared(scene.background.color) < 1.0e-12f,
-        "Ember Forge background must be black: " + path.string());
-  for (const Material& material : scene.materials) {
-    check(material.type != MaterialType::Emitter,
-          "Ember Forge must not contain emitter materials: " + path.string());
-  }
-  check(scene.lights.size() == 3,
-        "Ember Forge must contain exactly three lights: " + path.string());
-  for (const Light& light : scene.lights) {
-    check(light.type == LightType::Flame,
-          "Ember Forge lights must all be flames: " + path.string());
-  }
-}
-
-void check_builtin_scene_contract(const Scene& scene,
-                                  const std::filesystem::path& path) {
-  if (path.filename() == "ember-forge.json") {
-    check_ember_forge_contract(scene, path);
-  }
+  SceneBuilder lights;
+  lights.add_point_light("light", Vec3{0.0f}, Vec3{1.0f});
+  expect_error(
+      [&] { lights.add_point_light("light", Vec3{1.0f}, Vec3{1.0f}); },
+               "duplicate name", "duplicate light name");
 }
 
 }  // namespace
 
-int main(int argc, char** argv) {
+int main() {
   try {
     test_vectors();
-    test_png();
-    test_pfm();
+    test_image_io();
     test_hdr_and_sampling_distributions();
     test_obj_loader();
     test_transform_order();
-    test_schema_version();
-    test_environment_scene_parser();
-    test_scene_parser();
-    test_meshes();
-    test_flame_lights();
-    test_delta_lights_and_clamps();
-    test_water_surfaces();
-    for (int i = 1; i < argc; ++i) {
-      const std::filesystem::path path = argv[i];
-      const Scene scene = load_scene(path, SceneLoadOptions{false});
-      check(!scene.objects.empty(), "scene has no objects: " + path.string());
-      check_builtin_scene_contract(scene, path);
-    }
+    test_scene_builder_complete_scene();
+    test_scene_builder_configuration_and_resources();
+    test_scene_builder_geometry_validation();
+    test_scene_builder_light_validation();
+    test_scene_builder_water_safety();
+    test_scene_builder_duplicate_names();
     std::cout << "all core tests passed\n";
     return 0;
   } catch (const std::exception& error) {

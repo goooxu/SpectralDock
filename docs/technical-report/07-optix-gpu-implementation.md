@@ -25,14 +25,14 @@ flowchart LR
     A["device_programs.cu"] -->|"nvcc --optix-ir"| B["device_programs.optixir"]
     B -->|"运行时加载"| C["OptiX module"]
     D["postprocess.cu"] -->|"CUDA 编译"| E["spectraldock_postprocess"]
-    E -->|"链接"| F["spectraldock 可执行文件"]
+    E -->|"链接"| F["Python _native 扩展"]
 ~~~
 
 运行期与销毁：
 
 ~~~mermaid
 flowchart TD
-    A["CUDA device 0、stream、OptiX context"] --> B["加载 IR；module、program groups、pipeline"]
+    A["Python 指定的 CUDA device、stream、OptiX context"] --> B["加载 IR；module、program groups、pipeline"]
     B --> C["纹理、材质、灯与几何上传"]
     C --> D["构建并按收益压缩 GAS，再构建并按收益压缩 IAS"]
     D --> E["SBT、输出缓冲与 LaunchParams"]
@@ -74,7 +74,7 @@ flowchart TD
   add_custom_target(spectraldock_device_ir DEPENDS "${OPTIX_IR}")
 ```
 
-`--use_fast_math` 可提高吞吐，但部分函数采用近似实现，属于最终数值误差来源。主程序通过构建时定义的绝对路径加载 IR，因此原构建树和 IR 必须留在编译时记录的位置；v0.1 的支持范围限定为构建树或项目容器内运行，不是复制单个可执行文件即可工作的可重定位安装。
+`--use_fast_math` 可提高吞吐，但部分函数采用近似实现，属于最终数值误差来源。Python 原生扩展通过构建时定义的绝对路径加载 IR，因此原构建树和 IR 必须留在编译时记录的位置；v0.1 的支持范围限定为仓库构建树内运行，不是复制单个扩展即可工作的可重定位安装。
 
 ## 4. 运行期初始化：context、module、program groups 与 pipeline
 
@@ -317,7 +317,7 @@ OptiX ray tracing pipeline
 
 `denoise=false` 时直接使用 raw beauty；`denoise=true` 时，`run_denoiser` 创建 HDR denoiser，查询内存、分配并 setup state/scratch，计算 HDR intensity，绑定 beauty/albedo/normal，invoke 后同步。完整 API 顺序与源码片段见[第 8 章第 3 节](08-denoising-color-and-output.md#3-optix-hdr-降噪)。
 
-降噪之后的 `spectraldockLaunchPostprocess` 是普通 CUDA kernel，不是 RayGen、Miss 或 Hit 程序。它完成 EV 曝光、ACES 风格曲线、sRGB 编码和 RGBA8 量化。若请求 `--linear-output`，raygen 的 `beauty` 另行 D2H，不经过 Denoiser 或显示变换；它仍位于贡献钳位之后，只有 clamp 0/0 才是无偏参考。随后 stream 同步形成 GPU 完成边界；`render_optix` 返回 `RenderResult`，命令行主机代码分别用 libpng 写 PNG、用 PFM writer 写线性 RGB。
+降噪之后的 `spectraldockLaunchPostprocess` 是普通 CUDA kernel，不是 RayGen、Miss 或 Hit 程序。它完成 EV 曝光、ACES 风格曲线、sRGB 编码和 RGBA8 量化。若 `Renderer.render(linear_output=...)` 请求线性输出，raygen 的 `beauty` 另行 D2H，不经过 Denoiser 或显示变换；它仍位于贡献钳位之后，只有 clamp 0/0 才是无偏参考。随后 stream 同步形成 GPU 完成边界；`render_optix` 返回 `RenderResult`，pybind 主机边界分别用 libpng 写 PNG、用 PFM writer 写线性 RGB。
 
 ## 11. RAII 销毁与部署边界
 
@@ -346,6 +346,6 @@ struct OptixState {
 
 销毁顺序是 denoiser → pipeline → 逆序 program groups → 内建 sphere module → 主 module → OptiX context。CUDA primary context 由 `cudaSetDevice`/runtime 建立并由本函数借用，代码没有在此调用 `cuCtxDestroy` 或 `cudaDeviceReset`。
 
-这也解释了当前的性能与部署边界：每次 `render_optix` 都重新建立并销毁 OptiX device context、pipeline、GAS/IAS、SBT、纹理与设备缓冲，没有跨帧缓存；同时运行时从构建树中的绝对路径读取 `.optixir`。v0.1 因而面向构建树或容器内的命令行离线渲染，不提供可重定位 install 布局。
+这也解释了当前的性能与部署边界：每次 `render_optix` 都重新建立并销毁 OptiX device context、pipeline、GAS/IAS、SBT、纹理与设备缓冲，没有跨帧缓存；同时运行时从构建树中的绝对路径读取 `.optixir`。v0.1 因而面向仓库构建树中的 Python 离线渲染，不提供可重定位 install 布局。
 
 [上一章：几何、可见性与 BVH](06-geometry-visibility-and-bvh.md) · [返回目录](README.md) · [下一章：降噪、色调映射与输出](08-denoising-color-and-output.md)

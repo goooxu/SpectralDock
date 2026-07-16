@@ -1,29 +1,50 @@
 #!/usr/bin/env python3
 """GPU checks for rough dielectric NEE/MIS and transparent blockers.
 
-The checks intentionally compare pre-tone-map linear PFM values.  PNG is still
+The checks intentionally compare pre-tone-map linear PFM values. PNG is still
 decoded once per render so the public output contract is exercised as well.
 """
 
-import copy
-import json
+import argparse
 import math
 import struct
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import NamedTuple
 
 from PIL import Image
+
+from spectraldock import Renderer
 
 
 WIDTH = 96
 HEIGHT = 72
-HIGH_SPP = 8192
 WATER_ROI = (5, 27, 91, 70)
 RECEIVER_ROI = (18, 10, 78, 58)
 GLASS_ROI = (23, 11, 73, 61)
 GLASS_TRANSMISSION_ROI = (34, 22, 62, 50)
+
+
+class SampleProfile(NamedTuple):
+    high_spp: int
+    low_spp: int
+    depth_one_spp: int
+    blocked_spp: int
+    restored_spp: int
+    beer_spp: int
+    glass_reflection_spp: int
+    glass_transmission_spp: int
+    tir_spp: int
+
+
+# The full profile preserves the original convergence contract.  Acceptance
+# keeps every transport branch and assertion, but lowers the expensive
+# independent high-spp comparisons used on every routine GPU validation run.
+SAMPLE_PROFILES = {
+    "full": SampleProfile(8192, 32, 128, 512, 1024, 1024, 256, 512, 512),
+    "acceptance": SampleProfile(2048, 32, 64, 64, 256, 256, 64, 128, 128),
+}
 
 
 def read_pfm(path):
@@ -54,30 +75,27 @@ def read_pfm(path):
     return width, height, tuple(pixels)
 
 
-def render(renderer, scene_data, directory, name, spp, depth, seed):
-    scene = directory / f"{name}.json"
+def render(renderer, directory, name, spp, depth, seed):
     png = directory / f"{name}.png"
     pfm = directory / f"{name}.pfm"
-    scene.write_text(json.dumps(scene_data, indent=2) + "\n", encoding="utf-8")
-    subprocess.run(
-        [
-            str(renderer), "--scene", str(scene), "--output", str(png),
-            "--linear-output", str(pfm), "--width", str(WIDTH),
-            "--height", str(HEIGHT), "--spp", str(spp),
-            "--max-depth", str(depth), "--seed", str(seed), "--no-denoise",
-        ],
-        check=True,
+    stats = renderer.render(
+        output=png,
+        stats_output=png.with_suffix(".stats.json"),
+        linear_output=pfm,
+        width=WIDTH,
+        height=HEIGHT,
+        spp=spp,
+        depth=depth,
+        seed=seed,
+        denoise=False,
     )
     with Image.open(png) as image:
         image.load()
         if image.size != (WIDTH, HEIGHT) or image.mode != "RGBA":
-            raise RuntimeError(
-                f"unexpected PNG output: {image.size} {image.mode}"
-            )
+            raise RuntimeError(f"unexpected PNG output: {image.size} {image.mode}")
     width, height, pixels = read_pfm(pfm)
     if (width, height) != (WIDTH, HEIGHT):
         raise RuntimeError(f"unexpected PFM dimensions: {width}x{height}")
-    stats = json.loads(png.with_suffix(".stats.json").read_text(encoding="utf-8"))
     linear_name = stats.get("linear_output")
     if linear_name is None or Path(linear_name).name != pfm.name:
         raise RuntimeError("stats do not identify the requested linear output")
@@ -138,196 +156,249 @@ def relative_mean_error(first, second, box):
     return abs(a - b) / max(abs(a), abs(b), 1.0e-6)
 
 
-def set_water_roughness(scene, roughness):
-    for material in scene["materials"]:
-        if material["type"] == "water":
-            material["roughness"] = roughness
-
-
-def reflection_scene(source, bound):
-    scene = copy.deepcopy(source)
-    set_water_roughness(scene, 0.30)
-    # Isolate a water reflection so the high-spp contract compares only the
-    # two sampling strategies.  A front-facing disk has one constant normal
-    # and an exact area-to-solid-angle map; unlike a sphere, it does not mix
-    # front/back samples or a curved visible silhouette into this MIS check.
-    scene["objects"] = [
-        obj for obj in scene["objects"] if obj["name"] == "test_water"
-    ]
-    disk_center = [-3.0, 2.5, -6.3]
-    disk_normal = [0.429, -0.358, 0.829]
-    disk_radius = 0.55
-    scene["objects"].append(
-        {
-            "name": "reflection_disk", "type": "disk",
-            "center": disk_center, "normal": disk_normal,
-            "radius": disk_radius, "front_material": "moon_probe",
-        }
+def reflection_renderer(bound):
+    renderer = Renderer()
+    renderer.integrator(
+        direct_light_sampling="importance", clamp_direct=0.0, clamp_indirect=0.0
     )
-    scene["lights"] = []
+    renderer.camera(
+        look_from=(3.6, 3.0, 6.5),
+        look_at=(0.0, -0.35, -0.65),
+        up=(0.0, 1.0, 0.0),
+        vfov=36.0,
+        aperture=0.0,
+        focus_distance=8.6,
+    )
+    renderer.background(type="constant", color=(0.0, 0.0, 0.0), exposure=0.0)
+    water = renderer.material(
+        name="water",
+        type="water",
+        roughness=0.30,
+        ior=1.333,
+        absorption=(0.70, 0.20, 0.05),
+    )
+    moon_probe = renderer.material(
+        name="moon_probe", type="emitter", emission=(16.0, 20.0, 30.0)
+    )
+    renderer.object(
+        name="test_water",
+        type="water_surface",
+        center=(0.0, 0.0, -0.50),
+        size=(6.0, 5.5),
+        material=water,
+        waves=(
+            {"direction": (1.0, 0.15), "amplitude": 0.050, "wavelength": 2.20, "phase_radians": 0.40},
+            {"direction": (-0.25, 1.0), "amplitude": 0.032, "wavelength": 1.35, "phase_radians": 1.70},
+            {"direction": (0.75, 1.0), "amplitude": 0.018, "wavelength": 0.82, "phase_radians": 3.20},
+            {"direction": (-1.0, 0.30), "amplitude": 0.009, "wavelength": 0.52, "phase_radians": 5.10},
+        ),
+    )
+    disk_center = (-3.0, 2.5, -6.3)
+    disk_normal = (0.429, -0.358, 0.829)
+    disk_radius = 0.55
+    reflection_disk = renderer.object(
+        name="reflection_disk",
+        type="disk",
+        center=disk_center,
+        normal=disk_normal,
+        radius=disk_radius,
+        front_material=moon_probe,
+    )
     if bound:
-        scene["lights"].append(
-            {
-                "name": "bound_reflection_disk", "type": "disk",
-                "object": "reflection_disk", "position": disk_center,
-                "normal": disk_normal, "radius": disk_radius,
-                "emission": [16.0, 20.0, 30.0],
-            }
+        renderer.light(
+            name="bound_reflection_disk",
+            type="disk",
+            object=reflection_disk,
+            position=disk_center,
+            normal=disk_normal,
+            radius=disk_radius,
+            emission=(16.0, 20.0, 30.0),
         )
-    return scene
+    return renderer
 
 
-def blocker_scene(light_depth=-0.85):
-    return {
-        "schema_version": 6,
-        "integrator": {
-            "direct_light_sampling": "importance",
-            "clamp_direct": 0.0,
-            "clamp_indirect": 0.0,
-        },
-        "camera": {
-            "look_from": [0.0, 1.25, 4.2], "look_at": [0.0, 1.0, 0.0],
-            "up": [0.0, 1.0, 0.0], "vfov": 30.0,
-            "aperture": 0.0, "focus_distance": 4.2,
-        },
-        "background": {
-            "type": "constant", "color": [0.0, 0.0, 0.0], "exposure": 0.0,
-        },
-        "render": {
-            "width": WIDTH, "height": HEIGHT, "spp": 256,
-            "max_depth": 2, "seed": 911, "denoise": False,
-        },
-        "textures": [],
-        "materials": [
-            {"name": "water", "type": "water", "ior": 1.333,
-             "roughness": 0.20, "absorption": [0.9, 0.22, 0.04]},
-            {"name": "receiver", "type": "lambertian",
-             "base_color": [0.82, 0.82, 0.82]},
-            {"name": "dark", "type": "lambertian",
-             "base_color": [0.005, 0.005, 0.005]},
-            {"name": "source", "type": "emitter",
-             "emission": [35.0, 35.0, 35.0]},
-        ],
-        "objects": [
-            {"name": "receiver", "type": "rectangle",
-             "p1": [-1.5, 0.25, 0.0], "p2": [-1.5, 1.9, 0.0],
-             "p3": [1.5, 1.9, 0.0], "material": "receiver"},
-            {"name": "underwater_source", "type": "sphere",
-             "center": [0.0, light_depth, 1.65], "radius": 0.42,
-             "material": "source"},
-            {"name": "floor", "type": "rectangle",
-             "p1": [-3.0, -2.0, 3.0], "p2": [-3.0, -2.0, -3.0],
-             "p3": [3.0, -2.0, -3.0], "material": "dark"},
-            {"name": "test_water", "type": "water_surface",
-             "center": [0.0, 0.0, 1.0], "size": [6.0, 6.0],
-             "material": "water",
-             "waves": [
-                 {"direction": [1.0, 0.2], "amplitude": 0.015,
-                  "wavelength": 2.4, "phase_radians": 0.3},
-                 {"direction": [-0.3, 1.0], "amplitude": 0.008,
-                  "wavelength": 1.1, "phase_radians": 1.7},
-             ]},
-        ],
-        "lights": [
-            {"name": "underwater_light", "type": "sphere",
-             "object": "underwater_source", "position": [0.0, light_depth, 1.65],
-             "radius": 0.42, "emission": [35.0, 35.0, 35.0]},
-        ],
-    }
+def blocker_renderer(light_depth=-0.85):
+    renderer = Renderer()
+    renderer.integrator(
+        direct_light_sampling="importance", clamp_direct=0.0, clamp_indirect=0.0
+    )
+    renderer.camera(
+        look_from=(0.0, 1.25, 4.2),
+        look_at=(0.0, 1.0, 0.0),
+        up=(0.0, 1.0, 0.0),
+        vfov=30.0,
+        aperture=0.0,
+        focus_distance=4.2,
+    )
+    renderer.background(type="constant", color=(0.0, 0.0, 0.0), exposure=0.0)
+    water = renderer.material(
+        name="water",
+        type="water",
+        ior=1.333,
+        roughness=0.20,
+        absorption=(0.9, 0.22, 0.04),
+    )
+    receiver = renderer.material(
+        name="receiver", type="lambertian", base_color=(0.82, 0.82, 0.82)
+    )
+    dark = renderer.material(
+        name="dark", type="lambertian", base_color=(0.005, 0.005, 0.005)
+    )
+    source = renderer.material(
+        name="source", type="emitter", emission=(35.0, 35.0, 35.0)
+    )
+    renderer.object(
+        name="receiver",
+        type="rectangle",
+        p1=(-1.5, 0.25, 0.0),
+        p2=(-1.5, 1.9, 0.0),
+        p3=(1.5, 1.9, 0.0),
+        material=receiver,
+    )
+    underwater_source = renderer.object(
+        name="underwater_source",
+        type="sphere",
+        center=(0.0, light_depth, 1.65),
+        radius=0.42,
+        material=source,
+    )
+    renderer.object(
+        name="floor",
+        type="rectangle",
+        p1=(-3.0, -2.0, 3.0),
+        p2=(-3.0, -2.0, -3.0),
+        p3=(3.0, -2.0, -3.0),
+        material=dark,
+    )
+    renderer.object(
+        name="test_water",
+        type="water_surface",
+        center=(0.0, 0.0, 1.0),
+        size=(6.0, 6.0),
+        material=water,
+        waves=(
+            {"direction": (1.0, 0.2), "amplitude": 0.015, "wavelength": 2.4, "phase_radians": 0.3},
+            {"direction": (-0.3, 1.0), "amplitude": 0.008, "wavelength": 1.1, "phase_radians": 1.7},
+        ),
+    )
+    renderer.light(
+        name="underwater_light",
+        type="sphere",
+        object=underwater_source,
+        position=(0.0, light_depth, 1.65),
+        radius=0.42,
+        emission=(35.0, 35.0, 35.0),
+    )
+    return renderer
 
 
-def generic_glass_scene(mode, ior=1.52):
+def generic_glass_renderer(mode, ior=1.52):
     inside = mode == "inside_tir"
-    scene = {
-        "schema_version": 6,
-        "integrator": {
-            "direct_light_sampling": "importance",
-            "clamp_direct": 0.0,
-            "clamp_indirect": 0.0,
-        },
-        "camera": {
-            "look_from": [0.0, 0.0, 0.78] if inside else [0.0, 0.0, 4.0],
-            "look_at": [1.0, 0.0, 0.78] if inside else [0.0, 0.0, 0.0],
-            "up": [0.0, 1.0, 0.0], "vfov": 22.0 if inside else 30.0,
-            "aperture": 0.0, "focus_distance": 3.0,
-        },
-        "background": {
-            "type": "constant", "color": [0.0, 0.0, 0.0], "exposure": 0.0,
-        },
-        "render": {
-            "width": WIDTH, "height": HEIGHT, "spp": 256,
-            "max_depth": 3, "seed": 2203, "denoise": False,
-        },
-        "textures": [],
-        "materials": [
-            {"name": "glass", "type": "dielectric",
-             "base_color": [1.0, 1.0, 1.0], "ior": ior,
-             "roughness": 0.08 if inside else 0.20},
-            {"name": "blue_source", "type": "emitter",
-             "emission": [0.3, 1.0, 18.0]},
-        ],
-        "objects": [],
-        "lights": [],
-    }
+    renderer = Renderer()
+    renderer.integrator(
+        direct_light_sampling="importance", clamp_direct=0.0, clamp_indirect=0.0
+    )
+    renderer.camera(
+        look_from=(0.0, 0.0, 0.78) if inside else (0.0, 0.0, 4.0),
+        look_at=(1.0, 0.0, 0.78) if inside else (0.0, 0.0, 0.0),
+        up=(0.0, 1.0, 0.0),
+        vfov=22.0 if inside else 30.0,
+        aperture=0.0,
+        focus_distance=3.0,
+    )
+    renderer.background(type="constant", color=(0.0, 0.0, 0.0), exposure=0.0)
+    glass = renderer.material(
+        name="glass",
+        type="dielectric",
+        base_color=(1.0, 1.0, 1.0),
+        ior=ior,
+        roughness=0.08 if inside else 0.20,
+    )
+    blue_source = renderer.material(
+        name="blue_source", type="emitter", emission=(0.3, 1.0, 18.0)
+    )
     if inside:
-        # A back-face rectangle exercises the material-to-air branch without
-        # relying on OptiX built-in sphere behavior for an inside-origin ray.
-        scene["objects"].append(
-            {"name": "glass_back_face", "type": "rectangle",
-             "p1": [2.2, -2.0, -0.4], "p2": [-1.0, -2.0, 2.0],
-             "p3": [-1.0, 2.0, 2.0], "material": "glass"}
+        renderer.object(
+            name="glass_back_face",
+            type="rectangle",
+            p1=(2.2, -2.0, -0.4),
+            p2=(-1.0, -2.0, 2.0),
+            p3=(-1.0, 2.0, 2.0),
+            material=glass,
         )
     else:
-        scene["objects"].append(
-            {"name": "glass_ball", "type": "sphere",
-             "center": [0.0, 0.0, 0.0], "radius": 1.0,
-             "material": "glass"}
+        renderer.object(
+            name="glass_ball",
+            type="sphere",
+            center=(0.0, 0.0, 0.0),
+            radius=1.0,
+            material=glass,
         )
     if mode == "reflection":
-        scene["lights"] = [
-            {"name": "front_red", "type": "disk",
-             "position": [2.2, 2.0, 2.8],
-             "normal": [-0.54, -0.49, -0.69], "radius": 1.25,
-             "emission": [22.0, 0.4, 0.2]},
-        ]
+        renderer.light(
+            name="front_red",
+            type="disk",
+            position=(2.2, 2.0, 2.8),
+            normal=(-0.54, -0.49, -0.69),
+            radius=1.25,
+            emission=(22.0, 0.4, 0.2),
+        )
     elif mode == "transmission":
-        scene["objects"].append(
-            {"name": "back_panel", "type": "rectangle",
-             "p1": [-3.0, -3.0, -3.0], "p2": [-3.0, 3.0, -3.0],
-             "p3": [3.0, 3.0, -3.0], "material": "blue_source"}
+        renderer.object(
+            name="back_panel",
+            type="rectangle",
+            p1=(-3.0, -3.0, -3.0),
+            p2=(-3.0, 3.0, -3.0),
+            p3=(3.0, 3.0, -3.0),
+            material=blue_source,
         )
     elif mode == "inside_tir":
-        scene["lights"] = [
-            {"name": "outside_probe", "type": "disk",
-             "position": [3.0, 0.0, 0.8], "normal": [-1.0, 0.0, 0.0],
-             "radius": 1.0, "emission": [12.0, 12.0, 12.0]},
-        ]
+        renderer.light(
+            name="outside_probe",
+            type="disk",
+            position=(3.0, 0.0, 0.8),
+            normal=(-1.0, 0.0, 0.0),
+            radius=1.0,
+            emission=(12.0, 12.0, 12.0),
+        )
     else:
         raise RuntimeError(f"unknown generic glass mode: {mode}")
-    return scene
+    return renderer
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--profile",
+        choices=tuple(SAMPLE_PROFILES),
+        default="full",
+        help="sampling budget; full retains the high-spp convergence contract",
+    )
+    return parser.parse_args()
 
 
 def main():
-    if len(sys.argv) != 3:
-        raise RuntimeError(
-            "usage: check_rough_dielectric_nee.py RENDERER WATER_SCENE"
-        )
-    renderer = Path(sys.argv[1]).resolve()
-    source = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+    profile = SAMPLE_PROFILES[parse_args().profile]
 
     with tempfile.TemporaryDirectory(prefix="spectraldock-rough-nee-") as tmp:
         directory = Path(tmp)
-        bound_scene = reflection_scene(source, True)
-        bsdf_scene = reflection_scene(source, False)
-
         bound_high, bound_stats, bound_bytes = render(
-            renderer, bound_scene, directory, "bound-high", HIGH_SPP, 2, 1201
+            reflection_renderer(True),
+            directory,
+            "bound-high",
+            profile.high_spp,
+            2,
+            1201,
         )
-        # The bound strategy can connect the emitter after two surface
-        # scatterings, while the unbound strategy needs one additional depth
-        # slot to hit that same emitter. Compare equal scattering orders.
+        # The bound strategy can connect after two surface scatterings; the
+        # unbound BSDF-only strategy needs one additional depth slot.
         bsdf_high, _, _ = render(
-            renderer, bsdf_scene, directory, "bsdf-high", HIGH_SPP, 3, 1301
+            reflection_renderer(False),
+            directory,
+            "bsdf-high",
+            profile.high_spp,
+            3,
+            1301,
         )
         mean_error = relative_mean_error(bound_high, bsdf_high, WATER_ROI)
         if mean_error > 0.02:
@@ -343,7 +414,12 @@ def main():
             raise RuntimeError("rough water produced no finite-light NEE contribution")
 
         repeat, _, repeat_bytes = render(
-            renderer, bound_scene, directory, "bound-repeat", HIGH_SPP, 2, 1201
+            reflection_renderer(True),
+            directory,
+            "bound-repeat",
+            profile.high_spp,
+            2,
+            1201,
         )
         if bound_bytes != repeat_bytes or bound_high != repeat:
             raise RuntimeError("fixed-seed linear rough-water output is not deterministic")
@@ -352,10 +428,20 @@ def main():
         bsdf_error = 0.0
         for index, seed in enumerate((1409, 1511, 1601)):
             nee, _, _ = render(
-                renderer, bound_scene, directory, f"nee-low-{index}", 32, 2, seed
+                reflection_renderer(True),
+                directory,
+                f"nee-low-{index}",
+                profile.low_spp,
+                2,
+                seed,
             )
             bsdf, _, _ = render(
-                renderer, bsdf_scene, directory, f"bsdf-low-{index}", 32, 3, seed
+                reflection_renderer(False),
+                directory,
+                f"bsdf-low-{index}",
+                profile.low_spp,
+                3,
+                seed,
             )
             nee_error += mse(nee, bound_high, WATER_ROI)
             bsdf_error += mse(bsdf, bound_high, WATER_ROI)
@@ -366,17 +452,33 @@ def main():
             )
 
         depth_one, depth_one_stats, _ = render(
-            renderer, bound_scene, directory, "depth-one", 128, 1, 1709
+            reflection_renderer(True),
+            directory,
+            "depth-one",
+            profile.depth_one_spp,
+            1,
+            1709,
         )
         if mean_luminance(depth_one, WATER_ROI) <= 1.0e-5:
             raise RuntimeError("depth-1 rough-water NEE produced no reflected light")
         if metric(depth_one_stats, "water_rough_nee_contributions") in (None, 0):
             raise RuntimeError("depth-1 rough-water NEE counter stayed zero")
 
-        blocked = blocker_scene()
-        depth1, _, _ = render(renderer, blocked, directory, "blocked-depth1", 512, 1, 1801)
+        depth1, _, _ = render(
+            blocker_renderer(),
+            directory,
+            "blocked-depth1",
+            profile.blocked_spp,
+            1,
+            1801,
+        )
         depth2, depth2_stats, _ = render(
-            renderer, blocked, directory, "restored-depth2", 1024, 2, 1801
+            blocker_renderer(),
+            directory,
+            "restored-depth2",
+            profile.restored_spp,
+            2,
+            1801,
         )
         dark_mean = mean_luminance(depth1, RECEIVER_ROI)
         restored_mean = mean_luminance(depth2, RECEIVER_ROI)
@@ -392,10 +494,20 @@ def main():
             raise RuntimeError("transmission-side water NEE counter stayed zero")
 
         shallow, _, _ = render(
-            renderer, blocker_scene(-0.45), directory, "beer-shallow", 1024, 2, 1901
+            blocker_renderer(-0.45),
+            directory,
+            "beer-shallow",
+            profile.beer_spp,
+            2,
+            1901,
         )
         deep, _, _ = render(
-            renderer, blocker_scene(-1.35), directory, "beer-deep", 1024, 2, 1901
+            blocker_renderer(-1.35),
+            directory,
+            "beer-deep",
+            profile.beer_spp,
+            2,
+            1901,
         )
         shallow_rgb = mean_rgb(shallow, RECEIVER_ROI)
         deep_rgb = mean_rgb(deep, RECEIVER_ROI)
@@ -407,34 +519,52 @@ def main():
             raise RuntimeError("transmission-side Beer attenuation lost RGB selectivity")
 
         glass_reflection, _, _ = render(
-            renderer, generic_glass_scene("reflection"), directory,
-            "generic-front-reflection", 256, 1, 2203
+            generic_glass_renderer("reflection"),
+            directory,
+            "generic-front-reflection",
+            profile.glass_reflection_spp,
+            1,
+            2203,
         )
         if mean_luminance(glass_reflection, GLASS_ROI) <= 1.0e-6:
             raise RuntimeError("air-side rough dielectric reflection NEE is blank")
 
         glass_transmission, _, _ = render(
-            renderer, generic_glass_scene("transmission"), directory,
-            "generic-front-back-transmission", 512, 3, 2309
+            generic_glass_renderer("transmission"),
+            directory,
+            "generic-front-back-transmission",
+            profile.glass_transmission_spp,
+            3,
+            2309,
         )
-        if mean_luminance(
-            glass_transmission, GLASS_TRANSMISSION_ROI
-        ) <= 1.0e-6:
+        if mean_luminance(glass_transmission, GLASS_TRANSMISSION_ROI) <= 1.0e-6:
             raise RuntimeError(
                 "rough dielectric did not traverse its front and back surfaces"
             )
 
         low_ior, _, _ = render(
-            renderer, generic_glass_scene("inside_tir", 1.20), directory,
-            "generic-inside-low-ior", 512, 1, 2411
+            generic_glass_renderer("inside_tir", 1.20),
+            directory,
+            "generic-inside-low-ior",
+            profile.tir_spp,
+            1,
+            2411,
         )
         high_ior, _, high_ior_bytes = render(
-            renderer, generic_glass_scene("inside_tir", 2.40), directory,
-            "generic-inside-tir", 512, 1, 2411
+            generic_glass_renderer("inside_tir", 2.40),
+            directory,
+            "generic-inside-tir",
+            profile.tir_spp,
+            1,
+            2411,
         )
         high_repeat, _, high_repeat_bytes = render(
-            renderer, generic_glass_scene("inside_tir", 2.40), directory,
-            "generic-inside-tir-repeat", 512, 1, 2411
+            generic_glass_renderer("inside_tir", 2.40),
+            directory,
+            "generic-inside-tir-repeat",
+            profile.tir_spp,
+            1,
+            2411,
         )
         if high_ior != high_repeat or high_ior_bytes != high_repeat_bytes:
             raise RuntimeError("material-side rough dielectric output is not deterministic")
@@ -455,12 +585,6 @@ def main():
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except (
-        json.JSONDecodeError,
-        OSError,
-        RuntimeError,
-        subprocess.CalledProcessError,
-        struct.error,
-    ) as error:
+    except (OSError, RuntimeError, struct.error, ValueError) as error:
         print(f"error: {error}", file=sys.stderr)
         raise SystemExit(1)

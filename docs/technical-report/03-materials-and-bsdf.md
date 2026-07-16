@@ -171,7 +171,7 @@ $$
 
 这里分母中的换行是普通乘法：即 $4\,n_o n_i$，不是加法。
 
-当前场景加载逻辑把 `metal` 的 `metallic` 固定为 1，所以实际的 $\mathbf F_0$ 直接取自 `base_color`。这是一种纯金属镜面微表面模型，不是常见的“金属度工作流”，也不含漫反射与镜面混合。
+当前 `Renderer.material(type="metal", ...)` 直接构造纯金属材质，等价于把 `metallic` 固定为 1，所以实际的 $\mathbf F_0$ 直接取自 `base_color`。这是一种纯金属镜面微表面模型，不是常见的“金属度工作流”，也不含漫反射与镜面混合。
 
 ### 源码对照：完整 BRDF 与方向 PDF
 
@@ -227,7 +227,7 @@ $$
 
 玻璃、水和空气这类非导体常由折射率 $\eta$ 描述。光从介质 $i$ 进入介质 $t$ 时满足 Snell 定律：
 
-`roughness = 0` 时界面是离散反射/折射；非零时，宏观法线之上存在 GGX 微表面法线分布。无 `water_surface` 的光滑兼容路径仍保留原有的空气外部介质与 Schlick 近似，以维持既有随机数序列和 golden；含水光滑路径以及全部粗糙介电路径使用非偏振精确 Fresnel。含水介质栈与有界首水面分裂见[第 12 章](12-runtime-analytic-water.md)。
+`roughness = 0` 时界面是离散反射/折射；非零时，宏观法线之上存在 GGX 微表面法线分布。无 `water_surface` 的光滑兼容路径仍保留原有的空气外部介质与 Schlick 近似，以维持既有确定性路径与随机数序列；含水光滑路径以及全部粗糙介电路径使用非偏振精确 Fresnel。含水介质栈与有界首水面分裂见[第 12 章](12-runtime-analytic-water.md)。
 
 $$
 \eta_i\sin\theta_i=\eta_t\sin\theta_t.
@@ -444,6 +444,6 @@ $$
 - `sample_bsdf`：生成 Lambert、GGX 或介电质方向及路径权重；
 - `ggx_distribution`、`ggx_g1`、`sample_ggx_vndf`、`dielectric_fresnel`：微表面分布、可见法线采样和精确介电 Fresnel。
 
-场景解析只要求 `base_color` 非负，没有强制每个通道不超过 1。物理上要保持被动表面能量守恒，场景作者仍应让普通反射率处于合理范围。大于 1 的 `emission` 则很常见，因为 HDR 光源本来就需要比显示白色更亮。
+Python API 与原生 SceneBuilder 只要求 `base_color` 非负，没有强制每个通道不超过 1。物理上要保持被动表面能量守恒，场景作者仍应让普通反射率处于合理范围。大于 1 的 `emission` 则很常见，因为 HDR 光源本来就需要比显示白色更亮。
 
 [上一章：光的度量与渲染方程](02-light-and-rendering-equation.md) · [返回目录](README.md) · [下一章：Monte Carlo 路径追踪](04-monte-carlo-path-tracing.md)

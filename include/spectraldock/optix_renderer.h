@@ -10,6 +10,7 @@ namespace spectraldock {
 struct Scene;
 
 struct RenderSettings {
+  int device = 0;
   std::uint32_t width = 1024;
   std::uint32_t height = 1024;
   std::uint32_t spp = 256;

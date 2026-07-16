@@ -1102,7 +1102,9 @@ RenderResult render_optix(const Scene& scene,
       checked_product(settings.width, settings.height, "pixel count");
   const auto total_begin = std::chrono::steady_clock::now();
 
-  check_cuda(cudaSetDevice(0), "cudaSetDevice");
+  if (settings.device < 0)
+    throw std::runtime_error("CUDA device ordinal must be non-negative");
+  check_cuda(cudaSetDevice(settings.device), "cudaSetDevice");
   check_cuda(cudaFree(nullptr), "cudaFree(context init)");
   Stream stream;
   CUcontext cuda_context = nullptr;
@@ -1564,7 +1566,7 @@ RenderResult render_optix(const Scene& scene,
   result.stats.gas_count = primitive_gases.size() + mesh_gpus.size();
 
   cudaDeviceProp properties{};
-  check_cuda(cudaGetDeviceProperties(&properties, 0),
+  check_cuda(cudaGetDeviceProperties(&properties, settings.device),
              "cudaGetDeviceProperties");
   result.stats.gpu_name = properties.name;
   result.stats.compute_major = properties.major;

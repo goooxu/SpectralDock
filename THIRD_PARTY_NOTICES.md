@@ -54,18 +54,29 @@ in third_party/tinyobjloader/LICENSE and in the header.
 - Upstream tag: `110.0-omni-and-physx-5.8.0`
 - Pinned commit: `fc1018a3745664a1db2b95ce03fb5e91eb585f2e`
 - License: BSD 3-Clause License
-- Used by: the optional Kinetic Foundry GPU rigid-body scene generator
+- Used by: the optional GPU-only PhysX worker used by Kinetic Foundry and
+  Lava Temple Oracle
 
-PhysX is fetched and built into the dedicated development container image at
-image-build time. Its source, headers, libraries, binaries, and container image
-are not included in this source distribution. The checked-in Kinetic Foundry
-PNG is rendered by SpectralDock from an ephemeral generated scene; its
-`.physics.json` sidecar records the generation environment and parameters.
+PhysX is obtained and built separately for the host. Its source, headers,
+libraries, and binaries are not included in this source distribution. The two
+Python programs call the isolated worker through private temporary IPC and
+apply returned typed attachments directly to `Renderer`; their checked-in
+`.physics.json` sidecars record the accepted run environment and parameters.
 SpectralDock is an independent, unofficial project and is not affiliated with,
 sponsored by, or endorsed by NVIDIA Corporation.
 
+## pybind11
+
+- Authors: Wenzel Jakob and pybind11 contributors
+- Source: https://github.com/pybind/pybind11
+- License: BSD 3-Clause License
+- Used by: the `_native` Python extension build
+
+pybind11 is an external build dependency and is not vendored in this source
+distribution.
+
 ## External build and runtime dependencies
 
-CUDA, OptiX, PhysX, the NVIDIA driver, libpng, and nlohmann_json are obtained
+CUDA, OptiX, PhysX, the NVIDIA driver, libpng, Python, and pybind11 are obtained
 separately from their respective distributors. Their SDK or library sources
 are not included in this source distribution, and their own terms apply.

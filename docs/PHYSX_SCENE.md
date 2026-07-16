@@ -1,208 +1,229 @@
-# PhysX 物理场景：GPU JIT 构建与 OptiX 交接
+# PhysX 物理场景：Python 即时构建与 OptiX 交接
 
 PhysX 是 SpectralDock **物理场景的核心构建子系统**。Kinetic Foundry 与
-“熔岩圣殿的机械先知”（`lava-temple-oracle`）不读取仓库中预存的姿态；
-每次物理场景渲染命令都先在 PhysX 5.8.0 GPU 上重新模拟，再把当次结果写成
-临时 schema v6 JSON，完成契约检查后立即交给 SpectralDock/OptiX 渲染。
+“熔岩圣殿的机械先知”（`lava-temple-oracle`）都是普通、可直接执行的
+Python 程序；它们不会读取预烘焙姿态或场景 JSON。每次运行都显式创建
+`PhysicsWorld`，在 PhysX 5.8.0 GPU 上重新模拟，把选定时刻的 typed
+render attachments 应用到 `Renderer`，然后才调用 OptiX 渲染。
 
-这里的 JIT 指“随一次渲染命令即时生成场景”。PhysX 进程与 OptiX 渲染
-进程相邻但分离，二者不共享 actor、CUDA 指针或库句柄，PhysX 也不在
-`optixLaunch` 中逐帧执行。默认八个静态 `scenes/*.json` 和
-`render-examples.sh` 批处理不会初始化 PhysX。
+这里的“即时构建”指一次离线渲染命令内重新求出单帧布局。PhysX 不在
+`optixLaunch` 中逐帧执行，项目也没有交互动画、物理 motion blur 或旧物理
+状态回放入口。
 
 ## 两个物理场景
 
-| scene id | 物理构图 | 固定物理时刻 | 默认 seed | 正式输出 |
+| Python 程序 | 动态物理构图 | 固定取景时刻 | seed | 正式输出 |
 | --- | --- | ---: | ---: | --- |
-| `kinetic-foundry` | 24 个 capsule 吉祥物代理与 192 颗钢珠的双滑槽撞击 | 300 × 1/120 s = 2.5 s | 20260711 | 1920×1080、512 spp、depth 12、Denoiser |
-| `lava-temple-oracle` | 130 个预碎裂刚体从祭坛上方径向爆发 | 24 × 1/120 s = 0.2 s | 909 | 3840×2160、2048 spp、depth 12、Denoiser |
+| `scenes/kinetic-foundry.py` | 24 个 capsule 吉祥物代理与 192 颗钢珠的双滑槽撞击 | 300 × 1/120 s = 2.5 s | 20260711 | 1920×1080、512 spp、depth 12、Denoiser |
+| `scenes/lava-temple-oracle.py` | 130 个预碎裂刚体从祭坛上方径向爆发 | 24 × 1/120 s = 0.2 s | 909 | 3840×2160、2048 spp、depth 12、Denoiser |
 
-二者都采用 GPU broad phase、GPU dynamics、TGS、PCM 与 stabilization，
-禁止 CPU dynamics fallback。PhysX GPU 不支持 enhanced determinism，所以
-该 flag 明确关闭。`sleeping_dynamic_actors=0` 是两个选定时刻的契约之一，
-说明画面截取运动过程而不是稳定堆积结果。
+二者都要求 PhysX 5.8.0、固定源码 revision、CUDA 12.8、GPU broad phase、
+GPU dynamics、TGS、PCM 与 stabilization。PhysX GPU 不支持 enhanced
+determinism，因此该 flag 明确关闭。创建 CUDA context 或 GPU scene 失败时
+程序立即报错；不存在 CPU dynamics fallback。
 
-## 一次渲染命令的数据流
+“GPU-only 物理”不等于宿主完全不做工作。Python 仍定义 actor 与视觉资源，
+worker 的单线程 CPU dispatcher 仍负责 PhysX 所需的宿主调度；契约所禁止的
+是把 broad phase 或 rigid-body dynamics 静默换成 CPU 求解。
+
+## 真实进程和数据流
 
 ~~~mermaid
 flowchart LR
-    A["选择 scene、device 与 seed"] --> B["清理旧临时 scene / sidecar"]
-    B --> C["PhysX 5.8 GPU 固定步模拟"]
-    C --> D["导出姿态与 physics sidecar"]
-    D --> E["写临时 schema v6 JSON"]
-    E --> F["Python 场景契约检查"]
-    F --> G["SpectralDock / OptiX 渲染"]
-    G --> H["PNG 与 render stats"]
-    D --> I["final 保存同次 physics sidecar"]
-    G --> J["清理临时 scene"]
+    A["可执行 scenes/*.py"] --> B["创建 Renderer 资源与 PhysicsWorld"]
+    B --> C["写 TemporaryDirectory 内 private request.sdp"]
+    C --> D["CUDA 12.8 / PhysX 5.8 GPU worker"]
+    D --> E["写 TemporaryDirectory 内 private result.sdp"]
+    E --> F["PhysicsResult 验证版本、GPU 契约与 actor 顺序"]
+    F --> G["typed attachments 的世界空间参数"]
+    G --> H["PhysicsResult.apply_to(Renderer)"]
+    H --> I["SceneBuilder → CUDA 13.3 / OptiX 9.1"]
+    I --> J["PNG 与 render stats"]
+    F --> K["可选、人类可读 .physics.json"]
 ~~~
 
-临时 schema 是明确的 ABI 边界：它只携带静态几何、材质、相机、灯光、
-渲染设置，以及从 PhysX 姿态变换而来的 renderer primitive 参数。渲染器
-本身不链接 PhysX，物理专用镜像也不包含 OptiX SDK。这样的进程边界让
-PhysX 与 OptiX 可以使用各自验证过的 CUDA 环境，同时保证物理结果确实来自
-同一条用户命令。
+上图中 `.sdp` 是内部、版本化的二进制 IPC。它只存在于
+`tempfile.TemporaryDirectory`，子进程结束后被删除；它不是场景格式、不是
+公共 API、不会提交到仓库，也没有读取任意 `.sdp` 的用户入口。其目的只是让
+PhysX worker 使用 CUDA 12.8，而 Python 父进程中的 Renderer native extension
+使用 CUDA 13.3，避免两个 CUDA runtime、指针、context 或 SDK 句柄进入同一
+地址空间。
 
-## 固定生成环境
+持久 `.physics.json` 与 IPC 完全不同。它是人类可读的审计 sidecar，记录
+scene、seed、设备、CUDA/PhysX 版本、固定步长、GPU-only flags、actor 初末
+姿态/速度、sleeping 状态与 attachment 数量。它不含完整 Renderer 场景，
+不能作为下一次渲染输入，也不能跳过 fresh PhysX 模拟。
 
-`Dockerfile.physx` 使用 CUDA 12.8.1 开发镜像，在构建镜像时从 NVIDIA
-官方仓库获取 PhysX，并固定到：
+## 构建边界
 
-- repository: `https://github.com/NVIDIA-Omniverse/PhysX`
-- tag: `110.0-omni-and-physx-5.8.0`
-- commit: `fc1018a3745664a1db2b95ce03fb5e91eb585f2e`
-- license: BSD-3-Clause
+渲染器与 PhysX worker 必须使用两个构建目录。根 CMake 会拒绝在一个 target
+图中同时启用二者：
 
-默认渲染器构建不会查找 PhysX。专用镜像在容器内提供 checked 版
-`/opt/physx`，无需在宿主机设置 `PHYSX_ROOT`；渲染阶段仍要求用户自行取得
-OptiX 9.1，并通过 `OPTIX_ROOT` 只读挂载。
+| 构建目录 | 关键选项 | 工具链 | 产物 |
+| --- | --- | --- | --- |
+| `build/Release` | `SPECTRALDOCK_ENABLE_GPU=ON` | CUDA 13.3、OptiX 9.1 | `python/spectraldock/_native` |
+| `build/PhysX` | `SPECTRALDOCK_ENABLE_PHYSX_SCENE=ON` | CUDA 12.8、PhysX 5.8.0 | `spectraldock_physx_worker` |
 
-## 统一生成与渲染入口
+PhysX worker 的 CMake fragment 还会检查 `CUDAToolkit_VERSION` 确实属于 12.8。
+Python 默认在 `build/PhysX/spectraldock_physx_worker` 查找它；高级调试可用
+`SPECTRALDOCK_PHYSX_WORKER` 指向同协议的可执行文件。没有 worker 时不会
+退回另一套物理实现。
 
-首次使用先构建 PhysX 镜像：
-
-```bash
-./scripts/build-physx-image.sh
-```
-
-只生成并检查临时场景：
-
-```bash
-./scripts/generate-physx-scene.sh \
-  --scene kinetic-foundry --device 0 --seed 20260711 --verify
-
-./scripts/generate-physx-scene.sh \
-  --scene lava-temple-oracle --device 0 --seed 909 --verify
-```
-
-`--scene` 省略时为兼容已有命令而默认 `kinetic-foundry`。两个 CMake target
-分别是 `spectraldock_physx_scene` 与
-`spectraldock_physx_lava_temple_oracle`；只有显式设置
-`SPECTRALDOCK_ENABLE_PHYSX_SCENE=ON` 时才构建。对应契约检查器为：
+准备用户自行取得的 CUDA、OptiX 与 PhysX SDK 后：
 
 ```bash
-python3 tools/check_physx_scene.py \
-  scenes/generated/kinetic-foundry.json \
-  scenes/generated/kinetic-foundry.physics.json
+export SPECTRALDOCK_CUDA_ROOT=/absolute/path/to/cuda-13.3
+export OPTIX_ROOT=/absolute/path/to/OptiX-SDK-9.1.0
+export SPECTRALDOCK_PHYSX_CUDA_ROOT=/absolute/path/to/cuda-12.8
+export PHYSX_ROOT=/absolute/path/to/physx-5.8-install
 
-python3 tools/check_physx_lava_temple_oracle.py \
-  scenes/generated/lava-temple-oracle.json \
-  scenes/generated/lava-temple-oracle.physics.json
+./scripts/configure.sh Release
+./scripts/build.sh Release
+source ./scripts/activate.sh Release
 ```
 
-普通预览写入被忽略的 `output/examples/`：
+PhysX SDK、CUDA、OptiX 以及它们的构建产物不随仓库分发。项目不提供或要求
+容器镜像；路径由宿主环境明确给出。
+
+## 普通 Python 程序入口
+
+两个物理例子和八个静态例子使用相同的直接执行方式：
 
 ```bash
-OPTIX_ROOT="/absolute/path/to/OptiX-SDK-9.1.0" \
-  ./scripts/render-physx-scene.sh \
-    --scene lava-temple-oracle --preset preview
+python3 scenes/kinetic-foundry.py
+python3 scenes/lava-temple-oracle.py
 ```
 
-`final` 会替换该 stem 受版本控制的 PNG、渲染 stats 与**同一次模拟**的
-physics sidecar。封面 final 固定 4K；不要把它加入八个静态场景的默认批处理：
+程序中的顺序是可见且不可绕过的：
 
-```bash
-OPTIX_ROOT="/absolute/path/to/OptiX-SDK-9.1.0" \
-  ./scripts/render-physx-scene.sh \
-    --scene lava-temple-oracle --preset final
+```python
+physics = create_physics_world()
+renderer = create_renderer(
+    physics,
+    metadata_output=output.with_suffix(".physics.json"),
+    verify=True,
+)
+renderer.render(...)
 ```
 
-入口没有复用旧场景或跳过物理的选项。开始时会清理旧临时产物，成功或失败
-退出时都不把 `scenes/generated/*.json` 作为仓库输入。`--verify` 生成第二份
-独立样本并分别验证两份契约；由于 GPU 非逐字节确定，它不比较姿态字节。
+`create_renderer` 内部先创建 Renderer 材质/网格与静态几何，再向传入的
+`PhysicsWorld` 添加接触材质、static actors、dynamic rigid bodies、碰撞
+shape、初始速度、冲量与 renderer-local attachments；随后显式调用
+`physics.simulate(...)` 和 `result.apply_to(renderer)`。这只是场景自身的普通
+helper，不是 loader 协议或隐藏 CLI。
+
+`./scripts/render-examples.sh` 依次执行十个 `scenes/*.py`。脚本本身不会预加载
+PhysX；执行到最后两个程序时，它们各自 fresh 启动 worker。十个程序都在
+`output/examples/` 写 PNG 与 `.stats.json`，只有两个物理程序额外写同 stem
+的 `.physics.json`。
+
+## 受限而明确的 Python 物理 API
+
+公共入口位于 `python/spectraldock/physics.py`：
+
+- `PhysicsWorld.material` 创建静摩擦、动摩擦与恢复系数；
+- `static_plane`、`static_box` 创建不可动碰撞边界；
+- `rigid_body` 创建带位置、四元数、密度、阻尼、sleep threshold 和 solver
+  iteration counts 的动态 actor；
+- `RigidBody.box`、`sphere`、`capsule` 可在一个 actor 上叠加为 compound；
+- `linear_velocity`、`angular_velocity` 和
+  `mass_scaled_impulse_at_position` 定义初始运动；
+- `attach_sphere`、`attach_rectangle`、`attach_cylinder`、`attach_disk`、
+  `attach_mesh` 把 Renderer typed handles 与 actor-local 几何关联；
+- `simulate` 启动隔离 worker，`PhysicsResult.apply_to` 通过 Renderer 公共 API
+  创建最终世界空间对象。
+
+API 有意不暴露 joints、cloth、particles、vehicles、articulations、cooking、
+callbacks 或通用 PhysX 指针。它服务于这两个研究/教学场景，不宣称是完整的
+PhysX Python binding。
+
+## typed attachment 怎样跨边界
+
+Python 父进程持有 `MaterialHandle` 与 `MeshHandle`，这些对象不会被序列化，
+也不会传入 worker。IPC 只为每个 attachment 发送稳定索引、类型和 actor-local
+数值。模拟后 worker 用最终 `PxTransform` 计算：
+
+- sphere 的世界中心；
+- rectangle 的三个世界顶点；
+- cylinder 的世界 base 与旋转后的单位 axis；
+- disk 的世界中心与法线；
+- mesh 的世界平移、XYZ 欧拉角与缩放。
+
+Python 按索引把这些数值与原来的 typed handles 重新结合，再调用
+`renderer.object(...)`。因此 worker 不认识 BSDF、OBJ 或 SceneBuilder，
+Renderer 也不认识 `PxRigidDynamic`；共享的是受验证的纯数值，而不是指针。
 
 ## Kinetic Foundry 契约
 
-Kinetic Foundry 的 24 个动态吉祥物以 capsule 参与碰撞；渲染时再把相同
-PhysX 姿态应用到完整 5,816-triangle OBJ。192 颗钢珠在物理和渲染两侧都
-直接使用 sphere。契约要求固定 actor/对象顺序、有限姿态、落地区域、无
-明显穿地、至少 12 个倾角超过 15° 的吉祥物、300 步与 0 个 sleeping
-dynamic actors。它是撞击峰值的清晰静态单帧，不是最终稳定状态，也没有
-motion blur。
+24 个吉祥物以单个 capsule 参与碰撞，最终姿态再应用到完整
+5,816-triangle mascot OBJ。capsule 半径为 0.42、圆柱半长为 0.28；OBJ 缩放
+为 0.7，两者主轮廓高度同为 1.4。192 颗钢珠在物理和渲染两侧都使用 sphere。
 
-## 熔岩圣殿封面的物理与渲染映射
+场景 validator 要求 actor 数量与类别正确，并至少有 12 个吉祥物的局部上轴
+相对世界上方向倾斜超过 15°。第 300 步是经过构图选择的撞击瞬间，不是总
+动能的数学最大值，也不是最终稳定堆积。
 
-封面动态世界恰好包含 130 个 actor：
+## 熔岩圣殿封面的物理映射
 
-| 类别 | 数量 | 物理表示与渲染表示 |
-| --- | ---: | --- |
-| 外壳板 | 24 | box 碰撞；成对 rectangle 显示深灰外侧和金色内侧断面 |
-| 面罩板 / 眼部 | 2 / 2 | box 或 sphere；解析 rectangle / sphere |
-| 肢体 / 天线部件 | 4 / 3 | capsule 或 box；cylinder、sphere、rectangle |
-| 复合齿轮 | 6 | 每个 actor 带多个碰撞 shape；disk/cylinder、齿与辐条组合 |
-| 其他机械部件 | 29 | box、capsule 或 sphere；金色/铜色解析 primitive |
-| 坍塌顶石 | 12 | box；粗糙黑石 rectangle 组合 |
-| 火星 | 48 | sphere；小型 emissive sphere，但不注册为显式灯 |
+封面恰好包含 130 个 dynamic actors：
 
-先知的 70 个部件在模拟开始前已分离；生成器对它们施加从非中心爆点向外并
-向上的偏心线性冲量，由作用点产生角冲量。顶石和火星分别取得下落/上升的
-初始线速度与角速度。PhysX 负责质量/惯量、碰撞、接触约束和 24 个固定步的姿态。
-这构成可信的**预碎裂刚体爆发**，但没有动态网格切割、破坏阈值、裂纹传播
-或拓扑 fracture。渲染器不支持通用 primitive transform，所以生成器把
-`PxTransform` 直接烘焙到 rectangle 的世界顶点/法线、cylinder 的端点、
-disk 的中心/法线与 sphere 的中心。
+| 类别 | 数量 | PhysX 表示 | Renderer attachment |
+| --- | ---: | --- | --- |
+| 外壳板 | 24 | box | 成对 rectangle：深灰外壳与金色断面 |
+| 面罩 / 眼部 | 2 / 2 | box / sphere | rectangle / emissive sphere |
+| 肢体 / 天线 | 4 / 3 | capsule / sphere | cylinder、sphere |
+| 复合齿轮 | 6 | hub sphere + 6 个 tooth boxes | cylinder、disk、辐条与齿面 |
+| 其他机械件 | 29 | capsule 或 box | 铜/金色解析 primitive |
+| 坍塌顶石 | 12 | box | 三个可见 rectangle 面 |
+| 火星 | 48 | sphere | 小型 emissive sphere |
 
-静态圣殿不需要进入 PhysX：黑石柱、破损穹顶、祭坛、符文和右侧池体按设计
-直接生成。水池的波面由 SpectralDock `water_surface` 解析求交，并用 RGB
-Beer 吸收表现深度渐变；它不是 PhysX 粒子、FLIP/SPH 或流体求解。三段
-发光 flame 构成祭坛火焰，两段近黑高吸收 flame 代理烟，一段低密度冷色
-flame 代理破晓光柱；这些体积只有吸收与自发光，没有散射、流体输运或燃烧
-化学。冷色 directional 和四盏由可见符文标示的 cyan point 与火光形成
-冷暖对比。低发光神光体积的轴线上另放置 30 颗不发光的金色 dust sphere，
-让 directional 与火光照出离散尘点；一个 `oracle_core_emitter` sphere 随
-第 5 个 PhysX 复合齿轮移动。核心和火星都是可见 emitter 几何，不加入显式
-灯数组。靠近破口的冰晶外观由 12 个半径 0.11–0.20、大小与位置不规则且
-彼此分离的 sphere 构成，使用 `frost_ice` 冷色粗糙 metal
-（`base_color: [0.65, 0.82, 0.95]`、
-`roughness: 0.42`）。它们是非透明视觉代理，不是 dielectric 冰晶。
+机械先知从模拟开始时就是 70 个独立、预碎裂部件。偏心质量缩放冲量同时
+产生线速度变化和角冲量；顶石与火星另有初始线速度和角速度。PhysX 计算
+质量/惯量、碰撞、接触约束和 24 个固定步，但没有动态网格切割、破坏阈值、
+裂纹传播或拓扑 fracture。
 
-最初的 dielectric 方案能表达透射外观，但在含 `water_surface` 的高样本
-诊断中，稀有近切线路径仍会触发介质栈安全错误。项目没有修改渲染器或放宽
-正式 stats 的 `medium_errors == 0` 安全门，而是保留冰晶轮廓和冷色反光、
-明确改用不进入介质栈的粗糙金属代理。physics sidecar 以
-`opaque_frost_visual_proxy: true` 记录这项边界。
+静态圣殿、祭坛、符文、解析水面和灯光直接由 Renderer 构建，不进入 PhysX。
+水面是 SpectralDock 的解析高度场，不是 PhysX 流体；三段火焰、两段烟代理
+和冷色神光是吸收—自发光 volume，不是燃烧或流体模拟。场景以不超过 450
+个 Renderer objects 作为教学复杂度预算；实际数量以同次 render stats 为准。
 
-封面检查器同时验证 PhysX 版本/commit、GPU-only flags、seed、`dt`、步数、
-130 个 actor 的类别与顺序、有限姿态/速度、六位小数与无负零、无明显穿透
-或越界、四象限径向展开、角度与 sleeping 状态，以及上述灯光、六个 flame、
-解析水池、12 个半径 0.11–0.20、尺寸不规则且不相交的非透明粗糙金属冰晶
-外观代理、
-`opaque_frost_visual_proxy: true`，以及材质和 4K render defaults 的精确
-场景契约。解析 object 总量采用不超过 450 的教学预算；最终实际数量必须从
-同次渲染 stats 读取，而不是把预算上限当作 object 计数。
+封面 validator 要求 130 个 actor 全部在边界内、至少 120 个仍在运动、至少
+120 个位移不小于 0.08、水平四象限都有碎片、至少 12 个有显著角速度，并且
+没有 actor sleeping。它保护结构与运动语义，但不能代替构图人工审查。
 
-## 可复现性与安全门
+## 独立验证与确定性边界
 
-PhysX GPU 模式不支持 enhanced determinism；sidecar 必须记录
-`enhanced_determinism=false` 与 GPU 不支持原因。固定 seed、步长、步数以及
-actor 创建/导出顺序约束输入和结构，但 GPU 接触生成与并行求解顺序仍可能
-使同一设备的最终姿态不同。因此项目不承诺同机或跨 GPU、驱动、CUDA、
-PhysX、编译器和操作系统的逐字节一致。
+`verify=True` 会对同一 typed request 启动第二个独立 worker，并分别运行
+scene validator。两次都必须满足契约，但不会比较 IPC 字节或最终浮点姿态。
+GPU contact generation 与并行求解顺序可能产生微小差异；固定 seed、actor
+创建顺序、步长和步数只约束输入，不提供跨 GPU、驱动、CUDA、PhysX、编译器
+或操作系统的逐字节确定性。
 
-维护者重建记录时应完成：
+只有 scene validator 明确拒绝有效 GPU 结果时，`max_attempts` 才允许用同一
+seed 再试。worker 启动失败、版本错误、CUDA context 错误或协议错误会立即
+失败，不会靠重试掩盖环境问题。
 
-1. 对两个物理场景分别使用 `--verify`，确认两份独立 scene/sidecar 都通过
-   各自契约；允许姿态不同。
-2. 先渲染低分辨率 preview，人工检查构图、穿透、越界、材质方向和代理
-   边界；封面还要检查碎片径向层次、火焰可读性、水池与冷暖光。
-3. 在 RTX 5090 运行低分辨率 Compute Sanitizer，再重建 final；核对 PNG、
-   stats 与 physics sidecar 属于同一次命令。
-4. 封面 stats 必须报告有效 water/volume 工作量，且 majorant violation、
-   tracking overflow、water solver overflow 与 medium error 均为 0。
-5. 确认 `scenes/generated/` 仍未被 Git 跟踪，八个静态场景批处理仍不启动
-   PhysX。
+维护者验收应在指定 NVIDIA GPU 测试机完成：先运行低成本物理/渲染预览，
+人工检查穿透、越界、附件方向、火焰、水池和构图；随后用一次显式
+`--target-processes all` memcheck 同时检查 CUDA 13.3 OptiX 根进程与隔离的
+CUDA 12.8 PhysX worker，并检查正式分辨率。PhysX 5.8 内部容量缓冲复制会
+产生上游 initcheck 诊断，因此项目不宣称对 worker 运行 initcheck 或
+racecheck；GPU-only 身份、双运行 validator 与独立渲染帧是结果契约，也不
+冒充内存安全检查。标准 GitHub hosted runner 不执行 PhysX 或 OptiX。
 
-Host-only CI 只测试检查器及合成契约，不运行 PhysX、OptiX 或像素渲染。
-正式物理验收必须在具备 NVIDIA GPU、PhysX 镜像和 OptiX SDK 的机器完成。
+## 持久产物与许可
 
-## 许可与边界
+仓库可保存正式 gallery PNG、render `.stats.json` 与同次运行的
+`.physics.json`。不得保存 private `.sdp`，也不存在序列化后的物理场景输入。
+`.physics.json` 的代码/数据结构按 Apache-2.0 提供；gallery
+PNG 属于明确列出的 CC0-1.0 视觉资产。
 
-`docs/gallery/kinetic-foundry.png` 与
-`docs/gallery/lava-temple-oracle.png` 属于 CC0-1.0 视觉资产。C++ 生成器、
-Python 检查器、临时 scene、渲染 stats 与 `.physics.json` 均按 Apache-2.0
-提供。PhysX 保持其上游 BSD-3-Clause 许可，且 SDK、源码构建产物与容器镜像
-不随仓库分发。
+现有 gallery sidecar 是正式图片验收时的历史原始记录，因此保留旧聚合字段；
+当前 Python API 新运行产生的是 `spectraldock.physics/1`、逐 body 状态和
+`render_attachments`。文档不把历史 sidecar 冒充为当前可回放输入，也不会
+仅为字段迁移而改写其 provenance。
 
-NVIDIA、CUDA、OptiX、PhysX 和 RTX 是 NVIDIA Corporation 的商标或注册
-商标；SpectralDock 是独立的非官方项目，与 NVIDIA Corporation 无隶属
-关系，也未获得其赞助或背书。
+PhysX 保持上游 BSD-3-Clause 许可，SDK 和构建产物不随仓库分发。NVIDIA、
+CUDA、OptiX、PhysX 和 RTX 是 NVIDIA Corporation 的商标或注册商标；
+SpectralDock 是独立的非官方项目，与 NVIDIA Corporation 无隶属关系，也未
+获得其赞助或背书。

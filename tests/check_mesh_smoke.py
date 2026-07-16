@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Validate the composite GPU mesh fixture and its deterministic RTX 5090 output."""
 
+import ast
 import hashlib
 import json
 import sys
@@ -18,29 +19,51 @@ def main() -> int:
         Path, sys.argv[1:]
     )
 
-    scene = json.loads(scene_path.read_text(encoding="utf-8"))
-    mesh_objects = [
-        item for item in scene["objects"] if item.get("type") == "mesh"
+    source = scene_path.read_text(encoding="utf-8")
+    tree = ast.parse(source, filename=str(scene_path))
+    object_calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "object"
     ]
+
+    def keywords(call):
+        return {keyword.arg: keyword.value for keyword in call.keywords
+                if keyword.arg is not None}
+
+    mesh_objects = []
+    for call in object_calls:
+        values = keywords(call)
+        type_node = values.get("type")
+        if (isinstance(type_node, ast.Constant)
+                and type_node.value in {"mesh", "mesh_instance"}):
+            mesh_objects.append(values)
     if len(mesh_objects) != 2:
         raise RuntimeError("mesh smoke must contain exactly two mesh instances")
-    if len({item["mesh"] for item in mesh_objects}) != 1:
+    if len({ast.dump(item["mesh"]) for item in mesh_objects}) != 1:
         raise RuntimeError("mesh smoke instances must share one mesh resource")
-    if mesh_objects[0]["transform"] == mesh_objects[1]["transform"]:
+    transform_keys = ("transform", "translate", "rotate_degrees", "scale")
+    transforms = [
+        tuple(ast.dump(item[key]) if key in item else None
+              for key in transform_keys)
+        for item in mesh_objects
+    ]
+    if transforms[0] == transforms[1]:
         raise RuntimeError("mesh smoke instances must use different transforms")
-    first_binding = (
-        mesh_objects[0].get("material"),
-        mesh_objects[0].get("front_material"),
-        mesh_objects[0].get("back_material"),
+    binding_keys = ("material", "front_material", "back_material")
+    first_binding = tuple(
+        ast.dump(mesh_objects[0][key]) if key in mesh_objects[0] else None
+        for key in binding_keys
     )
-    second_binding = (
-        mesh_objects[1].get("material"),
-        mesh_objects[1].get("front_material"),
-        mesh_objects[1].get("back_material"),
+    second_binding = tuple(
+        ast.dump(mesh_objects[1][key]) if key in mesh_objects[1] else None
+        for key in binding_keys
     )
     if first_binding == second_binding:
         raise RuntimeError("mesh smoke instances must use different materials")
-    if not any(item.get("alpha_texture") for item in mesh_objects):
+    if not any("alpha_texture" in item for item in mesh_objects):
         raise RuntimeError("mesh smoke must exercise alpha any-hit")
 
     obj_lines = obj_path.read_text(encoding="ascii").splitlines()

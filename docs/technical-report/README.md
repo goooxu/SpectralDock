@@ -6,7 +6,7 @@
 
 ![SpectralDock 的“熔岩圣殿的机械先知”4K 正式渲染结果](../gallery/lava-temple-oracle.png)
 
-> 上图不是手工绘制的插画。机械先知的预碎裂刚体姿态先由 PhysX GPU 在当前渲染命令中计算，随后由本项目路径追踪器输出 4K 图像。报告既解释一个像素如何产生，也解释物理状态怎样跨越 schema v6 边界成为可追踪几何。
+> 上图不是手工绘制的插画。机械先知的预碎裂刚体姿态先由隔离的 PhysX GPU worker 在当前 Python 渲染程序中计算，typed attachments 随后直接加入 SceneBuilder，再由本项目路径追踪器输出 4K 图像。报告既解释一个像素如何产生，也解释物理状态怎样跨进程成为可追踪几何。
 
 ## 核心问题：一个像素如何得到颜色
 
@@ -38,12 +38,12 @@ flowchart LR
 7. [OptiX/GPU 实现](07-optix-gpu-implementation.md)：以 `render_optix` 为总入口，连起构建期 OptiX IR、context/pipeline/SBT、launch、traversal/callback 和资源销毁。
 8. [降噪、色调映射与输出](08-denoising-color-and-output.md)：展开可选 Denoiser 的完整生命周期，并划清纯 CUDA 后处理、D2H 和 CPU PNG 编码的边界。
 9. [边界、性能与验证](09-limitations-performance-and-validation.md)：区分物理模型边界、近似误差、性能指标和软件测试。
-10. [PhysX 刚体模拟与场景 JIT 构建](10-physx-rigid-body-scene-baking.md)：从 Newton–Euler、冲量、接触约束、复合刚体和碰撞代理出发，解释 Kinetic Foundry 与封面的 GPU 刚体姿态怎样成为 schema v6 场景。
+10. [PhysX 刚体模拟与 Python 场景即时构建](10-physx-rigid-body-scene-baking.md)：从 Newton–Euler、冲量、接触约束、复合刚体和碰撞代理出发，解释 Kinetic Foundry 与封面的 GPU 刚体姿态怎样经 private IPC 和 typed attachments 进入 SceneBuilder。
 11. [程序化体积火焰](11-procedural-volumetric-flame.md)：从吸收—自发光传输方程出发，解释程序密度、Delta Tracking、体积 NEE、估计器分工与安全统计。
 12. [运行时解析水面](12-runtime-analytic-water.md)：从正弦高度场与解析法线出发，解释自定义求交、粗糙介电 GGX、Fresnel/Snell、介质栈、Beer 吸收、NEE/MIS 与光滑首水面有界分裂。
 13. [HDR 环境与重要性采样](13-hdr-environment-and-importance-sampling.md)：从 RGBE 解码、纬经映射和 texel 立体角出发，推导环境二维 CDF、有限灯功率选择、水面双样本分层、环境 NEE 与 MIS。
 
-如果只想先建立渲染整体认识，可读第 1、2、4、5、8 章，再返回其余章节；第 10 章解释物理场景的核心 JIT 构建链，第 11 章扩展无散射参与介质，第 12 章扩展运行时解析介电边界，第 13 章解释无限远环境光与全局直接光采样分布。
+如果只想先建立渲染整体认识，可读第 1、2、4、5、8 章，再返回其余章节；第 10 章解释物理场景的 Python 即时构建与隔离 worker 交接链，第 11 章扩展无散射参与介质，第 12 章扩展运行时解析介电边界，第 13 章解释无限远环境光与全局直接光采样分布。
 
 ## 全文方向约定
 
@@ -87,7 +87,7 @@ OptiX、CUDA、BVH、SBT（GPU 实现）
 
 因此，测试和验收不是项目主角；它们是保护渲染器数学含义和工程行为不被意外破坏的证据。
 
-两个物理场景还存在一条进入上述链条之前的必经路径：每次物理场景渲染命令都先运行 PhysX GPU 刚体模拟，位置与姿态经临时 schema v6 JSON 交给相邻的 OptiX 进程，然后才从“几何与材质定义路径”这一层进入普通渲染流程。默认八个静态场景不经过这一步。第 10 章完整展开这条边界。
+两个物理场景还存在一条进入上述链条之前的必经路径：普通 Python 程序先创建 `PhysicsWorld`，经只存在于 `TemporaryDirectory` 的 private IPC 启动 CUDA 12.8 / PhysX GPU worker；返回的数值与父进程保留的 typed Renderer handles 重新结合，由 `PhysicsResult.apply_to` 直接加入 SceneBuilder，然后进入普通 OptiX 渲染流程。持久 `.physics.json` 只是审计记录，不是场景输入。默认八个静态场景不经过这一步。第 10 章完整展开这条边界。
 
 ## 报告与源码
 
@@ -102,12 +102,11 @@ OptiX、CUDA、BVH、SBT（GPU 实现）
 - GPU 管线与加速结构：[`create_pipeline`、`build_mesh`、`build_ias`、`make_sbt`](../../src/optix_renderer.cpp)
 - 后处理：[`postprocess_kernel`](../../src/postprocess.cu)
 - 主机输出：[`write_png_rgba8`](../../src/image_io.cpp)
-- PhysX 场景生成：[`generate_physx_kinetic_foundry.cpp`](../../tools/generate_physx_kinetic_foundry.cpp)
-- PhysX 烘焙契约：[`check_physx_scene.py`](../../tools/check_physx_scene.py)
-- PhysX 封面生成：[`generate_physx_lava_temple_oracle.cpp`](../../tools/generate_physx_lava_temple_oracle.cpp)
-- PhysX 封面契约：[`check_physx_lava_temple_oracle.py`](../../tools/check_physx_lava_temple_oracle.py)
-- 场景输入：[场景格式说明](../SCENE_FORMAT.md)
+- PhysX Python API、private IPC 与 typed handoff：[`physics.py`](../../python/spectraldock/physics.py)
+- CUDA 12.8 / PhysX GPU worker：[`physx_worker.cpp`](../../tools/physx_worker.cpp)
+- Kinetic Foundry 物理程序：[`kinetic-foundry.py`](../../scenes/kinetic-foundry.py)
+- 熔岩圣殿封面物理程序：[`lava-temple-oracle.py`](../../scenes/lava-temple-oracle.py)
 - 体积密度与传输：[`flame_density`、`track_volume`](../../src/device_programs.cu)
 - 水面与介质传输：[`water_height`、`__intersection__water_surface`、`direct_segment_transmittance`、`sample_bsdf`](../../src/device_programs.cu)
 
-这是一份“与当前实现一致”的技术报告，不把 SpectralDock 描述成通用物理仿真器，也不把两进程 JIT 场景构建描述成同进程逐帧物理。每章都会明确当前实现的近似与边界。
+这是一份“与当前实现一致”的技术报告，不把 SpectralDock 描述成通用物理仿真器，也不把 Python 父进程与隔离 PhysX worker 组成的即时场景构建描述成同进程逐帧物理。每章都会明确当前实现的近似与边界。

@@ -10,6 +10,27 @@ commit 列表仍以 Git 历史为准。发布新版本时，应把 `Unreleased` 
 
 ## [Unreleased]
 
+### 新增
+
+- 提供命令式 Python `Renderer` API；普通 Python 程序可直接创建相机、材质、
+  几何和灯光，并在 `render()` 调用中指定分辨率、采样数和输出路径。
+- 提供隔离进程中的受限 PhysX Python API，使同一个 Python 程序可以运行 GPU
+  刚体模拟、应用 actor-local 渲染附件并立即启动 OptiX。
+
+### 变更
+
+- 十个示例改为十个可直接执行的 Python 程序。SpectralDock 不再发现、加载或
+  解释所谓“场景文件”，用户自定义渲染程序也不需要注册。
+- 构建与运行改为仓库内宿主流程；CUDA 13.3/OptiX 9.1 renderer 和 CUDA
+  12.8/PhysX 5.8 worker 保持进程隔离。
+
+### 移除
+
+- 移除 schema v6、全部场景 JSON、C++ JSON loader、`--scene` 主程序及临时
+  场景序列化。这是有意的破坏性接口变化；stats、physics 和资产 manifest
+  JSON 仍作为非场景运行记录保留。
+- 移除 Dockerfiles、镜像构建脚本和容器运行路径。
+
 ## [0.1.0] - 2026-07-15
 
 ### 新增
@@ -63,4 +84,3 @@ commit 列表仍以 Git 历史为准。发布新版本时，应把 `Unreleased` 
   中文技术报告，并让公式、原理、优化和源码实现相互对照。
 - 增加 Ubuntu 容器工作流、host CTest/pytest、Release/Debug GPU 验收、
   Compute Sanitizer，以及 RTX 5090 gallery、stats 和 physics sidecar 记录。
-

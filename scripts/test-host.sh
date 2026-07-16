@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD_DIR="${1:-build/host-test}"
+PYTHON="${PYTHON:-python3}"
 
 cd "${ROOT}"
 bash -n scripts/*.sh
@@ -13,8 +14,7 @@ cmake -S . -B "${BUILD_DIR}" -GNinja \
   -DSPECTRALDOCK_ENABLE_PHYSX_SCENE=OFF
 cmake --build "${BUILD_DIR}" --parallel
 ctest --test-dir "${BUILD_DIR}" --output-on-failure
+
+export PYTHONPATH="${ROOT}/python:${ROOT}/${BUILD_DIR}/python${PYTHONPATH:+:${PYTHONPATH}}"
 PYTHONDONTWRITEBYTECODE="${PYTHONDONTWRITEBYTECODE:-1}" \
-  python3 -m pytest -q -p no:cacheprovider \
-    tests/test_technical_report_snippets.py \
-    tests/test_hdr_environment_generator.py \
-    tests/test_physx_lava_temple_oracle_contract.py
+  "${PYTHON}" -m pytest -q -p no:cacheprovider tests

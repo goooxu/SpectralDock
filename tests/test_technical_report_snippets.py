@@ -13,7 +13,15 @@ SNIPPET = re.compile(
     r'(?P<code>.*?)\n```',
     re.DOTALL,
 )
-ALLOWED_ROOTS = {"include", "scripts", "src", "tests", "tools"}
+ALLOWED_ROOTS = {
+    "include",
+    "python",
+    "scenes",
+    "scripts",
+    "src",
+    "tests",
+    "tools",
+}
 LANGUAGES = {
     ".cpp": "cpp",
     ".cu": "cpp",
@@ -51,24 +59,30 @@ OPTIX_CHAPTER_SNIPPET_ORDER = (
     "optix-state-teardown",
 )
 REQUIRED_PHYSX_FLOW_SNIPPETS = {
-    "physx-baked-scene-validation",
+    "physx-attachment-baking",
     "physx-body-properties",
-    "physx-contract-verification",
     "physx-capsule-proxy",
-    "physx-euler-conversion",
+    "physx-compound-gear",
+    "physx-cover-off-center-impulse",
+    "physx-cover-validation",
     "physx-fixed-step-simulation",
     "physx-gpu-scene-contract",
-    "physx-pose-baking",
+    "physx-kinetic-validation",
+    "physx-private-ipc",
+    "physx-python-handoff",
 }
 PHYSX_CHAPTER_SNIPPET_ORDER = (
+    "physx-python-handoff",
     "physx-body-properties",
     "physx-gpu-scene-contract",
     "physx-capsule-proxy",
     "physx-fixed-step-simulation",
-    "physx-euler-conversion",
-    "physx-pose-baking",
-    "physx-baked-scene-validation",
-    "physx-contract-verification",
+    "physx-attachment-baking",
+    "physx-cover-off-center-impulse",
+    "physx-compound-gear",
+    "physx-kinetic-validation",
+    "physx-cover-validation",
+    "physx-private-ipc",
 )
 REQUIRED_VOLUME_SNIPPETS = {
     "volume-delta-tracking-acceptance",
@@ -246,9 +260,10 @@ def test_technical_report_source_snippets_match_the_repository():
         "PhysX chapter snippets must follow the documented data flow"
     )
     for boundary in (
+        "PhysicsWorld",
+        "private IPC",
+        "typed attachments",
         "GPU-only",
-        "schema v6",
-        "sleeping_dynamic_actors=0",
         "motion blur",
     ):
         assert boundary in physx_chapter, (

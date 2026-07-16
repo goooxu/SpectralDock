@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
 """GPU A/B check for the production Radiance Pavilion environment."""
 
-import copy
-import json
-import subprocess
+import argparse
+import importlib.util
 import sys
 import tempfile
 from pathlib import Path
+from typing import Callable
 
 from PIL import Image
 
+from spectraldock import Renderer
 
+
+ROOT = Path(__file__).resolve().parents[1]
+PAVILION_SCENE = ROOT / "scenes/radiance-pavilion.py"
 WIDTH = 256
 HEIGHT = 144
 MAX_DEPTH = 8
@@ -28,104 +32,78 @@ MAX_MSE_RATIO = 0.85
 MAX_HIGH_SPP_MEAN_ERROR = 0.08
 
 
-def absolute_asset_path(scene_path, asset_path):
-    path = Path(asset_path)
-    if not path.is_absolute():
-        path = scene_path.parent / path
-    return str(path.resolve())
+def positive_integer(value: str) -> int:
+    result = int(value)
+    if result <= 0:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return result
 
 
-def scene_with_absolute_assets(scene_path):
-    scene = json.loads(scene_path.read_text(encoding="utf-8"))
-    background = scene.get("background", {})
-    if background.get("type") != "environment" or not background.get("path"):
-        raise RuntimeError("Radiance Pavilion must use an HDR environment")
-    if scene.get("lights") != []:
-        raise RuntimeError(
-            "Radiance Pavilion A/B requires the environment to be its only light"
-        )
-    emissive_materials = [
-        material.get("name", "<unnamed>")
-        for material in scene.get("materials", [])
-        if material.get("type") == "emitter"
-        or any(component > 0.0 for component in material.get("emission", []))
-    ]
-    procedural_emitters = [
-        object_data.get("name", "<unnamed>")
-        for object_data in scene.get("objects", [])
-        if object_data.get("type") == "flame"
-    ]
-    if emissive_materials or procedural_emitters:
-        raise RuntimeError(
-            "Radiance Pavilion A/B found non-environment emitters: materials={}, "
-            "objects={}".format(emissive_materials, procedural_emitters)
-        )
-    background["path"] = absolute_asset_path(scene_path, background["path"])
+def nonnegative_integer(value: str) -> int:
+    result = int(value)
+    if result < 0:
+        raise argparse.ArgumentTypeError("must be a non-negative integer")
+    return result
 
-    for mesh in scene.get("meshes", []):
-        if not mesh.get("path"):
-            raise RuntimeError("mesh is missing its path: {!r}".format(mesh))
-        mesh["path"] = absolute_asset_path(scene_path, mesh["path"])
 
-    for asset in [background["path"]] + [
-        mesh["path"] for mesh in scene.get("meshes", [])
-    ]:
-        if not Path(asset).is_file():
-            raise RuntimeError("scene asset not found: {}".format(asset))
-
-    scene["render"].update(
-        {
-            "width": WIDTH,
-            "height": HEIGHT,
-            "spp": LOW_SPP,
-            "max_depth": MAX_DEPTH,
-            "denoise": False,
-        }
+def load_renderer_factory() -> Callable[[], Renderer]:
+    if not PAVILION_SCENE.is_file():
+        raise RuntimeError(f"Pavilion Python scene not found: {PAVILION_SCENE}")
+    spec = importlib.util.spec_from_file_location(
+        "spectraldock_radiance_pavilion_scene", PAVILION_SCENE
     )
-    return scene
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load Pavilion Python scene: {PAVILION_SCENE}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    factory = getattr(module, "create_renderer", None)
+    if not callable(factory):
+        raise RuntimeError("Radiance Pavilion must define create_renderer()")
+    return factory
 
 
-def render(renderer, base, directory, name, mode, spp, seed):
-    scene_data = copy.deepcopy(base)
-    scene_data["integrator"]["direct_light_sampling"] = mode
-    scene_data["integrator"]["clamp_direct"] = 0.0
-    scene_data["integrator"]["clamp_indirect"] = 0.0
-    scene_data["render"]["spp"] = spp
-    scene_data["render"]["seed"] = seed
-
-    scene_path = directory / (name + ".json")
-    output_path = directory / (name + ".png")
-    scene_path.write_text(
-        json.dumps(scene_data, indent=2) + "\n", encoding="utf-8"
+def create_variant(
+    factory: Callable[[], Renderer], *, mode: str, device: int
+) -> Renderer:
+    renderer = factory()
+    if not isinstance(renderer, Renderer):
+        raise RuntimeError("Radiance Pavilion create_renderer() returned the wrong type")
+    renderer.device = device
+    renderer.integrator(
+        direct_light_sampling=mode, clamp_direct=0.0, clamp_indirect=0.0
     )
-    subprocess.run(
-        [
-            str(renderer),
-            "--scene", str(scene_path),
-            "--output", str(output_path),
-            "--width", str(WIDTH),
-            "--height", str(HEIGHT),
-            "--spp", str(spp),
-            "--max-depth", str(MAX_DEPTH),
-            "--seed", str(seed),
-            "--no-denoise",
-        ],
-        check=True,
+    return renderer
+
+
+def render_variant(
+    factory: Callable[[], Renderer],
+    directory: Path,
+    name: str,
+    mode: str,
+    spp: int,
+    seed: int,
+    *,
+    device: int,
+) -> Image.Image:
+    output = directory / f"{name}.png"
+    stats = create_variant(factory, mode=mode, device=device).render(
+        output=output,
+        width=WIDTH,
+        height=HEIGHT,
+        spp=spp,
+        max_depth=MAX_DEPTH,
+        seed=seed,
+        denoise=False,
     )
 
-    with Image.open(output_path) as decoded:
+    with Image.open(output) as decoded:
         decoded.load()
         if decoded.size != (WIDTH, HEIGHT) or decoded.mode != "RGBA":
             raise RuntimeError(
-                "unexpected Pavilion output: {} {}".format(
-                    decoded.size, decoded.mode
-                )
+                f"unexpected Pavilion output: {decoded.size} {decoded.mode}"
             )
         image = decoded.copy()
 
-    stats = json.loads(
-        output_path.with_suffix(".stats.json").read_text(encoding="utf-8")
-    )
     actual = stats.get("render", {})
     expected = {
         "width": WIDTH,
@@ -139,18 +117,16 @@ def render(renderer, base, directory, name, mode, spp, seed):
     for key, value in expected.items():
         if actual.get(key) != value:
             raise RuntimeError(
-                "stats render.{}={!r}, expected {!r}".format(
-                    key, actual.get(key), value
-                )
+                f"stats render.{key}={actual.get(key)!r}, expected {value!r}"
             )
     return image
 
 
-def roi_rgb(image):
+def roi_rgb(image: Image.Image) -> list[tuple[int, int, int]]:
     return [pixel[:3] for pixel in image.crop(ROI).getdata()]
 
 
-def mse(image, reference):
+def mse(image: Image.Image, reference: Image.Image) -> float:
     actual = roi_rgb(image)
     expected = roi_rgb(reference)
     return sum(
@@ -160,7 +136,7 @@ def mse(image, reference):
     ) / (3.0 * len(actual))
 
 
-def mean_luminance(image):
+def mean_luminance(image: Image.Image) -> float:
     pixels = roi_rgb(image)
     return sum(
         0.2126 * red + 0.7152 * green + 0.0722 * blue
@@ -168,108 +144,120 @@ def mean_luminance(image):
     ) / len(pixels)
 
 
-def main():
-    if len(sys.argv) != 3:
+def run_checks(directory: Path, args: argparse.Namespace) -> tuple[float, float]:
+    factory = load_renderer_factory()
+    reference = render_variant(
+        factory,
+        directory,
+        "importance-reference",
+        "importance",
+        args.reference_spp,
+        REFERENCE_SEED,
+        device=args.device,
+    )
+    reference_mean = mean_luminance(reference)
+    if reference_mean <= 1.0:
         raise RuntimeError(
-            "usage: check_radiance_pavilion_importance.py "
-            "RENDERER scenes/radiance-pavilion.json"
+            "Pavilion reference ROI is blank or unexpectedly dark: "
+            f"{reference_mean:.3f}"
         )
-    renderer = Path(sys.argv[1]).resolve()
-    scene_path = Path(sys.argv[2]).resolve()
-    if not renderer.is_file():
-        raise RuntimeError("renderer not found: {}".format(renderer))
-    if not scene_path.is_file():
-        raise RuntimeError("scene not found: {}".format(scene_path))
-    base = scene_with_absolute_assets(scene_path)
 
-    with tempfile.TemporaryDirectory(
-        prefix="spectraldock-radiance-pavilion-"
-    ) as temporary:
-        directory = Path(temporary)
-        reference = render(
-            renderer,
-            base,
+    uniform_error = 0.0
+    importance_error = 0.0
+    for index, seed in enumerate(LOW_SEEDS):
+        uniform = render_variant(
+            factory,
             directory,
-            "importance-reference",
-            "importance",
-            REFERENCE_SPP,
-            REFERENCE_SEED,
-        )
-        reference_mean = mean_luminance(reference)
-        if reference_mean <= 1.0:
-            raise RuntimeError(
-                "Pavilion reference ROI is blank or unexpectedly dark: {:.3f}".format(
-                    reference_mean
-                )
-            )
-
-        uniform_error = 0.0
-        importance_error = 0.0
-        for index, seed in enumerate(LOW_SEEDS):
-            uniform = render(
-                renderer,
-                base,
-                directory,
-                "uniform-low-{}".format(index),
-                "uniform",
-                LOW_SPP,
-                seed,
-            )
-            importance = render(
-                renderer,
-                base,
-                directory,
-                "importance-low-{}".format(index),
-                "importance",
-                LOW_SPP,
-                seed,
-            )
-            uniform_error += mse(uniform, reference)
-            importance_error += mse(importance, reference)
-
-        if uniform_error <= 1.0e-12:
-            raise RuntimeError("Pavilion uniform low-spp reference error is zero")
-        mse_ratio = importance_error / uniform_error
-        if mse_ratio > MAX_MSE_RATIO:
-            raise RuntimeError(
-                "Pavilion importance sampling did not reduce cumulative "
-                "low-spp RGB MSE by 15%: importance={:.3f}, uniform={:.3f}, "
-                "ratio={:.3f}".format(
-                    importance_error, uniform_error, mse_ratio
-                )
-            )
-
-        uniform_high = render(
-            renderer,
-            base,
-            directory,
-            "uniform-high",
+            f"uniform-low-{index}",
             "uniform",
-            HIGH_SPP,
-            HIGH_UNIFORM_SEED,
+            args.low_spp,
+            seed,
+            device=args.device,
         )
-        importance_high = render(
-            renderer,
-            base,
+        importance = render_variant(
+            factory,
             directory,
-            "importance-high",
+            f"importance-low-{index}",
             "importance",
-            HIGH_SPP,
-            HIGH_IMPORTANCE_SEED,
+            args.low_spp,
+            seed,
+            device=args.device,
         )
-        uniform_mean = mean_luminance(uniform_high)
-        importance_mean = mean_luminance(importance_high)
-        relative_mean_error = abs(uniform_mean - importance_mean) / max(
-            importance_mean, 1.0
-        )
-        if relative_mean_error > MAX_HIGH_SPP_MEAN_ERROR:
-            raise RuntimeError(
-                "Pavilion uniform/importance high-spp ROI means did not "
-                "converge: uniform={:.3f}, importance={:.3f}, "
-                "relative_error={:.3f}".format(
-                    uniform_mean, importance_mean, relative_mean_error
-                )
+        uniform_error += mse(uniform, reference)
+        importance_error += mse(importance, reference)
+
+    if uniform_error <= 1.0e-12:
+        raise RuntimeError("Pavilion uniform low-spp reference error is zero")
+    mse_ratio = importance_error / uniform_error
+    if mse_ratio > MAX_MSE_RATIO:
+        raise RuntimeError(
+            "Pavilion importance sampling did not reduce cumulative low-spp "
+            "RGB MSE by 15%: importance={:.3f}, uniform={:.3f}, "
+            "ratio={:.3f}".format(
+                importance_error, uniform_error, mse_ratio
             )
+        )
+
+    uniform_high = render_variant(
+        factory,
+        directory,
+        "uniform-high",
+        "uniform",
+        args.high_spp,
+        HIGH_UNIFORM_SEED,
+        device=args.device,
+    )
+    importance_high = render_variant(
+        factory,
+        directory,
+        "importance-high",
+        "importance",
+        args.high_spp,
+        HIGH_IMPORTANCE_SEED,
+        device=args.device,
+    )
+    uniform_mean = mean_luminance(uniform_high)
+    importance_mean = mean_luminance(importance_high)
+    relative_mean_error = abs(uniform_mean - importance_mean) / max(
+        importance_mean, 1.0
+    )
+    if relative_mean_error > MAX_HIGH_SPP_MEAN_ERROR:
+        raise RuntimeError(
+            "Pavilion uniform/importance high-spp ROI means did not converge: "
+            "uniform={:.3f}, importance={:.3f}, relative_error={:.3f}".format(
+                uniform_mean, importance_mean, relative_mean_error
+            )
+        )
+    return mse_ratio, relative_mean_error
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        help="preserve rendered checks in this directory instead of a temporary one",
+    )
+    parser.add_argument("--device", type=nonnegative_integer, default=0)
+    parser.add_argument("--low-spp", type=positive_integer, default=LOW_SPP)
+    parser.add_argument("--high-spp", type=positive_integer, default=HIGH_SPP)
+    parser.add_argument(
+        "--reference-spp", type=positive_integer, default=REFERENCE_SPP
+    )
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+    if args.output_dir is not None:
+        directory = args.output_dir.resolve()
+        directory.mkdir(parents=True, exist_ok=True)
+        mse_ratio, relative_mean_error = run_checks(directory, args)
+    else:
+        with tempfile.TemporaryDirectory(
+            prefix="spectraldock-radiance-pavilion-"
+        ) as temporary:
+            mse_ratio, relative_mean_error = run_checks(Path(temporary), args)
 
     print(
         "Radiance Pavilion importance A/B passed: "
@@ -283,11 +271,6 @@ def main():
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except (
-        json.JSONDecodeError,
-        OSError,
-        RuntimeError,
-        subprocess.CalledProcessError,
-    ) as error:
-        print("error: {}".format(error), file=sys.stderr)
+    except (ImportError, OSError, RuntimeError, TypeError, ValueError) as error:
+        print(f"error: {error}", file=sys.stderr)
         raise SystemExit(1)

@@ -1,280 +1,427 @@
-import copy
+from dataclasses import replace
 import importlib.util
+import math
 from pathlib import Path
 
 import pytest
 
+import spectraldock.physics as physics
+from spectraldock.physics import BodyState, PhysicsError, PhysicsResult, PhysicsWorld
+
 
 ROOT = Path(__file__).resolve().parents[1]
-CHECKER = ROOT / "tools" / "check_physx_lava_temple_oracle.py"
+COVER_SCENE = ROOT / "scenes" / "lava-temple-oracle.py"
 
 
-def load_checker():
-    spec = importlib.util.spec_from_file_location("lava_temple_contract", CHECKER)
+def load_cover_scene():
+    spec = importlib.util.spec_from_file_location(
+        "spectraldock_lava_temple_oracle_contract", COVER_SCENE
+    )
+    assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
-def rectangle(name, material="stone"):
-    return {
-        "name": name,
-        "type": "rectangle",
-        "p1": [-1.0, 0.0, 1.0],
-        "p2": [-1.0, 0.0, -1.0],
-        "p3": [1.0, 0.0, -1.0],
-        "material": material,
+COVER = load_cover_scene()
+
+
+def make_world(**overrides):
+    parameters = {
+        "device": 0,
+        "seed": 17,
+        "fixed_dt": 1.0 / 120.0,
+        "steps": 24,
+        "gravity": (0.0, -9.81, 0.0),
+        "scene_name": "host-contract",
     }
+    parameters.update(overrides)
+    return PhysicsWorld(**parameters)
 
 
-def sphere(name, center, material="stone"):
-    return {
-        "name": name,
-        "type": "sphere",
-        "center": list(center),
-        "radius": 0.1,
-        "material": material,
+def contact_material(world, name="contact"):
+    return world.material(
+        name,
+        static_friction=0.6,
+        dynamic_friction=0.4,
+        restitution=0.2,
+    )
+
+
+def make_result(*, bodies, attachments=(), source_attachments=(), **overrides):
+    parameters = {
+        "scene_name": "host-contract",
+        "seed": 17,
+        "device": 0,
+        "device_name": "Synthetic NVIDIA GPU",
+        "backend": "physx-gpu",
+        "physx_version": (5 << 24) | (8 << 16),
+        "physx_commit": physics._PHYSX_COMMIT,
+        "cuda_runtime_version": 12080,
+        "fixed_dt": 1.0 / 120.0,
+        "steps": 24,
+        "gravity": (0.0, -9.81, 0.0),
+        "bodies": tuple(bodies),
+        "attachments": tuple(attachments),
+        "source_attachments": tuple(source_attachments),
     }
+    parameters.update(overrides)
+    return PhysicsResult(**parameters)
 
 
-def flame(name, emission):
-    return {
-        "name": name,
-        "type": "flame",
-        "position": [0.0, 1.0, 0.0],
-        "axis": [0.0, 1.0, 0.0],
-        "height": 1.0,
-        "radius_start": 0.4,
-        "radius_end": 0.1,
-        "emission_start": list(emission),
-        "emission_end": list(emission),
-        "extinction": 1.0,
-        "density_scale": 0.5,
-        "turbulence": 0.5,
-        "noise_scale": 3.0,
-        "seed": 909,
-    }
+def body_state(
+    name="body",
+    *,
+    category="part",
+    initial_position=(0.0, 0.0, 0.0),
+    position=(0.0, 0.1, 0.0),
+    rotation=(0.0, 0.0, 0.0, 1.0),
+    linear_velocity=(0.0, 1.0, 0.0),
+    angular_velocity=(0.0, 0.1, 0.0),
+    sleeping=False,
+):
+    return BodyState(
+        name=name,
+        category=category,
+        initial_position=initial_position,
+        initial_rotation=(0.0, 0.0, 0.0, 1.0),
+        position=position,
+        rotation=rotation,
+        linear_velocity=linear_velocity,
+        angular_velocity=angular_velocity,
+        sleeping=sleeping,
+    )
 
 
-def valid_documents(checker):
-    materials = [
-        {"name": "stone", "type": "lambertian", "base_color": [0.1, 0.1, 0.1]},
-        {"name": "oracle_water", "type": "water", "roughness": 0.1, "ior": 1.333, "absorption": [0.6, 0.2, 0.05]},
-        {"name": "frost_ice", "type": "metal", "base_color": [0.65, 0.82, 0.95], "roughness": 0.42},
-        {"name": "shell_dark_metal", "type": "metal", "base_color": [0.2, 0.2, 0.2], "roughness": 0.5},
-        {"name": "shell_inner_gold", "type": "metal", "base_color": [0.9, 0.5, 0.1], "roughness": 0.2},
-        {"name": "mechanism_gold", "type": "metal", "base_color": [0.8, 0.4, 0.1], "roughness": 0.2},
-        {"name": "mechanism_copper", "type": "metal", "base_color": [0.7, 0.2, 0.05], "roughness": 0.25},
-        {"name": "spark_emitter", "type": "emitter", "emission": [20.0, 5.0, 0.2]},
-        {"name": "rune_emitter", "type": "emitter", "emission": [0.1, 1.0, 4.0]},
+def test_cover_factory_owns_the_fixed_physx_capture_contract():
+    world = COVER.create_physics_world(device=3)
+
+    assert world.device == 3
+    assert world.seed == COVER.SEED == 909
+    assert world.steps == COVER.STEPS == 24
+    assert math.isclose(world.fixed_dt, COVER.FIXED_DT, rel_tol=0.0, abs_tol=1.0e-15)
+    assert world.gravity == (0.0, -9.81, 0.0)
+    assert world.scene_name == "lava-temple-oracle"
+
+
+@pytest.mark.parametrize(
+    "parameters, message",
+    [
+        ({"device": -1}, "device"),
+        ({"seed": -1}, "seed"),
+        ({"seed": 1 << 64}, "seed"),
+        ({"fixed_dt": 0.0}, "fixed_dt"),
+        ({"steps": 0}, "steps"),
+        ({"gravity": (0.0, float("inf"), 0.0)}, "gravity"),
+        ({"scene_name": " "}, "scene_name"),
+    ],
+)
+def test_world_rejects_invalid_core_parameters(parameters, message):
+    with pytest.raises(ValueError, match=message):
+        make_world(**parameters)
+
+
+def test_material_body_shape_and_attachment_parameters_are_checked():
+    world = make_world()
+
+    with pytest.raises(ValueError, match="friction"):
+        world.material("negative", static_friction=-0.1,
+                       dynamic_friction=0.2, restitution=0.0)
+    with pytest.raises(ValueError, match="restitution"):
+        world.material("bouncy", static_friction=0.1,
+                       dynamic_friction=0.1, restitution=1.01)
+
+    contact = contact_material(world)
+    with pytest.raises(ValueError, match="duplicate PhysX material"):
+        contact_material(world)
+    with pytest.raises(ValueError, match="density"):
+        world.rigid_body("zero-density", category="part", position=(0.0, 0.0, 0.0),
+                         density=0.0)
+    with pytest.raises(ValueError, match="zero quaternion"):
+        world.rigid_body("zero-rotation", category="part", position=(0.0, 0.0, 0.0),
+                         rotation=(0.0, 0.0, 0.0, 0.0))
+    with pytest.raises(ValueError, match="solver iteration"):
+        world.rigid_body("bad-solver", category="part", position=(0.0, 0.0, 0.0),
+                         solver_iterations=(0, 2))
+
+    body = world.rigid_body("valid", category="part", position=(0.0, 1.0, 0.0))
+    with pytest.raises(ValueError, match="half_extents"):
+        body.box((1.0, 0.0, 1.0), contact)
+    with pytest.raises(ValueError, match="renderer material"):
+        body.attach_sphere("missing-material", (0.0, 0.0, 0.0), 0.2, None)
+    with pytest.raises(ValueError, match="renderer mesh"):
+        body.attach_mesh("missing-mesh", None, material=object())
+
+
+def test_contact_materials_cannot_cross_physics_worlds():
+    first = make_world(scene_name="first")
+    second = make_world(scene_name="second")
+    foreign = contact_material(first)
+    local = contact_material(second)
+
+    with pytest.raises(ValueError, match="different PhysicsWorld"):
+        second.static_plane("ground", material=foreign)
+
+    body = second.rigid_body("body", category="part", position=(0.0, 1.0, 0.0))
+    with pytest.raises(ValueError, match="different PhysicsWorld"):
+        body.sphere(0.25, foreign)
+
+    body.sphere(0.25, local)
+
+
+def test_request_requires_material_body_and_collision_shape_without_a_worker():
+    empty = make_world()
+    with pytest.raises(PhysicsError, match="contact material"):
+        empty._encode(empty.seed)
+
+    no_body = make_world()
+    contact_material(no_body)
+    with pytest.raises(PhysicsError, match="rigid body"):
+        no_body._encode(no_body.seed)
+
+    no_shape = make_world()
+    contact_material(no_shape)
+    no_shape.rigid_body("body", category="part", position=(0.0, 1.0, 0.0))
+    with pytest.raises(PhysicsError, match="no collision shape"):
+        no_shape._encode(no_shape.seed)
+
+
+def typed_attachment_result():
+    world = make_world()
+    contact = contact_material(world)
+    body = world.rigid_body("body", category="part", position=(0.0, 1.0, 0.0))
+    body.box((0.5, 0.5, 0.5), contact)
+
+    renderer_material = object()
+    renderer_mesh = object()
+    body.attach_sphere("sphere", (0.0, 0.0, 0.0), 0.5, renderer_material)
+    body.attach_rectangle("rectangle", (-1.0, 0.0, 1.0),
+                          (-1.0, 0.0, -1.0), (1.0, 0.0, -1.0),
+                          renderer_material)
+    body.attach_cylinder("cylinder", (0.0, 0.0, 0.0),
+                         (0.0, 1.0, 0.0), 2.0, 0.25,
+                         renderer_material)
+    body.attach_disk("disk", (0.0, 0.0, 0.0),
+                     (0.0, 1.0, 0.0), 0.75, renderer_material)
+    body.attach_mesh("mesh", renderer_mesh, local_translate=(0.0, -0.5, 0.0),
+                     scale=(0.7, 0.7, 0.7), material=renderer_material)
+
+    attachments = (
+        physics._BakedAttachment(0, 0, 1, (1.0, 2.0, 3.0, 0.5)),
+        physics._BakedAttachment(
+            1, 0, 2,
+            (-1.0, 0.0, 1.0, -1.0, 0.0, -1.0, 1.0, 0.0, -1.0),
+        ),
+        physics._BakedAttachment(
+            2, 0, 3, (0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 2.0, 0.25)
+        ),
+        physics._BakedAttachment(3, 0, 4, (0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.75)),
+        physics._BakedAttachment(
+            4, 0, 5, (4.0, 5.0, 6.0, 10.0, 20.0, 30.0, 0.7, 0.7, 0.7)
+        ),
+    )
+    result = make_result(
+        bodies=(body_state(position=(0.0, 1.0, 0.0)),),
+        attachments=attachments,
+        source_attachments=world._source_attachments(),
+    )
+    return result, renderer_material, renderer_mesh
+
+
+class RecordingRenderer:
+    def __init__(self):
+        self.objects = []
+
+    def object(self, **parameters):
+        self.objects.append(parameters)
+        return parameters["name"]
+
+
+def test_typed_result_applies_every_attachment_without_serializing_handles():
+    result, renderer_material, renderer_mesh = typed_attachment_result()
+    renderer = RecordingRenderer()
+
+    assert result.apply_to(renderer) is renderer
+    assert [item["type"] for item in renderer.objects] == [
+        "sphere", "rectangle", "cylinder", "disk", "mesh"
     ]
-    objects = [
-        rectangle("temple_floor_left"),
-        rectangle("temple_back_wall"),
-        rectangle("roof_left_slab"),
-        rectangle("roof_back_slab"),
-        rectangle("roof_right_slab"),
-        rectangle("roof_front_fragment"),
-        {"name": "altar_base", "type": "cylinder", "base": [0.0, 0.0, 0.0], "axis": [0.0, 1.0, 0.0], "height": 1.0, "radius": 1.0, "material": "stone"},
-        {"name": "altar_lower", "type": "cylinder", "base": [0.0, 0.0, 0.0], "axis": [0.0, 1.0, 0.0], "height": 0.5, "radius": 1.2, "material": "stone"},
-        {"name": "altar_upper", "type": "cylinder", "base": [0.0, 0.5, 0.0], "axis": [0.0, 1.0, 0.0], "height": 0.5, "radius": 1.0, "material": "stone"},
-        {"name": "altar_bowl", "type": "disk", "center": [0.0, 1.0, 0.0], "normal": [0.0, 1.0, 0.0], "radius": 1.0, "material": "stone"},
-        rectangle("pool_floor_shallow"),
-        rectangle("pool_floor_deep"),
-        rectangle("pool_depth_riser"),
-        rectangle("pool_left_wall"),
-        rectangle("pool_right_wall"),
-        rectangle("pool_back_wall"),
-        rectangle("pool_front_wall"),
-        {
-            "name": "pool_water",
-            "type": "water_surface",
-            "center": [5.0, 0.5, -2.0],
-            "size": [4.0, 3.0],
-            "material": "oracle_water",
-            "waves": [
-                {"direction": [1.0, 0.0], "amplitude": 0.03, "wavelength": 2.0, "phase_radians": 0.0},
-                {"direction": [0.0, 1.0], "amplitude": 0.02, "wavelength": 1.0, "phase_radians": 1.0},
-                {"direction": [0.7, 0.7], "amplitude": 0.01, "wavelength": 0.5, "phase_radians": 2.0},
-            ],
-        },
+    assert [item["name"] for item in renderer.objects] == [
+        "sphere", "rectangle", "cylinder", "disk", "mesh"
     ]
-    for index in range(8):
-        objects.append({"name": "column_shaft_{:02d}".format(index), "type": "cylinder", "base": [-4.0 + index, 0.0, -3.0], "axis": [0.0, 1.0, 0.0], "height": 8.0, "radius": 0.2, "material": "stone"})
-    for index in range(16):
-        objects.append({"name": "rune_stroke_{:02d}".format(index), "type": "cylinder", "base": [-5.0 + 0.5 * index, 2.0, -4.0], "axis": [0.0, 1.0, 0.0], "height": 0.5, "radius": 0.02, "material": "rune_emitter"})
-    for index in range(12):
-        frost = sphere(
-            "frost_crystal_{:02d}".format(index),
-            [-5.0 + index, 7.0, -3.0],
-            "frost_ice",
-        )
-        frost["radius"] = 0.11 + 0.01 * (index % 10)
-        objects.append(frost)
-    for index in range(24):
-        objects.append(rectangle("shell_outer_{:02d}".format(index), "shell_dark_metal"))
-        objects.append(rectangle("shell_inner_{:02d}".format(index), "shell_inner_gold"))
-    for index in range(2):
-        objects.append(sphere("visor_panel_{:02d}".format(index), [0.0, 5.0, 0.0], "mechanism_gold"))
-    for index in range(2):
-        objects.append(sphere("eye_{:02d}".format(index), [0.0, 5.0, 0.0], "mechanism_gold"))
-    for index in range(4):
-        objects.append(sphere("limb_{:02d}".format(index), [0.0, 5.0, 0.0], "mechanism_gold"))
-    for index in range(2):
-        objects.append(sphere("antenna_{:02d}".format(index), [0.0, 5.0, 0.0], "mechanism_gold"))
-    objects.append(sphere("antenna_tip", [0.0, 5.0, 0.0], "mechanism_gold"))
-    for index in range(6):
-        objects.append(sphere("gear_{:02d}".format(index), [0.0, 5.0, 0.0], "mechanism_gold"))
-    for index in range(29):
-        objects.append(sphere("mechanism_{:02d}".format(index), [0.0, 5.0, 0.0], "mechanism_gold"))
-    for index in range(12):
-        objects.append(sphere("roof_fragment_{:02d}".format(index), [0.0, 5.0, 0.0], "mechanism_gold"))
-    for index in range(48):
-        objects.append(sphere("spark_{:02d}".format(index), [0.0, 5.0, 0.0], "spark_emitter"))
-
-    lights = [
-        {"name": "dawn_directional", "type": "directional", "direction": [0.0, 0.8, 0.6], "irradiance": [1.0, 1.3, 2.0]},
-        flame("altar_white_core", [40.0, 35.0, 25.0]),
-        flame("altar_main_flame", [30.0, 8.0, 0.5]),
-        flame("altar_side_tongue", [20.0, 4.0, 0.1]),
-        flame("smoke_lower", [0.001, 0.001, 0.001]),
-        flame("smoke_upper", [0.001, 0.001, 0.001]),
-        flame("dawn_godray", [0.01, 0.02, 0.05]),
-    ]
-    for index in range(4):
-        lights.append(
-            {
-                "name": "rune_point_{:02d}".format(index),
-                "type": "point",
-                "position": [-5.0 + index * 3.0, 2.0, -4.0],
-                "intensity": [0.2, 1.0, 3.0],
-            }
-        )
-    scene = {
-        "schema_version": 6,
-        "integrator": {"direct_light_sampling": "importance", "clamp_direct": 64.0, "clamp_indirect": 16.0},
-        "camera": {"look_from": [12.0, 7.0, 16.0], "look_at": [0.0, 4.0, 0.0], "up": [0.0, 1.0, 0.0], "vfov": 35.0, "aperture": 0.0, "focus_distance": 20.0},
-        "background": {"type": "constant", "color": [0.0, 0.0, 0.0], "exposure": 0.0},
-        "render": {"width": 3840, "height": 2160, "spp": 2048, "max_depth": 12, "seed": 909, "denoise": True},
-        "textures": [],
-        "materials": materials,
-        "meshes": [],
-        "objects": objects,
-        "lights": lights,
-    }
-
-    actors = []
-    actor_index = 0
-    for category, count in checker.ACTOR_CATEGORIES:
-        for category_index in range(count):
-            quadrant = actor_index % 4
-            dx = 0.2 if quadrant in (0, 1) else -0.2
-            dz = 0.2 if quadrant in (0, 2) else -0.2
-            actors.append(
-                {
-                    "name": "{}_{:02d}".format(category, category_index),
-                    "category": category,
-                    "initial_position": [0.0, 5.0, 0.0],
-                    "position": [dx, 5.1, dz],
-                    "rotation_xyzw": [0.0, 0.0, 0.0, 1.0],
-                    "linear_velocity": [dx * 10.0, 2.0, dz * 10.0],
-                    "angular_velocity": [0.1, 0.2, 0.3],
-                    "sleeping": False,
-                }
-            )
-            actor_index += 1
-    metadata = {
-        "schema_version": 1,
-        "generator": checker.GENERATOR,
-        "backend": {
-            "name": "NVIDIA PhysX",
-            "mode": "gpu",
-            "physx_version": "5.8.0",
-            "physx_commit": checker.PHYSX_COMMIT,
-            "device_ordinal": 0,
-            "device_name": "Synthetic GPU",
-            "cuda_context_valid": True,
-            "cpu_fallback": False,
-        },
-        "simulation": {
-            "seed": 909,
-            "fixed_dt": 0.008333,
-            "fixed_dt_numerator": 1,
-            "fixed_dt_denominator": 120,
-            "steps": 24,
-            "capture_seconds": 0.2,
-            "gravity": [0.0, -9.81, 0.0],
-            "broad_phase": "gpu",
-            "solver": "tgs",
-            "flags": {"gpu_dynamics": True, "pcm": True, "stabilization": True, "enhanced_determinism": False},
-            "determinism_limitation": "enhanced_determinism_unsupported_on_gpu",
-        },
-        "geometry": {
-            **checker.EXPECTED_GEOMETRY,
-            "actor_order": [
-                {"category": category, "count": count}
-                for category, count in checker.ACTOR_CATEGORIES
-            ],
-        },
-        "scene_features": dict(checker.EXPECTED_SCENE_FEATURES),
-        "contract": {
-            "dynamic_center_bounds": {"min": [-12.0, -0.2, -10.0], "max": [12.0, 15.0, 8.0]},
-            "minimum_radial_displacement": 0.08,
-            "minimum_moving_dynamic_actors": 120,
-        },
-        "actors": actors,
-        "results": {
-            "sleeping_dynamic_actors": 0,
-            "moving_dynamic_actors": 130,
-            "actors_beyond_minimum_radial_displacement": 130,
-            "rotating_dynamic_actors": 130,
-            "occupied_explosion_quadrants": 4,
-            "maximum_upward_displacement": 0.1,
-        },
-    }
-    return scene, metadata
-
-
-def test_synthetic_cover_satisfies_contract():
-    checker = load_checker()
-    scene, metadata = valid_documents(checker)
-    summary = checker.validate(scene, metadata)
-    assert summary["actors"] == 130
-    assert summary["moving"] == 130
-    assert summary["flames"] == 6
+    assert all(item["material"] is renderer_material for item in renderer.objects)
+    assert renderer.objects[0]["center"] == (1.0, 2.0, 3.0)
+    assert renderer.objects[4]["mesh"] is renderer_mesh
+    assert renderer.objects[4]["translate"] == (4.0, 5.0, 6.0)
+    assert renderer.objects[4]["rotate_degrees"] == (10.0, 20.0, 30.0)
+    assert renderer.objects[4]["scale"] == (0.7, 0.7, 0.7)
 
 
 @pytest.mark.parametrize(
     "mutation, message",
     [
-        (lambda scene, metadata: metadata["backend"].update(mode="cpu"), "CPU PhysX"),
-        (lambda scene, metadata: metadata["simulation"].update(steps=25), "step count"),
-        (lambda scene, metadata: metadata["actors"][0].update(sleeping=True), "zero sleeping"),
-        (lambda scene, metadata: metadata["actors"].reverse(), "category counts/order"),
-        (lambda scene, metadata: scene.update(meshes=[{"name": "forbidden", "path": "asset.obj"}]), "must not use meshes"),
-        (lambda scene, metadata: scene["lights"].pop(), "light names/types/order"),
+        (
+            lambda result: setattr(result, "_attachments", result._attachments[:-1]),
+            "attachment count",
+        ),
+        (
+            lambda result: setattr(
+                result,
+                "_attachments",
+                (replace(result._attachments[0], kind=2),) + result._attachments[1:],
+            ),
+            "changed an attachment type",
+        ),
+        (
+            lambda result: setattr(
+                result,
+                "_attachments",
+                (result._attachments[0], replace(result._attachments[1], index=0))
+                + result._attachments[2:],
+            ),
+            "invalid attachment index",
+        ),
+        (
+            lambda result: setattr(
+                result,
+                "_attachments",
+                (replace(result._attachments[0], body_index=1),)
+                + result._attachments[1:],
+            ),
+            "invalid attachment body index",
+        ),
+        (
+            lambda result: setattr(
+                result,
+                "bodies",
+                (replace(result.bodies[0], rotation=(0.0, 0.0, 0.0, 2.0)),),
+            ),
+            "non-unit rotation",
+        ),
     ],
 )
-def test_contract_rejects_semantic_mutations(mutation, message):
-    checker = load_checker()
-    scene, metadata = valid_documents(checker)
-    mutation(scene, metadata)
-    with pytest.raises(checker.ContractError, match=message):
-        checker.validate(scene, metadata)
+def test_result_rejects_broken_attachment_and_pose_contracts(mutation, message):
+    result, _, _ = typed_attachment_result()
+    mutation(result)
+
+    with pytest.raises(PhysicsError, match=message):
+        result.validate()
 
 
 @pytest.mark.parametrize(
-    "payload, message",
+    "attribute, value, message",
     [
-        ('{"value": -0.000000}', "negative zero"),
-        ('{"value": 0.1234567}', "more than six fractional digits"),
-        ('{"value": NaN}', "non-finite JSON constant"),
-        ('{"value": 1e999}', "must be finite"),
+        ("backend", "cpu", "CPU fallback"),
+        ("physx_commit", "wrong-revision", "pinned 5.8.0"),
+        ("cuda_runtime_version", 13030, "CUDA 12.8"),
+        ("device_name", "", "CUDA device"),
     ],
 )
-def test_json_loader_rejects_noncanonical_numbers(tmp_path, payload, message):
-    checker = load_checker()
-    document = tmp_path / "bad.json"
-    document.write_text(payload, encoding="utf-8")
-    with pytest.raises(checker.ContractError, match=message):
-        checker.load_json(document)
+def test_result_rejects_wrong_gpu_worker_identity(attribute, value, message):
+    result, _, _ = typed_attachment_result()
+    setattr(result, attribute, value)
+
+    with pytest.raises(PhysicsError, match=message):
+        result.validate()
+
+
+def cover_bodies():
+    result = []
+    for index in range(130):
+        quadrant = index % 4
+        x = 0.2 if quadrant in (0, 1) else -0.2
+        z = 0.2 if quadrant in (0, 2) else -0.2
+        result.append(body_state(
+            f"cover_{index:03d}",
+            initial_position=(0.0, 5.0, 0.0),
+            position=(x, 5.1, z),
+            linear_velocity=(x * 10.0, 2.0, z * 10.0),
+            angular_velocity=(0.1, 0.2, 0.3),
+        ))
+    return tuple(result)
+
+
+def cover_result(bodies=None):
+    return make_result(
+        scene_name="lava-temple-oracle",
+        seed=COVER.SEED,
+        fixed_dt=COVER.FIXED_DT,
+        steps=COVER.STEPS,
+        bodies=cover_bodies() if bodies is None else bodies,
+    )
+
+
+def drop_one_body(bodies):
+    return bodies[:-1]
+
+
+def make_one_body_sleep(bodies):
+    return (replace(bodies[0], sleeping=True),) + bodies[1:]
+
+
+def move_one_body_out_of_bounds(bodies):
+    return (replace(bodies[0], position=(12.01, 5.1, 0.2)),) + bodies[1:]
+
+
+def fall_below_motion_thresholds(bodies):
+    modified = list(bodies)
+    for index in range(11):
+        modified[index] = replace(
+            modified[index],
+            position=modified[index].initial_position,
+            linear_velocity=(0.0, 0.0, 0.0),
+            angular_velocity=(0.0, 0.0, 0.0),
+        )
+    return tuple(modified)
+
+
+def remove_one_explosion_quadrant(bodies):
+    modified = []
+    for body in bodies:
+        x, y, z = body.position
+        if x < 0.0 and z < 0.0:
+            body = replace(body, position=(-x, y, -z))
+        modified.append(body)
+    return tuple(modified)
+
+
+def remove_upward_displacement(bodies):
+    return tuple(replace(
+        body,
+        position=(body.position[0], body.initial_position[1], body.position[2]),
+    ) for body in bodies)
+
+
+def test_cover_validator_accepts_a_representative_130_body_explosion():
+    result = cover_result()
+
+    result.validate()
+    assert COVER._validate(result)
+    PhysicsWorld._accept(result, COVER._validate)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        drop_one_body,
+        make_one_body_sleep,
+        move_one_body_out_of_bounds,
+        fall_below_motion_thresholds,
+        remove_one_explosion_quadrant,
+        remove_upward_displacement,
+    ],
+    ids=(
+        "body-count",
+        "sleeping",
+        "bounds",
+        "motion-thresholds",
+        "quadrant-coverage",
+        "upward-displacement",
+    ),
+)
+def test_cover_validator_rejects_representative_invalid_states(mutation):
+    rejected = cover_result(mutation(cover_bodies()))
+
+    rejected.validate()
+    assert not COVER._validate(rejected)
+    with pytest.raises(PhysicsError, match="scene-specific"):
+        PhysicsWorld._accept(rejected, COVER._validate)

@@ -246,7 +246,7 @@ static __forceinline__ __device__ ContinuationResolution resolve_continuation(
 
 ## 6. Firefly 与两级贡献钳位
 
-低概率路径若同时带有很大的 $f_s/p$、俄罗斯轮盘补偿或尖锐间接高光，会在有限样本图像中形成少量极亮像素，即 firefly。仅增加 spp 能按统计规律缓慢降低它们，但布光预览往往更需要一个可控的稳定输出。因此 schema v6 提供 `clamp_direct` 与 `clamp_indirect`；默认分别是 64 和 16，命令行可用 `--clamp-direct`、`--clamp-indirect` 覆盖，0 表示关闭。
+低概率路径若同时带有很大的 $f_s/p$、俄罗斯轮盘补偿或尖锐间接高光，会在有限样本图像中形成少量极亮像素，即 firefly。仅增加 spp 能按统计规律缓慢降低它们，但布光预览往往更需要一个可控的稳定输出。因此 `Renderer.integrator()` 提供 `clamp_direct` 与 `clamp_indirect`；默认分别是 64 和 16，`Renderer.render()` 也可逐次覆盖，0 表示关闭。
 
 对已经乘过 throughput、可见性、介质透射和 MIS 权重的一份完整 RGB 路径贡献 $\mathbf C$，令
 
@@ -289,7 +289,7 @@ static __forceinline__ __device__ float3 clamp_path_contribution(
 
 这个顺序很重要：钳位发生在每像素样本平均、PFM 下载和 OptiX Denoiser 之前，所以 PFM 不会绕过它。stats 分别记录 direct/indirect 的有效阈值和实际触发次数。阈值为 0 时 helper 精确返回输入，不消耗随机数；正无穷通道按最大 RGB 归一化的极限映射到阈值，避免产生无穷乘零。没有 delta 灯且各独立项都不需要钳位时，路径还保留原来的分组加法树，便于旧场景逐字节比较。
 
-钳位把长尾样本压小，必然改变期望，因此是明确的**有偏展示策略**，不能写成重要性采样或 Denoiser 的数学等价物。所有能量、均值、MSE 与收敛实验都必须使用 `--clamp-direct 0 --clamp-indirect 0`；只有这时下面关于 Monte Carlo 估计量的无偏讨论才不包含该额外偏差。
+钳位把长尾样本压小，必然改变期望，因此是明确的**有偏展示策略**，不能写成重要性采样或 Denoiser 的数学等价物。所有能量、均值、MSE 与收敛实验都必须调用 `render(clamp_direct=0, clamp_indirect=0, ...)`；只有这时下面关于 Monte Carlo 估计量的无偏讨论才不包含该额外偏差。
 
 ## 7. “无偏”需要谨慎使用
 
