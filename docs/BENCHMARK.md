@@ -10,7 +10,7 @@
 
 | 场景 | BVH build (ms) | Path trace (ms) | Denoise (ms) | Total (ms) | Traced rays | G rays/s | Observed peak (MiB) | Tracked peak (MiB) |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| material-cathedral | 3.278 | 3,840.720 | 11.790 | 10,068.360 | 5,696,463,300 | 1.483 | 1,774.3 | 494.3 |
+| material-cathedral | 3.034 | 6,237.360 | 16.234 | 6,577.212 | 5,696,721,189 | 0.913 | 1,774.3 | 494.3 |
 | neon-koi | 2.856 | 3,114.284 | 11.513 | 9,317.566 | 4,844,789,609 | 1.556 | 1,786.3 | 506.3 |
 | celestial-archive | 2.744 | 2,115.082 | 11.435 | 8,239.103 | 3,368,104,545 | 1.592 | 1,790.3 | 506.3 |
 | reflector-laboratory | 2.769 | 3,241.696 | 11.627 | 9,354.175 | 4,471,049,788 | 1.379 | 1,774.3 | 494.3 |
@@ -104,7 +104,7 @@ rotating、四个水平象限全部占用、0 个 sleeping dynamic actors，且
 
 ## 定向 GPU fixture
 
-综合 GPU fixture 使用 64×64、1 spp、depth 6、seed 1 和无降噪输出，覆盖带 UV/平滑法线/alpha 的 mesh、两个共享 GAS 且使用不同变换/材质的实例，以及 custom primitives。其 RTX 5090 SHA-256 为 `8218a4c77997e6c581a846b32a75f15e78238c344ae5a8b9f3d6090e5b4ed990`；`acceptance.sh` 在 Release smoke 后调用 `check_mesh_smoke.py` 验证它。
+综合 GPU fixture 使用 64×64、1 spp、depth 6、seed 1 和无降噪输出，覆盖带 UV/平滑法线/alpha 的 mesh、两个共享 GAS 且使用不同变换/材质的实例，以及 custom primitives。其 RTX 5090 SHA-256 为 `8b287db4976f07f6dc401e8fe67c3cd8f678e900c274eec2286e03d2e06fd965`；`acceptance.sh` 在 Release smoke 后调用 `check_mesh_smoke.py` 验证它。
 
 多材质 mesh fixture 使用 64×64、1 spp、depth 4、seed 211 和无降噪输出，
 把同一份六三角形 OBJ 的 `RedPanel`、`ScreenPanel`、`MetalPanel` 显式绑定

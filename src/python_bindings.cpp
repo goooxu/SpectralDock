@@ -47,7 +47,15 @@ MaterialType material_type(const std::string& value) {
   if (value == "dielectric") return MaterialType::Dielectric;
   if (value == "emitter") return MaterialType::Emitter;
   if (value == "water") return MaterialType::Water;
+  if (value == "pbr") return MaterialType::Pbr;
   throw std::invalid_argument("unsupported material type: " + value);
+}
+
+TextureWrap texture_wrap(const std::string& value) {
+  if (value == "clamp_to_edge") return TextureWrap::ClampToEdge;
+  if (value == "repeat") return TextureWrap::Repeat;
+  if (value == "mirrored_repeat") return TextureWrap::MirroredRepeat;
+  throw std::invalid_argument("unsupported texture wrap mode: " + value);
 }
 
 DirectLightSampling light_sampling(const std::string& value) {
@@ -213,8 +221,17 @@ PYBIND11_MODULE(_native, module) {
             return self.add_constant_texture(name, vec3(color));
           },
           py::arg("name"), py::arg("color"))
-      .def("add_image_texture", &SceneBuilder::add_image_texture,
-           py::arg("name"), py::arg("path"), py::arg("srgb"))
+      .def(
+          "add_image_texture",
+          [](SceneBuilder& self, const std::string& name,
+             const std::filesystem::path& path, bool srgb,
+             const std::string& wrap_u, const std::string& wrap_v) {
+            return self.add_image_texture(name, path, srgb,
+                                          texture_wrap(wrap_u),
+                                          texture_wrap(wrap_v));
+          },
+          py::arg("name"), py::arg("path"), py::arg("srgb"),
+          py::arg("wrap_u"), py::arg("wrap_v"))
       .def(
           "add_material",
           [](SceneBuilder& self, const std::string& name,
@@ -229,6 +246,24 @@ PYBIND11_MODULE(_native, module) {
           py::arg("name"), py::arg("type"), py::arg("texture_id"),
           py::arg("base_color"), py::arg("emission"), py::arg("roughness"),
           py::arg("ior"), py::arg("absorption"))
+      .def(
+          "add_pbr_material",
+          [](SceneBuilder& self, const std::string& name,
+             std::int32_t base_color_texture_id,
+             std::int32_t metallic_roughness_texture_id,
+             std::int32_t normal_texture_id,
+             const std::array<float, 3>& base_color, float metallic,
+             float roughness, float normal_scale) {
+            return self.add_pbr_material(
+                name, base_color_texture_id,
+                metallic_roughness_texture_id, normal_texture_id,
+                vec3(base_color), metallic, roughness, normal_scale);
+          },
+          py::arg("name"), py::arg("base_color_texture_id"),
+          py::arg("metallic_roughness_texture_id"),
+          py::arg("normal_texture_id"), py::arg("base_color"),
+          py::arg("metallic"), py::arg("roughness"),
+          py::arg("normal_scale"))
       .def("add_mesh", &SceneBuilder::add_mesh, py::arg("name"),
            py::arg("path"),
            py::arg("material_bindings") =

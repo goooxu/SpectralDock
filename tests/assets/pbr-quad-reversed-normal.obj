@@ -1,0 +1,15 @@
+# Same geometry and UVs as pbr-quad.obj with intentionally reversed vertex
+# normals. The loader/normal-map consumer must preserve the authored UV axes
+# while orienting the shading normal to the geometric hemisphere.
+v -2.0 -2.0 0.0
+v  2.0 -2.0 0.0
+v  2.0  2.0 0.0
+v -2.0  2.0 0.0
+vt 0.0 0.0
+vt 1.0 0.0
+vt 1.0 1.0
+vt 0.0 1.0
+vn 0.0 0.0 -1.0
+s 1
+f 1/1/1 2/2/1 3/3/1
+f 1/1/1 3/3/1 4/4/1

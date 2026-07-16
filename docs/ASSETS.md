@@ -7,12 +7,16 @@
 | 代码、脚本、Python 场景程序、C++ worker、文档、SVG、测试 fixture、图像与 Sparky manifest、gallery stats 与物理 sidecar | Apache-2.0 |
 | capsule mascot、Sparky OBJ/MTL/albedo、`model-manifest.json`、四张 imagegen PNG、程序化 HDR 环境和正式 gallery PNG | CC0-1.0 |
 | third_party/tinyobjloader 下的 vendored 文件 | MIT |
+| third_party/mikktspace 下 vendored 的 `mikktspace.c`/`.h` | zlib-style license |
 
 CC0 只覆盖 assets/examples/models/CC0-1.0.txt 逐项列出的二十个文件。
 tools/generate_mascot.py、tools/generate_hdr_environment.py、
 scenes/kinetic-foundry.py、scenes/lava-temple-oracle.py、
 python/spectraldock/physics.py 与 tools/physx_worker.cpp 均为 Apache-2.0，
 不属于 CC0。PhysX 本身是仓库外部依赖，适用其 BSD-3-Clause 许可证。
+MikkTSpace 的 `mikktspace.c`/`.h` 是生成 OBJ face-corner tangent 的
+vendored 第三方源码，不适用仓库级 Apache-2.0；两个文件顶部保留了
+完整 zlib-style 许可声明。
 
 所有运行时素材都位于仓库内的 `assets/examples/`，构建和运行不依赖外部素材目录。
 

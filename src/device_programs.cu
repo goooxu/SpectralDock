@@ -693,11 +693,6 @@ static __forceinline__ __device__ T* unpack_pointer() {
   return reinterpret_cast<T*>(value);
 }
 
-static __forceinline__ __device__ float srgb_channel_to_linear(float c) {
-  return c <= 0.04045f ? c / 12.92f
-                       : powf((c + 0.055f) / 1.055f, 2.4f);
-}
-
 static __forceinline__ __device__ float4 sample_texture(
     int texture_index, float2 uv) {
   if (texture_index < 0 ||
@@ -709,22 +704,29 @@ static __forceinline__ __device__ float4 sample_texture(
   if (texture.object == 0) {
     return make_float4(1.0f, 1.0f, 1.0f, 1.0f);
   }
-  const float u = fminf(fmaxf(uv.x, 0.0f), 1.0f);
-  const float v = 1.0f - fminf(fmaxf(uv.y, 0.0f), 1.0f);
-  float4 value =
-      tex2D<float4>(static_cast<cudaTextureObject_t>(texture.object), u, v);
-  if ((texture.flags & spectraldock::kTextureSrgb) != 0u) {
-    value.x = srgb_channel_to_linear(value.x);
-    value.y = srgb_channel_to_linear(value.y);
-    value.z = srgb_channel_to_linear(value.z);
-  }
-  return value;
+  // Addressing and sRGB decoding are properties of the CUDA texture object.
+  // In particular, do not clamp here: doing so would defeat repeat and
+  // mirrored-repeat samplers. Image row zero is the top row, hence the v flip.
+  return tex2D<float4>(
+      static_cast<cudaTextureObject_t>(texture.object), uv.x, 1.0f - uv.y);
 }
 
 static __forceinline__ __device__ float3 material_color(
     const MaterialData& material, float2 uv) {
   const float4 texel = sample_texture(material.texture_index, uv);
   return mul(material.base_color, f3(texel.x, texel.y, texel.z));
+}
+
+static __forceinline__ __device__ MaterialData resolved_material(
+    MaterialData material, float2 uv) {
+  if (material.type != spectraldock::kMaterialPbr) return material;
+  const float4 metallic_roughness = sample_texture(
+      material.metallic_roughness_texture_index, uv);
+  material.roughness = fminf(fmaxf(
+      material.roughness * metallic_roughness.y, 0.0f), 1.0f);
+  material.metallic = fminf(fmaxf(
+      material.metallic * metallic_roughness.z, 0.0f), 1.0f);
+  return material;
 }
 
 static __forceinline__ __device__ float2 triangle_uv(
@@ -1210,7 +1212,8 @@ static __forceinline__ __device__ float3 object_outward_normal(
 }
 
 static __forceinline__ __device__ float3 object_shading_normal(
-    const HitgroupData& hitgroup, float3 object_point) {
+    const HitgroupData& hitgroup, float3 object_point,
+    const MaterialData* material, float2 uv) {
   const float3 geometric = object_outward_normal(hitgroup, object_point);
   if (hitgroup.geometry.primitive_type != spectraldock::kPrimitiveMesh ||
       (hitgroup.mesh.flags & spectraldock::kMeshHasNormals) == 0u ||
@@ -1234,6 +1237,67 @@ static __forceinline__ __device__ float3 object_shading_normal(
     return geometric;
   }
   float3 shading = mul(interpolated, rsqrtf(interpolated_length2));
+  if (dot3(shading, geometric) < 0.0f) shading = neg(shading);
+
+  if (material == nullptr ||
+      material->type != spectraldock::kMaterialPbr ||
+      material->normal_texture_index < 0 ||
+      (hitgroup.mesh.flags & spectraldock::kMeshHasTangents) == 0u ||
+      hitgroup.mesh.corner_tangents == nullptr) {
+    return shading;
+  }
+
+  unsigned int primitive = 0u;
+  if (!mesh_primitive_index(hitgroup, primitive)) return shading;
+  const unsigned int corner = primitive * 3u;
+  const float4 tangent0 = hitgroup.mesh.corner_tangents[corner];
+  const float4 tangent1 = hitgroup.mesh.corner_tangents[corner + 1u];
+  const float4 tangent2 = hitgroup.mesh.corner_tangents[corner + 2u];
+  const float3 normal0 = hitgroup.mesh.normals[triangle.x];
+  const float3 normal1 = hitgroup.mesh.normals[triangle.y];
+  const float3 normal2 = hitgroup.mesh.normals[triangle.z];
+  const float3 t0 = f3(tangent0.x, tangent0.y, tangent0.z);
+  const float3 t1 = f3(tangent1.x, tangent1.y, tangent1.z);
+  const float3 t2 = f3(tangent2.x, tangent2.y, tangent2.z);
+  const float3 b0 = mul(
+      cross3(normal0, t0), tangent0.w < 0.0f ? -1.0f : 1.0f);
+  const float3 b1 = mul(
+      cross3(normal1, t1), tangent1.w < 0.0f ? -1.0f : 1.0f);
+  const float3 b2 = mul(
+      cross3(normal2, t2), tangent2.w < 0.0f ? -1.0f : 1.0f);
+  const float3 interpolated_tangent = add(
+      add(mul(t0, w.x), mul(t1, w.y)), mul(t2, w.z));
+  const float3 interpolated_bitangent = add(
+      add(mul(b0, w.x), mul(b1, w.y)), mul(b2, w.z));
+  const float3 oriented_interpolated =
+      dot3(interpolated, geometric) < 0.0f
+          ? neg(interpolated) : interpolated;
+  const float4 texel = sample_texture(material->normal_texture_index, uv);
+  const float3 tangent_normal_raw = f3(
+      (2.0f * texel.x - 1.0f) * material->normal_scale,
+      (2.0f * texel.y - 1.0f) * material->normal_scale,
+      2.0f * texel.z - 1.0f);
+  const float tangent_normal_scale = fmaxf(
+      fabsf(tangent_normal_raw.x),
+      fmaxf(fabsf(tangent_normal_raw.y), fabsf(tangent_normal_raw.z)));
+  if (!(tangent_normal_scale > 0.0f) ||
+      !isfinite(tangent_normal_scale)) {
+    return shading;
+  }
+  const float3 tangent_normal =
+      divv(tangent_normal_raw, tangent_normal_scale);
+  // Use MikkTSpace's exact unnormalized interpolated-frame transform.  If an
+  // OBJ's vertex normals oppose its geometric winding, orient only N; T and B
+  // remain the derivatives of the authored UV axes.
+  const float3 mapped = add(
+      add(mul(interpolated_tangent, tangent_normal.x),
+          mul(interpolated_bitangent, tangent_normal.y)),
+      mul(oriented_interpolated, tangent_normal.z));
+  const float mapped_length2 = length2(mapped);
+  if (!(mapped_length2 > 1.0e-20f) || !isfinite(mapped_length2)) {
+    return shading;
+  }
+  shading = mul(mapped, rsqrtf(mapped_length2));
   if (dot3(shading, geometric) < 0.0f) shading = neg(shading);
   return shading;
 }
@@ -1337,6 +1401,45 @@ static __forceinline__ __device__ float3 fresnel_schlick(
   return add(f0, mul(sub(f3(1.0f, 1.0f, 1.0f), f0), x5));
 }
 
+static __forceinline__ __device__ float luminance(float3 value) {
+  return 0.2126f * value.x + 0.7152f * value.y + 0.0722f * value.z;
+}
+
+static __forceinline__ __device__ float3 pbr_diffuse_color(
+    const MaterialData& material, float3 base_color) {
+  const float metallic =
+      fminf(fmaxf(material.metallic, 0.0f), 1.0f);
+  return mul(base_color, 1.0f - metallic);
+}
+
+static __forceinline__ __device__ float3 pbr_f0(
+    const MaterialData& material, float3 base_color) {
+  const float metallic =
+      fminf(fmaxf(material.metallic, 0.0f), 1.0f);
+  return lerp3(f3(0.04f, 0.04f, 0.04f), base_color, metallic);
+}
+
+static __forceinline__ __device__ float pbr_specular_probability(
+    const MaterialData& material, float3 base_color, float3 n, float3 wo) {
+  const float3 diffuse_color = pbr_diffuse_color(material, base_color);
+  // A view-dependent Schlick estimate steers samples toward the grazing
+  // specular lobe. The BSDF value remains the exact per-direction mixture.
+  const float3 view_fresnel = fresnel_schlick(
+      fminf(fmaxf(dot3(n, wo), 0.0f), 1.0f),
+      pbr_f0(material, base_color));
+  const float specular_weight = fmaxf(luminance(view_fresnel), 0.0f);
+  const float diffuse_weight = fmaxf(luminance(mul(
+      diffuse_color,
+      sub(f3(1.0f, 1.0f, 1.0f), view_fresnel))), 0.0f);
+  if (!(diffuse_weight > 0.0f)) return 1.0f;
+  if (!(specular_weight > 0.0f)) return 0.0f;
+  const float probability =
+      specular_weight / (specular_weight + diffuse_weight);
+  // When both lobes carry energy, retain enough samples for each to avoid
+  // unbounded mixture weights at very bright/dark material extremes.
+  return fminf(fmaxf(probability, 0.05f), 0.95f);
+}
+
 static __forceinline__ __device__ float dielectric_fresnel(
     float cos_i, float eta_i, float eta_t, float* cos_t_out = nullptr) {
   cos_i = fminf(fmaxf(cos_i, 0.0f), 1.0f);
@@ -1379,6 +1482,7 @@ static __forceinline__ __device__ bool supports_direct_lighting(
     const MaterialData& material) {
   return material.type == spectraldock::kMaterialLambertian ||
          material.type == spectraldock::kMaterialMetal ||
+         material.type == spectraldock::kMaterialPbr ||
          is_rough_dielectric(material);
 }
 
@@ -1511,6 +1615,57 @@ static __forceinline__ __device__ BsdfEvaluation evaluate_bsdf(
     result.pdf = no_l > 0.0f ? no_l * kInvPi : 0.0f;
     return result;
   }
+  if (material.type == spectraldock::kMaterialPbr) {
+    if (transmitted) return result;
+    const float abs_no_l = fabsf(no_l);
+    const float3 diffuse_color = pbr_diffuse_color(material, base_color);
+    const float3 f0 = pbr_f0(material, base_color);
+    float3 fresnel = fresnel_schlick(
+        fminf(fmaxf(no_v, 0.0f), 1.0f), f0);
+    float3 specular_f_cos = f3(0.0f, 0.0f, 0.0f);
+    float specular_pdf = 0.0f;
+
+    const float half_length2 = length2(add(wo, wi));
+    if (half_length2 > 1.0e-20f && isfinite(half_length2)) {
+      const float3 half_vector = mul(add(wo, wi), rsqrtf(half_length2));
+      const float no_h = abs_dot(n, half_vector);
+      const float vo_h = abs_dot(wo, half_vector);
+      if (no_h > 0.0f && vo_h > 0.0f) {
+        fresnel = fresnel_schlick(vo_h, f0);
+        const float alpha =
+            fmaxf(material.roughness * material.roughness, 0.001f);
+        const float d = ggx_distribution(no_h, alpha);
+        const float g =
+            ggx_g1(no_v, alpha) * ggx_g1(abs_no_l, alpha);
+        // As in the legacy metal branch, multiplication by |ns.wi| cancels
+        // the incident-cosine factor in the microfacet denominator.
+        specular_f_cos = mul(
+            fresnel, d * g / fmaxf(4.0f * no_v, 1.0e-20f));
+        if (no_l > 0.0f) {
+          const float half_pdf = ggx_visible_normal_pdf(
+              n, wo, half_vector, alpha);
+          specular_pdf =
+              half_pdf / fmaxf(4.0f * vo_h, 1.0e-20f);
+        }
+      }
+    }
+
+    // glTF's metallic-roughness BRDF removes Fresnel-reflected energy from
+    // the diffuse term and assigns the remainder to a Lambertian lobe.
+    const float3 diffuse_f_cos = mul(
+        mul(diffuse_color,
+            sub(f3(1.0f, 1.0f, 1.0f), fresnel)),
+        abs_no_l * kInvPi);
+    result.f_cos = add(diffuse_f_cos, specular_f_cos);
+    if (no_l > 0.0f) {
+      const float specular_probability = pbr_specular_probability(
+          material, base_color, n, wo);
+      const float diffuse_pdf = no_l * kInvPi;
+      result.pdf = specular_probability * specular_pdf +
+                   (1.0f - specular_probability) * diffuse_pdf;
+    }
+    return result;
+  }
   if (material.type == spectraldock::kMaterialMetal) {
     if (transmitted) return result;
     const float half_length2 = length2(add(wo, wi));
@@ -1623,6 +1778,34 @@ static __forceinline__ __device__ BsdfSample sample_bsdf(
     const float3 local =
         f3(radius * cosf(phi), radius * sinf(phi), sqrtf(1.0f - r1));
     sample.wi = local_to_world(local, n);
+    const BsdfEvaluation evaluation = evaluate_bsdf(
+        material, base_color, n, geometric_n, wo, sample.wi, 1.0f, 1.0f);
+    sample.pdf = evaluation.pdf;
+    if (sample.pdf > 0.0f) {
+      sample.weight = divv(evaluation.f_cos, sample.pdf);
+      sample.valid = max_component(sample.weight) > 0.0f ? 1 : 0;
+    }
+    sample.delta = 0;
+    return sample;
+  }
+  if (material.type == spectraldock::kMaterialPbr) {
+    const float specular_probability = pbr_specular_probability(
+        material, base_color, n, wo);
+    if (rng.next() < specular_probability) {
+      const float alpha =
+          fmaxf(material.roughness * material.roughness, 0.001f);
+      const float3 half_vector = sample_ggx_vndf(
+          n, wo, alpha, rng.next(), rng.next());
+      sample.wi = normalize3(reflect3(neg(wo), half_vector));
+    } else {
+      const float r1 = rng.next();
+      const float r2 = rng.next();
+      const float radius = sqrtf(r1);
+      const float phi = 2.0f * kPi * r2;
+      const float3 local = f3(
+          radius * cosf(phi), radius * sinf(phi), sqrtf(1.0f - r1));
+      sample.wi = local_to_world(local, n);
+    }
     const BsdfEvaluation evaluation = evaluate_bsdf(
         material, base_color, n, geometric_n, wo, sample.wi, 1.0f, 1.0f);
     sample.pdf = evaluation.pdf;
@@ -2799,7 +2982,8 @@ extern "C" __global__ void __raygen__pathtrace() {
           params.materials == nullptr) {
         break;
       }
-      const MaterialData material = params.materials[hit.material_index];
+      const MaterialData material = resolved_material(
+          params.materials[hit.material_index], hit.uv);
       const float3 base_color = material_color(material, hit.uv);
       const float3 wo = neg(ray_direction);
       if (guide_written == 0) {
@@ -3093,10 +3277,19 @@ extern "C" __global__ void __closesthit__radiance() {
       optixTransformPointFromWorldToObjectSpace(world_point);
   const float3 object_geometric =
       object_outward_normal(*record, object_point);
-  const float3 object_shading =
-      object_shading_normal(*record, object_point);
   const float3 world_outward = normalize3(
       optixTransformNormalFromObjectToWorldSpace(object_geometric));
+  const bool front_face =
+      dot3(world_direction, world_outward) < 0.0f;
+  const int material = hit_material(*record, front_face);
+  const float2 uv = geometry_uv(*record, object_point);
+  const MaterialData* shading_material =
+      material >= 0 && params.materials != nullptr &&
+              static_cast<unsigned int>(material) < params.material_count
+          ? params.materials + material
+          : nullptr;
+  const float3 object_shading = object_shading_normal(
+      *record, object_point, shading_material, uv);
   const float3 transformed_shading =
       optixTransformNormalFromObjectToWorldSpace(object_shading);
   const float transformed_shading_length2 = length2(transformed_shading);
@@ -3107,9 +3300,6 @@ extern "C" __global__ void __closesthit__radiance() {
           : world_outward;
   if (dot3(world_shading, world_outward) < 0.0f)
     world_shading = neg(world_shading);
-  const bool front_face =
-      dot3(world_direction, world_outward) < 0.0f;
-  const int material = hit_material(*record, front_face);
   hit->hit = 1;
   hit->material_index = material;
   hit->light_index = geometry.light_index;
@@ -3121,7 +3311,7 @@ extern "C" __global__ void __closesthit__radiance() {
       front_face ? world_shading : neg(world_shading);
   hit->normal = effective_shading_normal(
       oriented_shading, hit->geometric_normal, neg(world_direction));
-  hit->uv = geometry_uv(*record, object_point);
+  hit->uv = uv;
 }
 
 extern "C" __global__ void __closesthit__shadow() {

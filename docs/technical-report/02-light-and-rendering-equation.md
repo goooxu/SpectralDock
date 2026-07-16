@@ -109,7 +109,7 @@ L_i(\mathbf x,\boldsymbol\omega_i)
 }
 $$
 
-对 Lambert 和 metal，法线下方的 $f_s$ 为零，公式便退化为第 2 节的上半球积分与 $\max(0,\mathbf n\cdot\boldsymbol\omega_i)$。介电质折射方向位于另一侧，必须保留全球积分和绝对余弦。
+对 Lambert、metal 和 PBR，法线下方的 $f_s$ 为零，公式便退化为第 2 节的上半球积分与 $\max(0,\mathbf n\cdot\boldsymbol\omega_i)$。介电质折射方向位于另一侧，必须保留全球积分和绝对余弦。
 
 | 符号 | 含义 |
 |---|---|
@@ -252,7 +252,7 @@ $$
 
 有限灯、HDR 环境和 delta 灯是三个独立 NEE 域。普通表面在有限灯域取一个样本；粗糙 water 在该域确定性地各取一个全局功率样本和均匀索引样本，二者的选灯密度相加为 $q_G+q_U$，不乘 0.5。若绑定表面灯还可由下一条 BSDF 射线命中，direct 与 emitter-hit 再用 $p_L+p_B$ 的 balance 权重分配同一路径；否则两份灯样本独自覆盖有限灯域。环境域仍只取一个方向样本并与 BSDF miss 做 power MIS；point/directional 则逐灯求值且权重为 1。因此普通顶点最多尝试“两份随机域连接 + delta 灯数”，粗糙 water 再多一份有限灯连接；PDF、余弦或遮挡检查仍可提前返回。最后一个表面事件仍计算直接光，之后才停止。
 
-`wo` 对应 $\boldsymbol\omega_o$；各域结果乘当前 $\boldsymbol\beta$ 后才加入 `radiance`。需要拆分时，每份策略贡献独立进入 `accumulate_path_contribution`；没有 delta 灯且各项都不触发 clamp 时，紧邻这段之前的 `preserve_grouped_add` 分支仍使用旧加法树。实现为平滑网格保留一根有效着色法线 $\mathbf n_s^{\mathrm{eff}}$：Lambert/GGX 连续分支的路径权重按 PBRT 风格使用 $f_s|\mathbf n_s^{\mathrm{eff}}\!\cdot\boldsymbol\omega_i|/p_B$。几何法线 $\mathbf n_g$ 仍独立负责真实反射/透射侧、介质栈转换与射线起点偏移。`roughness = 0` 的 dielectric/water 是离散 delta 界面，Fresnel、Snell 方向与侧别全部使用 $\mathbf n_g$，透射权重还包含 $(\eta_i/\eta_t)^2$。无下一跳、无效样本或零吞吐量都会尽早结束路径，避免无贡献追踪。
+`wo` 对应 $\boldsymbol\omega_o$；各域结果乘当前 $\boldsymbol\beta$ 后才加入 `radiance`。需要拆分时，每份策略贡献独立进入 `accumulate_path_contribution`；没有 delta 灯且各项都不触发 clamp 时，紧邻这段之前的 `preserve_grouped_add` 分支仍使用旧加法树。实现为平滑网格保留一根有效着色法线 $\mathbf n_s^{\mathrm{eff}}$：Lambert、PBR 与其他 GGX 连续分支的路径权重按 PBRT 风格使用 $f_s|\mathbf n_s^{\mathrm{eff}}\!\cdot\boldsymbol\omega_i|/p_B$。几何法线 $\mathbf n_g$ 仍独立负责真实反射/透射侧、介质栈转换与射线起点偏移。`roughness = 0` 的 dielectric/water 是离散 delta 界面，Fresnel、Snell 方向与侧别全部使用 $\mathbf n_g$，透射权重还包含 $(\eta_i/\eta_t)^2$。无下一跳、无效样本或零吞吐量都会尽早结束路径，避免无贡献追踪。
 
 下一章先研究方程中的材质项 $f_s$，再讨论如何用随机样本估计整个积分。
 

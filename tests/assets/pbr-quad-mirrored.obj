@@ -1,0 +1,14 @@
+# The same geometry as pbr-quad.obj with the U chart mirrored. MikkTSpace
+# must reverse the tangent/handedness instead of reusing the ordinary chart.
+v -2.0 -2.0 0.0
+v  2.0 -2.0 0.0
+v  2.0  2.0 0.0
+v -2.0  2.0 0.0
+vt 1.0 0.0
+vt 0.0 0.0
+vt 0.0 1.0
+vt 1.0 1.0
+vn 0.0 0.0 1.0
+s 1
+f 1/1/1 2/2/1 3/3/1
+f 1/1/1 3/3/1 4/4/1

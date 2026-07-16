@@ -1,5 +1,5 @@
 {
-  "scene": "scenes/material-cathedral.json",
+  "scene": "material-cathedral",
   "output": "docs/gallery/material-cathedral.png",
   "hardware": {
     "gpu": "NVIDIA GeForce RTX 5090",
@@ -23,14 +23,14 @@
     "clamp_indirect": 16.0
   },
   "timings_ms": {
-    "bvh_build": 3.278143882751465,
-    "render": 3840.72021484375,
-    "denoise": 11.789728164672852,
-    "total": 10068.360094
+    "bvh_build": 3.0342719554901123,
+    "render": 6237.3603515625,
+    "denoise": 16.234464645385742,
+    "total": 6577.212038
   },
   "memory": {
     "peak_device_bytes": 1860501504,
-    "peak_tracked_device_bytes": 518352016
+    "peak_tracked_device_bytes": 518352592
   },
   "geometry": {
     "objects": 15,
@@ -40,12 +40,12 @@
     "gas_count": 13
   },
   "performance": {
-    "traced_rays": 5696463300,
-    "rays_per_second": 1483175805.9293435
+    "traced_rays": 5696721189,
+    "rays_per_second": 913322442.1726626
   },
   "firefly": {
     "direct_clamped_contributions": 0,
-    "indirect_clamped_contributions": 4129
+    "indirect_clamped_contributions": 4168
   },
   "volume": {
     "volume_density_evaluations": 0,

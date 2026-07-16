@@ -27,13 +27,14 @@
 
 ### 材质
 
-- `metal` 是纯 GGX 镜面微表面瓣，$\mathbf F_0$ 直接取自 `base_color`，不是通用 metallic workflow；
-- `metal` 与粗糙 `dielectric`/`water` 都使用 Heitz GGX VNDF；这降低掠射角拒绝方差，但仍是单次散射微表面模型，不含多重散射补偿；
+- `metal` 是纯 GGX 镜面微表面瓣；`pbr` 提供 base-color、packed
+  metallic-roughness 与 tangent-space normal map 的标准混合工作流；
+- `metal`、`pbr` 与粗糙 `dielectric`/`water` 都使用 Heitz GGX VNDF；这降低掠射角拒绝方差，但仍是单次散射微表面模型，不含多重散射补偿；
 - `dielectric` 的 `roughness = 0` 是 delta 界面，非零时是 Walter 单次散射 GGX 反射/透射；无 `water_surface` 的光滑兼容路径固定空气外部介质、使用 Schlick 且没有嵌套与体吸收，含水路径使用精确 Fresnel、严格介质栈与 RGB Beer；
-- 连续 Lambert/GGX 使用有效着色法线 $\mathbf n_s^{\mathrm{eff}}$ 建立波瓣并以 `AbsDot` 融合余弦；定向几何法线 $\mathbf n_g$ 负责真实侧别、介质栈、光滑 delta Fresnel/Snell 和所有表面射线偏移；
+- 连续 Lambert/PBR/GGX 使用有效着色法线 $\mathbf n_s^{\mathrm{eff}}$ 建立波瓣并以 `AbsDot` 融合余弦；定向几何法线 $\mathbf n_g$ 负责真实侧别、介质栈、光滑 delta Fresnel/Snell 和所有表面射线偏移；
 - 不实现 shading-normal adjoint correction，所以极端倾斜顶点法线下不保证严格互易性或能量守恒；
 - 粗糙 water 为了降低反射方差，把 BSDF 反射分支概率设为 $\max(F,0.5)$；物理 BSDF 仍使用精确 Fresnel $F$，路径权重和 MIS PDF 用实际分支概率补偿，所以这是无偏采样改变而不是更改材质能量；
-- Python API 与 SceneBuilder 不强制被动材质的 `base_color ≤ 1`，能量合理性部分依赖输入；
+- legacy 材质只强制 `base_color` 非负而不强制上界，能量合理性部分依赖输入；PBR `base_color`、`metallic` 和 `roughness` factor 则强制在 $[0,1]$；
 - 直接光连接只表示当前顶点的一次散射；粗糙介电可在当前界面 NEE 到反射或透射侧，但下一层透明边界会阻断连接。光滑首水面只做一次有界 Fresnel 分裂，不实现 MNEE、双向路径追踪或光滑多界面焦散，详见[第 12 章](12-runtime-analytic-water.md)。
 
 ### 几何与颜色
@@ -43,7 +44,8 @@
 - 所有表面 radiance/shadow ray 统一沿 $\mathbf n_g$ 偏移，但固定世界空间 `scene_epsilon` 仍不随场景尺度变化；
 - 色调映射是逐通道 ACES 风格拟合曲线，不是完整 ACES；
 - 8 bit PNG 不保存 HDR 缓冲区；可选 PFM 保存贡献钳位之后、未降噪和未显示映射的线性 RGB 样本均值，没有 OpenEXR 的元数据、任意通道和压缩能力。只有 clamp 0/0 的 PFM 才适合无偏均值验证。
-- sRGB 纹理先对编码码值做硬件双线性过滤，之后才解码到线性空间。
+- 图像纹理只有 base-level 双线性过滤，没有 mipmap、ray differential 或
+  各向异性过滤；PBR normal map 只支持 triangle mesh，不支持解析几何。
 
 发光材质命中后立即终止路径，不会同时反射；HDR 环境是纬经贴图，不是光度学天空，也不包含大气散射模型。
 
@@ -174,7 +176,7 @@ $$
 
 1. 在像素与镜头上取样，得到相机射线；
 2. OptiX 遍历 IAS/GAS/BVH，内建或自定义 intersection 返回最近交点；交点分开保存 $\mathbf n_g$ 和面向当前 $\boldsymbol\omega_o$ 的 $\mathbf n_s^{\mathrm{eff}}$，解析水面在 tile AABB 内求高度场根；
-3. 支持 NEE 的表面对有限灯和 HDR 环境分别取样，并逐盏连接 point/directional：普通有限灯按顶点选择全局或均匀 PMF，粗糙 water 则从全局与均匀索引各取一份确定性样本；$\mathbf n_g$ 决定 Lambert/metal 的真实正半球和粗糙介电的反射/透射侧；透射在栈副本中切换一次并乘 Beer，任何后续透明边界都由二值 shadow 阻断；flame 再沿连接段估计吸收；
+3. 支持 NEE 的表面对有限灯和 HDR 环境分别取样，并逐盏连接 point/directional：普通有限灯按顶点选择全局或均匀 PMF，粗糙 water 则从全局与均匀索引各取一份确定性样本；$\mathbf n_g$ 决定 Lambert/metal/PBR 的真实正半球和粗糙介电的反射/透射侧；透射在栈副本中切换一次并乘 Beer，任何后续透明边界都由二值 shadow 阻断；flame 再沿连接段估计吸收；
 4. BSDF 选择下一方向，吞吐量乘 `scatter.weight`；连续事件对应 $f_s|\mathbf n_s^{\mathrm{eff}}\!\cdot\boldsymbol\omega_i|/p_B$，粗糙介电 PDF 含实际反射/透射分支概率与透射 Jacobian，粗糙水面至少把一半 BSDF 样本分配给反射；光滑 delta dielectric/water 改用 $\mathbf n_g$ 求 Fresnel/Snell 方向；含水路径用介质栈决定两侧 IOR 并在传播段累计 Beer；首个光滑水面改为一次确定性、至多两状态的 Fresnel split；
 5. 普通面积灯 NEE 与命中灯面、环境 NEE 与 BSDF miss 分别用 power heuristic MIS 分权；粗糙 water 的两份有限灯样本和 BSDF-hit 用三技术 balance；point/directional 的 delta NEE 权重为 1；flame 保留互斥体积估计器；
 6. 路径在 miss、emitter、无效散射、轮盘或最大深度处结束；最大深度的最后一个表面事件仍先完整估计有限灯与环境域，粗糙 water 的有限灯域包含两份样本；

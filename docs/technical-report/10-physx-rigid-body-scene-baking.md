@@ -214,8 +214,8 @@ Python 场景描述和 PhysX CPU dispatcher 仍然在宿主侧运行。
 
 PCM 跨时间步维护 contact manifold；TGS 在一个外层时间步内形成更细的求解
 更新。代码依赖这些公开语义，不假定未公开的 kernel 排布或浮点执行顺序。
-物理接触材质的静/动摩擦和恢复系数，与 Renderer 的 Lambert、metal、water、
-emitter 等 BSDF 材质完全独立。
+物理接触材质的静/动摩擦和恢复系数，与 Renderer 的 Lambert、metal、PBR、
+dielectric、water、emitter 等 BSDF 材质完全独立。
 
 ## 4. Kinetic 为什么使用 capsule 碰撞代理
 

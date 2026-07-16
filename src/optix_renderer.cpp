@@ -316,6 +316,15 @@ struct TextureHandle {
   }
 };
 
+cudaTextureAddressMode texture_address_mode(TextureWrap wrap) {
+  switch (wrap) {
+    case TextureWrap::ClampToEdge: return cudaAddressModeClamp;
+    case TextureWrap::Repeat: return cudaAddressModeWrap;
+    case TextureWrap::MirroredRepeat: return cudaAddressModeMirror;
+  }
+  throw std::runtime_error("unsupported texture wrap mode");
+}
+
 TextureHandle make_texture(const Texture& source, TextureData& out,
                            MemoryTracker& tracker) {
   TextureHandle h;
@@ -346,12 +355,17 @@ TextureHandle make_texture(const Texture& source, TextureData& out,
   check_cuda(cudaMemcpy2DToArray(h.array, 0, 0, src, pitch, pitch, height,
                                  cudaMemcpyHostToDevice), "cudaMemcpy2DToArray");
   cudaResourceDesc rd{}; rd.resType = cudaResourceTypeArray; rd.res.array.array = h.array;
-  cudaTextureDesc td{}; td.addressMode[0] = td.addressMode[1] = cudaAddressModeClamp;
-  td.filterMode = cudaFilterModeLinear; td.readMode = read_mode; td.normalizedCoords = 1;
+  cudaTextureDesc td{};
+  td.addressMode[0] = texture_address_mode(source.wrap_u);
+  td.addressMode[1] = texture_address_mode(source.wrap_v);
+  td.filterMode = cudaFilterModeLinear;
+  td.readMode = read_mode;
+  td.sRGB = source.type == TextureType::Image && source.srgb ? 1 : 0;
+  td.normalizedCoords = 1;
   check_cuda(cudaCreateTextureObject(&h.object, &rd, &td, nullptr),
              "cudaCreateTextureObject");
   out.object = static_cast<std::uint64_t>(h.object);
-  out.flags = source.srgb ? kTextureSrgb : 0u;
+  out.flags = 0u;
   return h;
 }
 
@@ -408,12 +422,17 @@ std::vector<MaterialData> materials_for(const Scene& scene) {
   for (const Material& m : scene.materials) {
     MaterialData d{}; d.base_color = f3(m.base_color); d.emission = f3(m.emission);
     d.roughness = m.roughness; d.ior = m.ior; d.texture_index = m.texture_id;
+    d.metallic_roughness_texture_index =
+        m.metallic_roughness_texture_id;
+    d.normal_texture_index = m.normal_texture_id;
+    d.normal_scale = m.normal_scale;
     d.absorption = f3(m.absorption);
-    d.metallic = m.type == MaterialType::Metal ? 1.0f : 0.0f;
+    d.metallic = m.type == MaterialType::Metal ? 1.0f : m.metallic;
     d.type = m.type == MaterialType::Lambertian ? kMaterialLambertian :
              m.type == MaterialType::Metal ? kMaterialMetal :
              m.type == MaterialType::Dielectric ? kMaterialDielectric :
              m.type == MaterialType::Water ? kMaterialWater :
+             m.type == MaterialType::Pbr ? kMaterialPbr :
              kMaterialEmitter;
     if (m.type == MaterialType::Emitter &&
         max_component(m.emission) <= 0.0f)
@@ -618,6 +637,7 @@ struct MeshGpu {
   DeviceBuffer positions;
   DeviceBuffer normals;
   DeviceBuffer texcoords;
+  DeviceBuffer tangents;
   DeviceBuffer indices;
   DeviceBuffer material_ids;
   Gas gas;
@@ -628,6 +648,8 @@ struct MeshGpu {
     data.positions = reinterpret_cast<const float3*>(positions.pointer());
     data.normals = reinterpret_cast<const float3*>(normals.pointer());
     data.texcoords = reinterpret_cast<const float2*>(texcoords.pointer());
+    data.corner_tangents =
+        reinterpret_cast<const float4*>(tangents.pointer());
     data.indices = reinterpret_cast<const uint3*>(indices.pointer());
     data.material_ids = reinterpret_cast<const std::int32_t*>(
         material_ids.pointer());
@@ -637,6 +659,7 @@ struct MeshGpu {
                                          "mesh material id count");
     if (!mesh.normals.empty()) data.flags |= kMeshHasNormals;
     if (mesh.has_complete_uvs()) data.flags |= kMeshHasTexcoords;
+    if (mesh.has_complete_tangents()) data.flags |= kMeshHasTangents;
     if (!resource.material_ids.empty()) data.flags |= kMeshHasMaterials;
     return data;
   }
@@ -667,6 +690,9 @@ MeshGpu build_mesh(OptixDeviceContext context, cudaStream_t stream,
   result.indices.allocate(tracker, mesh.indices.size() * sizeof(MeshTriangle));
   if (!mesh.texcoords.empty())
     result.texcoords.allocate(tracker, mesh.texcoords.size() * sizeof(Vec2));
+  if (!mesh.tangents.empty())
+    result.tangents.allocate(
+        tracker, mesh.tangents.size() * sizeof(MeshTangent));
   if (!resource.material_ids.empty())
     result.material_ids.allocate(
         tracker, checked_product(resource.material_ids.size(),
@@ -675,6 +701,7 @@ MeshGpu build_mesh(OptixDeviceContext context, cudaStream_t stream,
   result.normals.upload(mesh.normals, stream);
   result.indices.upload(mesh.indices, stream);
   if (!mesh.texcoords.empty()) result.texcoords.upload(mesh.texcoords, stream);
+  if (!mesh.tangents.empty()) result.tangents.upload(mesh.tangents, stream);
   if (!resource.material_ids.empty())
     result.material_ids.upload(resource.material_ids, stream);
 

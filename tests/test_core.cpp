@@ -117,6 +117,30 @@ void test_image_io() {
   check(actual.width == 2 && actual.height == 2, "PNG dimensions");
   check(actual.pixels == expected, "PNG lossless RGBA round trip");
 
+  // RGB samples are intentionally far from their sRGB encodings.  The gAMA
+  // chunk declares a linear transfer (1.0), but texture color-space handling
+  // happens later in the renderer; loading must therefore preserve these
+  // exact file sample codes and only synthesize opaque alpha.
+  const auto linear_gamma_png = temporary("-linear-gamma.png");
+  write_binary(
+      linear_gamma_png,
+      {0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00,
+       0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x02,
+       0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00, 0x7b,
+       0x40, 0xe8, 0xdd, 0x00, 0x00, 0x00, 0x04, 0x67, 0x41, 0x4d,
+       0x41, 0x00, 0x01, 0x86, 0xa0, 0x31, 0xe8, 0x96, 0x5f, 0x00,
+       0x00, 0x00, 0x0f, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63,
+       0xe0, 0x51, 0xb2, 0x38, 0x31, 0x2d, 0x05, 0x00, 0x05, 0xc1,
+       0x02, 0x29, 0x05, 0x8e, 0x83, 0xd5, 0x00, 0x00, 0x00, 0x00,
+       0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82});
+  const ImageRgba8 linear_gamma = load_png_rgba8(linear_gamma_png);
+  std::filesystem::remove(linear_gamma_png);
+  check(linear_gamma.width == 2 && linear_gamma.height == 1,
+        "linear-gamma PNG dimensions");
+  check(linear_gamma.pixels ==
+            std::vector<std::uint8_t>{12, 34, 56, 255, 200, 150, 100, 255},
+        "linear-gamma PNG preserves raw RGB sample codes");
+
   const auto pfm = temporary(".pfm");
   const std::vector<float> top_to_bottom = {
       1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f,
@@ -266,6 +290,8 @@ f 1 3 4
 )obj");
   const TriangleMesh generated = load_obj_mesh(smooth);
   check(!generated.has_complete_uvs(), "OBJ missing UVs remain absent");
+  check(generated.tangents.empty(),
+        "OBJ without UVs does not fabricate tangent frames");
   const float expected = 1.0f / std::sqrt(2.0f);
   int shared = 0;
   for (std::size_t i = 0; i < generated.positions.size(); ++i) {
@@ -278,6 +304,115 @@ f 1 3 4
     }
   }
   check(shared == 2, "shared smoothing-group vertices");
+
+  const auto mirrored = directory.path / "mirrored-uv.obj";
+  write_text(mirrored, R"obj(
+v 0 0 0
+v 1 0 0
+v 0 1 0
+v 2 0 0
+v 3 0 0
+v 2 1 0
+vt 0 0
+vt 1 0
+vt 0 1
+vt 0 0
+vt 0 1
+vt 1 0
+vn 0 0 1
+f 1/1/1 2/2/1 3/3/1
+f 4/4/1 5/5/1 6/6/1
+)obj");
+  const TriangleMesh mirrored_mesh = load_obj_mesh(mirrored);
+  check(mirrored_mesh.has_complete_tangents() &&
+            mirrored_mesh.tangents.size() == 6,
+        "MikkTSpace produces unindexed face-corner tangents");
+  for (std::size_t corner = 0; corner < 3; ++corner) {
+    near(mirrored_mesh.tangents[corner].direction.x, 1.0f, 1.0e-6f,
+         "MikkTSpace ordinary tangent");
+    near(mirrored_mesh.tangents[corner].sign, 1.0f, 0.0f,
+         "MikkTSpace ordinary handedness");
+    near(mirrored_mesh.tangents[3 + corner].direction.y, 1.0f, 1.0e-6f,
+         "MikkTSpace mirrored tangent");
+    near(mirrored_mesh.tangents[3 + corner].sign, -1.0f, 0.0f,
+         "MikkTSpace mirrored handedness");
+  }
+
+  const auto degenerate_uv_neighbor =
+      directory.path / "degenerate-uv-neighbor.obj";
+  write_text(degenerate_uv_neighbor, R"obj(
+v 0 0 0
+v 1 0 0
+v 1 1 0
+v 0 1 0
+vt 0 0
+vt 1 0
+vt 1 1
+vt 0.5 0.5
+vn 0 0 1
+f 1/1/1 2/2/1 3/3/1
+f 1/1/1 3/3/1 4/4/1
+)obj");
+  const TriangleMesh inherited = load_obj_mesh(degenerate_uv_neighbor);
+  check(inherited.tangents.size() == 6 &&
+            !inherited.has_complete_tangents(),
+        "partially unresolved UV mapping remains detectable");
+  for (std::size_t corner : std::array<std::size_t, 2>{3, 4}) {
+    check(length_squared(inherited.tangents[corner].direction) > 0.5f &&
+              std::fabs(inherited.tangents[corner].sign) == 1.0f,
+          "degenerate UV neighbor inherits shared MikkTSpace corner");
+  }
+  check(length_squared(inherited.tangents[5].direction) == 0.0f &&
+            inherited.tangents[5].sign == 0.0f,
+        "unresolved degenerate UV corner stays invalid");
+
+  const auto same_direction_neighbor =
+      directory.path / "same-direction-uv-neighbor.obj";
+  write_text(same_direction_neighbor, R"obj(
+v 0 0 0
+v 1 0 0
+v 0 1 0
+v 1 1 0
+vt 0 0
+vt 1 0
+vt 0 1
+vt -1 2
+vn 0 0 1
+f 1/1/1 2/2/1 3/3/1
+f 2/2/1 3/3/1 4/4/1
+)obj");
+  const TriangleMesh inconsistent = load_obj_mesh(same_direction_neighbor);
+  check(inconsistent.tangents.size() == 6 &&
+            !inconsistent.has_complete_tangents() &&
+            std::all_of(
+                inconsistent.tangents.begin() + 3,
+                inconsistent.tangents.end(),
+                [](const MeshTangent& tangent) {
+                  return length_squared(tangent.direction) == 0.0f &&
+                         tangent.sign == 0.0f;
+                }),
+        "same-direction shared edge cannot inherit a Mikk tangent");
+
+  const auto isolated_degenerate_uv =
+      directory.path / "isolated-degenerate-uv.obj";
+  write_text(isolated_degenerate_uv, R"obj(
+v 0 0 0
+v 1 0 0
+v 0 1 0
+vt 0.5 0.5
+vn 0 0 1
+f 1/1/1 2/1/1 3/1/1
+)obj");
+  const TriangleMesh unresolved = load_obj_mesh(isolated_degenerate_uv);
+  check(unresolved.tangents.size() == 3 &&
+            !unresolved.has_complete_tangents() &&
+            std::all_of(
+                unresolved.tangents.begin(), unresolved.tangents.end(),
+                [](const MeshTangent& tangent) {
+                  return length_squared(tangent.direction) == 0.0f &&
+                         tangent.sign == 0.0f;
+                }),
+        "isolated degenerate UV triangle rejects Mikk fallback axes");
 
   const auto invalid = directory.path / "invalid.obj";
   write_text(invalid, "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 9\n");
@@ -583,6 +718,103 @@ f 1/1 2/2 3/3
   pixels.insert(pixels.end(), {128, 128, 128, 129});
   write_binary(result.environment, pixels);
   return result;
+}
+
+void test_scene_builder_pbr_materials() {
+  TemporaryDirectory directory;
+  const Assets assets = make_assets(directory);
+  const auto mapped_material_path = directory.path / "pbr-mapped.mtl";
+  const auto mapped_mesh_path = directory.path / "pbr-mapped.obj";
+  write_text(mapped_material_path, R"mtl(
+newmtl PbrSurface
+Kd 0.8 0.6 0.4
+)mtl");
+  write_text(mapped_mesh_path, R"obj(
+mtllib pbr-mapped.mtl
+v 0 0 0
+v 1 0 0
+v 0 1 0
+vt 0 0
+vt 1 0
+vt 0 1
+vn 0 0 1
+usemtl PbrSurface
+f 1/1/1 2/2/1 3/3/1
+)obj");
+
+  SceneBuilder builder;
+  const std::int32_t base_color = builder.add_image_texture(
+      "base-color", assets.image, true, TextureWrap::Repeat,
+      TextureWrap::MirroredRepeat);
+  const std::int32_t metallic_roughness = builder.add_image_texture(
+      "metallic-roughness", assets.image, false, TextureWrap::ClampToEdge,
+      TextureWrap::Repeat);
+  const std::int32_t normal = builder.add_image_texture(
+      "normal", assets.image, false, TextureWrap::MirroredRepeat,
+      TextureWrap::ClampToEdge);
+
+  expect_error(
+      [&] {
+        builder.add_pbr_material(
+            "srgb-metallic-roughness", base_color, base_color, normal,
+            {0.8f, 0.6f, 0.4f}, 0.35f, 0.7f, 0.8f);
+      },
+      "color_space='linear'",
+      "PBR metallic-roughness texture rejects sRGB data");
+  expect_error(
+      [&] {
+        builder.add_pbr_material(
+            "srgb-normal", base_color, metallic_roughness, base_color,
+            {0.8f, 0.6f, 0.4f}, 0.35f, 0.7f, 0.8f);
+      },
+      "color_space='linear'", "PBR normal texture rejects sRGB data");
+
+  const std::int32_t material = builder.add_pbr_material(
+      "pbr", base_color, metallic_roughness, normal,
+      {0.8f, 0.6f, 0.4f}, 0.35f, 0.7f, 0.8f);
+  const std::int32_t mesh = builder.add_mesh(
+      "pbr-mapped", mapped_mesh_path, {{"PbrSurface", material}});
+  builder.add_mesh_instance("pbr-instance", mesh, Transform{}, kInvalidId,
+                            kInvalidId, kInvalidId, 0.5f);
+  set_camera_and_background(builder);
+
+  const std::shared_ptr<const Scene> scene = builder.finish();
+  check(scene->textures.size() == 3 && scene->materials.size() == 1,
+        "PBR scene resource dimensions");
+  check(scene->textures[base_color].srgb &&
+            scene->textures[base_color].wrap_u == TextureWrap::Repeat &&
+            scene->textures[base_color].wrap_v ==
+                TextureWrap::MirroredRepeat,
+        "PBR base-color texture color space and wraps retained");
+  check(!scene->textures[metallic_roughness].srgb &&
+            scene->textures[metallic_roughness].wrap_u ==
+                TextureWrap::ClampToEdge &&
+            scene->textures[metallic_roughness].wrap_v ==
+                TextureWrap::Repeat,
+        "PBR metallic-roughness texture color space and wraps retained");
+  check(!scene->textures[normal].srgb &&
+            scene->textures[normal].wrap_u ==
+                TextureWrap::MirroredRepeat &&
+            scene->textures[normal].wrap_v == TextureWrap::ClampToEdge,
+        "PBR normal texture color space and wraps retained");
+
+  const Material& pbr = scene->materials[material];
+  check(pbr.type == MaterialType::Pbr && pbr.texture_id == base_color &&
+            pbr.metallic_roughness_texture_id == metallic_roughness &&
+            pbr.normal_texture_id == normal,
+        "PBR material type and texture handles retained");
+  near(pbr.base_color.x, 0.8f, 0.0f, "PBR base-color factor red");
+  near(pbr.base_color.y, 0.6f, 0.0f, "PBR base-color factor green");
+  near(pbr.base_color.z, 0.4f, 0.0f, "PBR base-color factor blue");
+  near(pbr.metallic, 0.35f, 0.0f, "PBR metallic factor");
+  near(pbr.roughness, 0.7f, 0.0f, "PBR roughness factor");
+  near(pbr.normal_scale, 0.8f, 0.0f, "PBR normal scale");
+  check(scene->meshes.size() == 1 &&
+            scene->meshes[0].mesh.has_complete_uvs() &&
+            scene->meshes[0].mesh.has_complete_tangents() &&
+            scene->meshes[0].material_ids ==
+                std::vector<std::int32_t>{material},
+        "normal-mapped PBR OBJ material slot retains UV/tangent data");
 }
 
 void test_scene_builder_complete_scene() {
@@ -1220,6 +1452,7 @@ int main() {
     test_obj_loader();
     test_obj_material_bindings();
     test_transform_order();
+    test_scene_builder_pbr_materials();
     test_scene_builder_complete_scene();
     test_scene_builder_configuration_and_resources();
     test_scene_builder_geometry_validation();

@@ -22,7 +22,9 @@ RTX 5090 运行记录，普通示例执行不会覆盖它们。
 
 ![Material Cathedral](gallery/material-cathedral.png)
 
-三个胶囊吉祥物实例共享一份 5,816-triangle GAS，分别使用陶瓷、粗糙金属和玻璃。封闭建筑、矩形主光与圆盘补光用于观察 GGX、Fresnel、MIS、色彩反弹和 `T * Rz * Ry * Rx * S` 实例变换。
+三个胶囊吉祥物实例共享一份 5,816-triangle GAS，分别使用 metallic-roughness
+PBR 陶瓷、PBR 粗糙金属和 legacy dielectric 玻璃。封闭建筑、矩形主光与圆盘
+补光用于观察 GGX、Fresnel、MIS、色彩反弹和 `T * Rz * Ry * Rx * S` 实例变换。
 
 ## Radiance Pavilion
 

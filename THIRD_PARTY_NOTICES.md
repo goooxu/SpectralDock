@@ -47,6 +47,19 @@ The local input-hardening change is described in
 third_party/tinyobjloader/README.md. The complete upstream license is retained
 in third_party/tinyobjloader/LICENSE and in the header.
 
+## MikkTSpace
+
+- Author: Morten S. Mikkelsen
+- Source: https://github.com/mmikk/MikkTSpace
+- Pinned commit: `3e895b49d05ea07e4c2133156cfa94369e19e409`
+- License: zlib-style license retained verbatim in `mikktspace.c` and
+  `mikktspace.h`
+- Used by: OBJ face-corner tangent generation for tangent-space normal maps
+
+The two upstream source files are vendored without local algorithm changes.
+SpectralDock supplies only the mesh callback adapter and validates the
+generated tangent records before uploading them to the renderer.
+
 ## NVIDIA PhysX 5.8.0
 
 - Authors: NVIDIA Corporation and PhysX contributors

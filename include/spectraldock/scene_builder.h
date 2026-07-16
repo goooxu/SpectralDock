@@ -37,11 +37,18 @@ class SceneBuilder {
   std::int32_t add_constant_texture(const std::string& name, Vec3 color);
   std::int32_t add_image_texture(const std::string& name,
                                  const std::filesystem::path& path,
-                                 bool srgb);
+                                 bool srgb,
+                                 TextureWrap wrap_u = TextureWrap::ClampToEdge,
+                                 TextureWrap wrap_v = TextureWrap::ClampToEdge);
   std::int32_t add_material(const std::string& name, MaterialType type,
                             std::int32_t texture_id, Vec3 base_color,
                             Vec3 emission, float roughness, float ior,
                             Vec3 absorption);
+  std::int32_t add_pbr_material(
+      const std::string& name, std::int32_t base_color_texture_id,
+      std::int32_t metallic_roughness_texture_id,
+      std::int32_t normal_texture_id, Vec3 base_color, float metallic,
+      float roughness, float normal_scale);
   std::int32_t add_mesh(const std::string& name,
                         const std::filesystem::path& path,
                         const std::vector<std::pair<std::string, std::int32_t>>&

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.28)
-project(SpectralDock VERSION 0.1.0 LANGUAGES CXX)
+project(SpectralDock VERSION 0.1.0 LANGUAGES C CXX)
 
 option(SPECTRALDOCK_ENABLE_GPU "Build the CUDA/OptiX renderer" ON)
 option(SPECTRALDOCK_ENABLE_VALIDATION "Enable OptiX validation by default" OFF)
@@ -27,11 +27,16 @@ add_library(spectraldock_core STATIC
   src/sampling.cpp
   src/obj_loader.cpp
   src/image_io.cpp
+  third_party/mikktspace/mikktspace.c
 )
 set_target_properties(spectraldock_core PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
   POSITION_INDEPENDENT_CODE ON)
 target_include_directories(spectraldock_core PUBLIC include)
-target_include_directories(spectraldock_core SYSTEM PRIVATE third_party/tinyobjloader)
+target_include_directories(spectraldock_core SYSTEM PRIVATE
+  third_party/mikktspace
+  third_party/tinyobjloader)
 target_link_libraries(spectraldock_core PUBLIC PNG::PNG)
 target_compile_options(spectraldock_core PRIVATE -Wall -Wextra -Wpedantic)
 

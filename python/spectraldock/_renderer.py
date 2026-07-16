@@ -26,6 +26,7 @@ class TextureHandle:
     name: str
     id: int
     _owner: object = field(repr=False, compare=False)
+    _color_space: str = field(default="linear", repr=False, compare=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -270,13 +271,31 @@ class Renderer:
             color_space = _take(parameters, "color_space", "srgb")
             if color_space not in {"srgb", "linear"}:
                 raise ValueError("color_space must be 'srgb' or 'linear'")
+            wrap_u = _take(parameters, "wrap_u", "clamp_to_edge")
+            wrap_v = _take(parameters, "wrap_v", "clamp_to_edge")
+            wraps = {"clamp_to_edge", "repeat", "mirrored_repeat"}
+            if wrap_u not in wraps:
+                raise ValueError(
+                    "wrap_u must be 'clamp_to_edge', 'repeat', or "
+                    "'mirrored_repeat'"
+                )
+            if wrap_v not in wraps:
+                raise ValueError(
+                    "wrap_v must be 'clamp_to_edge', 'repeat', or "
+                    "'mirrored_repeat'"
+                )
             _reject_extra(parameters, "image texture")
             identifier = self._builder.add_image_texture(
-                resource_name, path, color_space == "srgb"
+                resource_name, path, color_space == "srgb", wrap_u, wrap_v
             )
         else:
             raise ValueError(f"unsupported texture type: {kind!r}")
-        handle = TextureHandle(resource_name, identifier, self._owner)
+        handle = TextureHandle(
+            resource_name,
+            identifier,
+            self._owner,
+            "linear" if kind == "constant" else color_space,
+        )
         return handle
 
     def material(
@@ -285,17 +304,87 @@ class Renderer:
         type: str,
         *,
         texture: TextureHandle | None = None,
+        base_color_texture: TextureHandle | None = None,
         base_color: Sequence[float] | object = _UNSET,
         emission: Sequence[float] | object = _UNSET,
+        metallic: float | None = None,
         roughness: float | None = None,
+        metallic_roughness_texture: TextureHandle | None = None,
+        normal_texture: TextureHandle | None = None,
+        normal_scale: float | None = None,
         ior: float | None = None,
         absorption: Sequence[float] | object = _UNSET,
     ) -> MaterialHandle:
         self._editable()
         resource_name = _name(name)
         kind = _name(type, "type")
-        if kind not in {"lambertian", "metal", "dielectric", "emitter", "water"}:
+        if kind not in {
+            "lambertian", "metal", "dielectric", "emitter", "water", "pbr"
+        }:
             raise ValueError(f"unsupported material type: {kind!r}")
+        if kind == "pbr":
+            if texture is not None:
+                raise TypeError("pbr materials use base_color_texture, not texture")
+            if emission is not _UNSET:
+                raise TypeError("pbr materials do not support emission")
+            if ior is not None:
+                raise TypeError("pbr materials do not support ior")
+            if absorption is not _UNSET:
+                raise TypeError("pbr materials do not support absorption")
+            color = _vector(
+                (1.0, 1.0, 1.0) if base_color is _UNSET else base_color,
+                3,
+                "base_color",
+            )
+            metallic_value = 1.0 if metallic is None else _scalar(
+                metallic, "metallic"
+            )
+            roughness_value = 1.0 if roughness is None else _scalar(
+                roughness, "roughness"
+            )
+            normal_scale_value = 1.0 if normal_scale is None else _scalar(
+                normal_scale, "normal_scale"
+            )
+            base_texture_id = self._handle(
+                base_color_texture, TextureHandle, "base_color_texture",
+                optional=True,
+            )
+            metallic_roughness_texture_id = self._handle(
+                metallic_roughness_texture,
+                TextureHandle,
+                "metallic_roughness_texture",
+                optional=True,
+            )
+            normal_texture_id = self._handle(
+                normal_texture, TextureHandle, "normal_texture", optional=True
+            )
+            for label, value in (
+                ("metallic_roughness_texture", metallic_roughness_texture),
+                ("normal_texture", normal_texture),
+            ):
+                if value is not None and value._color_space != "linear":
+                    raise ValueError(f"{label} must use color_space='linear'")
+            identifier = self._builder.add_pbr_material(
+                resource_name,
+                base_texture_id,
+                metallic_roughness_texture_id,
+                normal_texture_id,
+                color,
+                metallic_value,
+                roughness_value,
+                normal_scale_value,
+            )
+            return MaterialHandle(resource_name, identifier, self._owner)
+
+        for label, value in (
+            ("base_color_texture", base_color_texture),
+            ("metallic", metallic),
+            ("metallic_roughness_texture", metallic_roughness_texture),
+            ("normal_texture", normal_texture),
+            ("normal_scale", normal_scale),
+        ):
+            if value is not None:
+                raise TypeError(f"{label} is supported only by pbr materials")
         if kind == "water":
             if texture is not None:
                 raise TypeError("water materials do not support texture")

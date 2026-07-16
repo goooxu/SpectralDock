@@ -115,9 +115,19 @@ void require_id(std::int32_t id, std::size_t size, const std::string& where,
 }
 
 bool material_uses_texture(const Scene& scene, std::int32_t material_id) {
+  if (material_id == kInvalidId) return false;
+  const Material& material =
+      scene.materials[static_cast<std::size_t>(material_id)];
+  return material.texture_id != kInvalidId ||
+         material.metallic_roughness_texture_id != kInvalidId ||
+         material.normal_texture_id != kInvalidId;
+}
+
+bool material_uses_normal_texture(const Scene& scene,
+                                  std::int32_t material_id) {
   return material_id != kInvalidId &&
-         scene.materials[static_cast<std::size_t>(material_id)].texture_id !=
-             kInvalidId;
+         scene.materials[static_cast<std::size_t>(material_id)]
+                 .normal_texture_id != kInvalidId;
 }
 
 const MeshResource* mesh_resource_for_object(const Scene& scene,
@@ -140,6 +150,17 @@ bool object_requires_uvs(const Scene& scene, const Object& object) {
   return std::any_of(
       resource->material_ids.begin(), resource->material_ids.end(),
       [&](std::int32_t id) { return material_uses_texture(scene, id); });
+}
+
+bool object_uses_normal_texture(const Scene& scene, const Object& object) {
+  if (material_uses_normal_texture(scene, object.front_material) ||
+      material_uses_normal_texture(scene, object.back_material))
+    return true;
+  const MeshResource* resource = mesh_resource_for_object(scene, object);
+  if (resource == nullptr) return false;
+  return std::any_of(
+      resource->material_ids.begin(), resource->material_ids.end(),
+      [&](std::int32_t id) { return material_uses_normal_texture(scene, id); });
 }
 
 bool binds_material_type(const Scene& scene, std::int32_t material_id,
@@ -281,7 +302,8 @@ std::int32_t SceneBuilder::add_constant_texture(const std::string& name,
 }
 
 std::int32_t SceneBuilder::add_image_texture(
-    const std::string& name, const std::filesystem::path& path, bool srgb) {
+    const std::string& name, const std::filesystem::path& path, bool srgb,
+    TextureWrap wrap_u, TextureWrap wrap_v) {
   require_open();
   const std::string where = "textures[" +
                             std::to_string(scene_.textures.size()) + "]";
@@ -295,6 +317,8 @@ std::int32_t SceneBuilder::add_image_texture(
   texture.type = TextureType::Image;
   texture.image_path = absolute;
   texture.srgb = srgb;
+  texture.wrap_u = wrap_u;
+  texture.wrap_v = wrap_v;
   scene_.textures.push_back(std::move(texture));
   return id;
 }
@@ -312,6 +336,8 @@ std::int32_t SceneBuilder::add_material(
   require_nonnegative(absorption, where + ".absorption");
   require_finite(roughness, where + ".roughness");
   require_finite(ior, where + ".ior");
+  if (type == MaterialType::Pbr)
+    fail(where + ".type", "PBR materials require add_pbr_material");
   if (roughness < 0.0f || roughness > 1.0f)
     fail(where + ".roughness", "must be in [0, 1]");
   if (type == MaterialType::Water) {
@@ -336,6 +362,71 @@ std::int32_t SceneBuilder::add_material(
   material.roughness = roughness;
   material.ior = ior;
   material.absorption = absorption;
+  scene_.materials.push_back(std::move(material));
+  return id;
+}
+
+std::int32_t SceneBuilder::add_pbr_material(
+    const std::string& name, std::int32_t base_color_texture_id,
+    std::int32_t metallic_roughness_texture_id,
+    std::int32_t normal_texture_id, Vec3 base_color, float metallic,
+    float roughness, float normal_scale) {
+  require_open();
+  const std::string where = "materials[" +
+                            std::to_string(scene_.materials.size()) + "]";
+  require_id(base_color_texture_id, scene_.textures.size(),
+             where + ".base_color_texture", true);
+  require_id(metallic_roughness_texture_id, scene_.textures.size(),
+             where + ".metallic_roughness_texture", true);
+  require_id(normal_texture_id, scene_.textures.size(),
+             where + ".normal_texture", true);
+  require_finite(base_color, where + ".base_color");
+  if (base_color.x < 0.0f || base_color.x > 1.0f ||
+      base_color.y < 0.0f || base_color.y > 1.0f ||
+      base_color.z < 0.0f || base_color.z > 1.0f)
+    fail(where + ".base_color", "components must be in [0, 1]");
+  require_finite(metallic, where + ".metallic");
+  require_finite(roughness, where + ".roughness");
+  require_finite(normal_scale, where + ".normal_scale");
+  if (metallic < 0.0f || metallic > 1.0f)
+    fail(where + ".metallic", "must be in [0, 1]");
+  if (roughness < 0.0f || roughness > 1.0f)
+    fail(where + ".roughness", "must be in [0, 1]");
+  if (base_color_texture_id != kInvalidId) {
+    const Texture& texture =
+        scene_.textures[static_cast<std::size_t>(base_color_texture_id)];
+    if (texture.type == TextureType::Constant &&
+        (texture.color.x > 1.0f || texture.color.y > 1.0f ||
+         texture.color.z > 1.0f))
+      fail(where + ".base_color_texture",
+           "constant texture components must be in [0, 1]");
+  }
+  const auto require_linear_data_texture = [&](std::int32_t texture_id,
+                                                const std::string& field) {
+    if (texture_id == kInvalidId) return;
+    const Texture& texture =
+        scene_.textures[static_cast<std::size_t>(texture_id)];
+    if (texture.type == TextureType::Image && texture.srgb)
+      fail(where + "." + field,
+           "requires a texture with color_space='linear'");
+  };
+  require_linear_data_texture(metallic_roughness_texture_id,
+                              "metallic_roughness_texture");
+  require_linear_data_texture(normal_texture_id, "normal_texture");
+
+  const auto id = insert_unique(material_ids_, name, scene_.materials.size(),
+                                where);
+  Material material;
+  material.name = name;
+  material.type = MaterialType::Pbr;
+  material.texture_id = base_color_texture_id;
+  material.metallic_roughness_texture_id =
+      metallic_roughness_texture_id;
+  material.normal_texture_id = normal_texture_id;
+  material.base_color = base_color;
+  material.metallic = metallic;
+  material.roughness = roughness;
+  material.normal_scale = normal_scale;
   scene_.materials.push_back(std::move(material));
   return id;
 }
@@ -412,6 +503,14 @@ std::int32_t SceneBuilder::add_mesh(const std::string& name,
                "textured OBJ material slots require complete UV coordinates");
       }
     }
+    if (!resource.mesh.has_complete_tangents()) {
+      for (std::int32_t material_id : resource.material_ids) {
+        if (material_uses_normal_texture(scene_, material_id))
+          fail(where + ".material_bindings",
+               "normal-mapped OBJ material slots require a complete valid "
+               "tangent frame");
+      }
+    }
   }
   const auto id = insert_unique(mesh_ids_, name, scene_.meshes.size(), where);
   scene_.meshes.push_back(std::move(resource));
@@ -445,6 +544,9 @@ std::int32_t SceneBuilder::add_object(Object object) {
        binds_material_type(scene_, object.back_material,
                            MaterialType::Water)))
     fail(where, "water materials can only be bound to water_surface objects");
+  if (object.type != GeometryType::Mesh &&
+      object_uses_normal_texture(scene_, object))
+    fail(where, "normal maps are supported only by mesh objects");
   const auto id =
       insert_unique(object_ids_, object.name, scene_.objects.size(), where);
   scene_.objects.push_back(std::move(object));
@@ -591,6 +693,11 @@ std::int32_t SceneBuilder::add_mesh_instance(
          "mesh '" + resource.name +
              "' has no complete UV coordinates but the object binds a "
              "material or alpha texture");
+  if (!resource.mesh.empty() && !resource.mesh.has_complete_tangents() &&
+      object_uses_normal_texture(scene_, object))
+    fail("mesh_instance",
+         "mesh '" + resource.name +
+             "' has no complete valid tangent frame for its normal map");
   return add_object(std::move(object));
 }
 

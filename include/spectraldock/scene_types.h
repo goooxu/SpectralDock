@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <type_traits>
 #include <variant>
 #include <vector>
 
@@ -15,12 +16,18 @@ namespace spectraldock {
 constexpr std::int32_t kInvalidId = -1;
 
 enum class TextureType : std::uint32_t { Constant, Image };
+enum class TextureWrap : std::uint32_t {
+  ClampToEdge,
+  Repeat,
+  MirroredRepeat,
+};
 enum class MaterialType : std::uint32_t {
   Lambertian,
   Metal,
   Dielectric,
   Emitter,
   Water,
+  Pbr,
 };
 enum class GeometryType : std::uint32_t {
   Sphere,
@@ -81,6 +88,8 @@ struct Texture {
   Vec3 color{1.0f};
   std::filesystem::path image_path;
   bool srgb = true;
+  TextureWrap wrap_u = TextureWrap::ClampToEdge;
+  TextureWrap wrap_v = TextureWrap::ClampToEdge;
 };
 
 struct Material {
@@ -92,6 +101,10 @@ struct Material {
   float roughness = 0.5f;
   float ior = 1.5f;
   Vec3 absorption{0.0f};
+  float metallic = 0.0f;
+  std::int32_t metallic_roughness_texture_id = kInvalidId;
+  std::int32_t normal_texture_id = kInvalidId;
+  float normal_scale = 1.0f;
 };
 
 struct Transform {
@@ -111,15 +124,44 @@ struct MeshTriangle {
   std::uint32_t z = 0;
 };
 
+// MikkTSpace produces one tangent per face corner, not per indexed vertex.
+// The sign reconstructs the bitangent as sign * cross(normal, direction).
+// A zero direction/sign is deliberately retained for an unresolved corner.
+struct MeshTangent {
+  Vec3 direction{};
+  float sign = 0.0f;
+};
+
+static_assert(sizeof(MeshTangent) == 4 * sizeof(float),
+              "MeshTangent must match CUDA float4 layout");
+static_assert(std::is_standard_layout<MeshTangent>::value,
+              "MeshTangent must remain standard-layout");
+static_assert(std::is_trivially_copyable<MeshTangent>::value,
+              "MeshTangent must be device-copyable");
+
 struct TriangleMesh {
   std::vector<Vec3> positions;
   std::vector<Vec3> normals;
   std::vector<Vec2> texcoords;
   std::vector<MeshTriangle> indices;
+  // Unindexed face-corner order: three consecutive entries per triangle.
+  std::vector<MeshTangent> tangents;
 
   bool empty() const noexcept { return positions.empty() || indices.empty(); }
   bool has_complete_uvs() const noexcept {
     return !texcoords.empty() && texcoords.size() == positions.size();
+  }
+  bool has_complete_tangents() const noexcept {
+    if (tangents.empty() || tangents.size() != indices.size() * 3)
+      return false;
+    for (const MeshTangent& tangent : tangents) {
+      const float tangent_length_squared = length_squared(tangent.direction);
+      if (!finite(tangent.direction) || !finite(tangent_length_squared) ||
+          tangent_length_squared <= 0.0f ||
+          (tangent.sign != -1.0f && tangent.sign != 1.0f))
+        return false;
+    }
+    return true;
   }
 };
 

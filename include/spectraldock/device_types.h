@@ -19,6 +19,7 @@ enum DeviceMaterialType : std::uint32_t {
   kMaterialDielectric = 2,
   kMaterialEmitter = 3,
   kMaterialWater = 4,
+  kMaterialPbr = 5,
 };
 
 enum PrimitiveType : std::uint32_t {
@@ -47,17 +48,13 @@ enum DeviceLightType : std::uint32_t {
   kLightDirectional = 5,
 };
 
-enum TextureFlags : std::uint32_t {
-  kTextureSrgb = 1u << 0,
-};
-
 constexpr std::int32_t kInvalidIndex = -1;
 
 // CUDA texture objects are expected to use normalized coordinates. Image row
 // zero is the top row; device code flips the scene's bottom-left-origin v.
 struct TextureData {
   std::uint64_t object = 0;
-  std::uint32_t flags = kTextureSrgb;
+  std::uint32_t flags = 0;
 };
 
 struct MaterialData {
@@ -69,6 +66,9 @@ struct MaterialData {
   std::int32_t texture_index = kInvalidIndex;
   std::uint32_t type = kMaterialLambertian;
   float3 absorption = {0.0f, 0.0f, 0.0f};
+  std::int32_t metallic_roughness_texture_index = kInvalidIndex;
+  std::int32_t normal_texture_index = kInvalidIndex;
+  float normal_scale = 1.0f;
   std::uint32_t reserved = 0;
 };
 
@@ -121,12 +121,14 @@ enum MeshFlags : std::uint32_t {
   kMeshHasNormals = 1u << 0,
   kMeshHasTexcoords = 1u << 1,
   kMeshHasMaterials = 1u << 2,
+  kMeshHasTangents = 1u << 3,
 };
 
 struct DeviceMeshData {
   const float3* positions = nullptr;
   const float3* normals = nullptr;
   const float2* texcoords = nullptr;
+  const float4* corner_tangents = nullptr;
   const uint3* indices = nullptr;
   const std::int32_t* material_ids = nullptr;
   std::uint32_t vertex_count = 0;

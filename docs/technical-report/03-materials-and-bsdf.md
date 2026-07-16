@@ -1,6 +1,7 @@
 # 03　材质与 BSDF：表面怎样改变光
 
-渲染方程中的 $f_s$ 决定光到达表面后去向哪里。本章依次解释 SpectralDock 的四类材质：Lambert 漫反射、GGX 金属、光滑/粗糙介电质和发光表面。
+渲染方程中的 $f_s$ 决定光到达表面后去向哪里。本章依次解释 SpectralDock 的
+Lambert 漫反射、GGX 金属、metallic-roughness PBR、光滑/粗糙介电质和发光表面。
 
 ## 1. BSDF 是方向之间的“路由规则”
 
@@ -186,7 +187,9 @@ $$
 
 这里分母中的换行是普通乘法：即 $4\,n_o n_i$，不是加法。
 
-当前 `Renderer.material(type="metal", ...)` 直接构造纯金属材质，等价于把 `metallic` 固定为 1，所以实际的 $\mathbf F_0$ 直接取自 `base_color`。这是一种纯金属镜面微表面模型，不是常见的“金属度工作流”，也不含漫反射与镜面混合。
+`Renderer.material(type="metal", ...)` 仍直接构造纯金属材质，等价于把
+`metallic` 固定为 1，所以实际的 $\mathbf F_0$ 直接取自 `base_color`。
+需要连续金属度以及漫反射/镜面混合时使用下一节的 `type="pbr"`。
 
 ### 源码对照：完整 BRDF 与方向 PDF
 
@@ -239,7 +242,48 @@ p_B(\boldsymbol\omega_i)=
 {4|\boldsymbol\omega_o\cdot\mathbf h|}.
 $$
 
-`sample_ggx_vndf` 先把观察方向按 $\alpha$ 拉伸，在投影圆盘上采样可见区域，再把法线反拉伸到世界空间。与普通 NDF 抽样相比，它减少掠射角下生成不可见微表面、随后被拒绝的样本；BSDF 求值与 MIS 使用 `ggx_visible_normal_pdf` 返回的同一测度。metal 与下一节的粗糙 dielectric/water 共用这个 sampler，不增加随机数数量。
+`sample_ggx_vndf` 先把观察方向按 $\alpha$ 拉伸，在投影圆盘上采样可见区域，再把法线反拉伸到世界空间。与普通 NDF 抽样相比，它减少掠射角下生成不可见微表面、随后被拒绝的样本；BSDF 求值与 MIS 使用 `ggx_visible_normal_pdf` 返回的同一测度。metal、PBR 与下一节的粗糙 dielectric/water 共用这个 sampler。
+
+### 3.4 Metallic-roughness PBR
+
+PBR 材质先把 base color 与 packed MR 纹理解析到线性工作空间。G 通道乘
+perceptual roughness factor，B 通道乘 metallic factor，然后令
+
+$$
+\mathbf c_d=(1-m)\mathbf c,\qquad
+\mathbf F_0=(1-m)0.04+m\mathbf c.
+$$
+
+对反射方向，完整 BRDF 是 Fresnel 衰减的 Lambert 项与单次散射 GGX 项之和：
+
+$$
+f_r=(1-\mathbf F)\frac{\mathbf c_d}{\pi}
+ +\frac{\mathbf F D G}{4n_on_i}.
+$$
+
+采样器以观察方向的 Schlick Fresnel 估计两个波瓣的相对亮度，在 cosine
+hemisphere 与 GGX VNDF 之间选择；无论选择哪一支，返回的 PDF 都是两支密度的
+同一个显式混合。这样 BSDF 延续路径、有限灯/HDR NEE 与命中端 MIS 使用完全相同
+的测度。`metallic=1` 时漫反射消失并退化到 legacy `metal`；`metallic=0`
+仍保留 $F_0=0.04$ 的介电镜面。该模型不含微表面多重散射补偿，因此不承诺
+严格 furnace 能量守恒。
+
+PBR 的 `base_color`、`metallic` 和 `roughness` factor 都必须在
+$[0,1]$；`normal_scale` 只要是有限值即可。base-color texture 可按
+sRGB 注册，packed MR 与 normal texture 必须是 `linear`，防止数据通道
+被颜色解码破坏。
+
+### 3.5 Tangent-space normal map
+
+OBJ loader 用 MikkTSpace 为每个 triangle face-corner 生成 tangent 与 handedness，
+不把镜像 UV 缝错误地平均回共享顶点。着色器对未归一化插值的 $\mathbf T$、
+$\mathbf B$、$\mathbf N$ 应用 linear normal texel；`normal_scale` 只缩放切线空间
+XY，组合结果在 object space 归一化后再通过实例 inverse-transpose 进入世界空间。
+
+映射法线随后仍必须与定向 $\mathbf n_g$ 同半球，并经过本章 1.1 节的
+`effective_shading_normal`。因此 normal map 只塑造连续 BSDF；几何正反面、
+介质栈与 ray-origin offset 仍完全由 $\mathbf n_g$ 决定。当前这条路径只对具备
+完整 UV 和有效 MikkTSpace frame 的 triangle mesh 开放。
 
 ## 4. 介电质：从 delta 界面到粗糙微表面
 
@@ -462,11 +506,15 @@ $$
 
 主要实现都位于 [`src/device_programs.cu`](../../src/device_programs.cu)：
 
-- `evaluate_bsdf`：计算 Lambert、GGX metal 和粗糙介电反射/透射的 BSDF 值与连续方向 PDF；
-- `sample_bsdf`：生成 Lambert、GGX 或介电质方向及路径权重；
+- `evaluate_bsdf`：计算 Lambert、GGX metal、metallic-roughness PBR 和粗糙介电反射/透射的 BSDF 值与连续方向 PDF；
+- `sample_bsdf`：生成 Lambert、GGX、PBR 混合或介电质方向及路径权重；
 - `ggx_distribution`、`ggx_g1`、`sample_ggx_vndf`、`dielectric_fresnel`：微表面分布、可见法线采样和精确介电 Fresnel。
 
-Python API 与原生 SceneBuilder 只要求 `base_color` 非负，没有强制每个通道不超过 1。物理上要保持被动表面能量守恒，场景作者仍应让普通反射率处于合理范围。大于 1 的 `emission` 则很常见，因为 HDR 光源本来就需要比显示白色更亮。
+legacy `lambertian`/`metal`/`dielectric`/`water`/`emitter` 路径只要求
+`base_color` 通道非负，没有强制不超过 1；PBR factor 路径则明确要求
+`base_color` 的每个通道都在 $[0,1]$。物理上要保持被动表面能量守恒，
+场景作者仍应为 legacy 反射率选择合理范围。大于 1 的 `emission`
+则很常见，因为 HDR 光源本来就需要比显示白色更亮。
 
 上述几何/着色法线分工可对照 [PBRT v4 的 `SurfaceInteraction`](https://www.pbr-book.org/4ed/Geometry_and_Transformations/Interactions)；路径吞吐量中的着色法线 `AbsDot` 见 [PBRT v4 的 Simple Path Tracer](https://www.pbr-book.org/4ed/Light_Transport_I_Surface_Reflection/A_Simple_Path_Tracer)。着色法线为什么可以破坏对称性与能量守恒，以及严格 adjoint BSDF 如何构造，见 Eric Veach 博士论文[ *Robust Monte Carlo Methods for Light Transport Simulation* 第 5 章](https://graphics.stanford.edu/papers/veach_thesis/)。SpectralDock 明确只采用前两项中的法线分工与 `AbsDot` 形式，没有实现 Veach correction。
 

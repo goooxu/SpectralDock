@@ -16,5 +16,9 @@
 *.yml text eol=lf
 *.sha256 text eol=lf
 
+# Preserve the pinned upstream MikkTSpace sources byte-for-byte.
+third_party/mikktspace/mikktspace.c -whitespace
+third_party/mikktspace/mikktspace.h -whitespace
+
 *.png binary
 *.hdr binary

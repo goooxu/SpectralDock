@@ -18,6 +18,8 @@ commit 列表仍以 Git 历史为准。发布新版本时，应把 `Unreleased` 
   刚体模拟、应用 actor-local 渲染附件并立即启动 OptiX。
 - 增加 `mesh(materials={...})` 显式多材质 OBJ 接口，通过逐三角形材质索引
   在单个 GAS 中解析 `usemtl` 槽；新增 CC0 Sparky OBJ/MTL/albedo 资产。
+- 增加 metallic-roughness PBR 材质、独立 base-color/MR/normal 纹理槽、
+  MikkTSpace OBJ 切线生成，以及 clamp/repeat/mirrored-repeat 纹理寻址。
 
 ### 变更
 
@@ -41,6 +43,8 @@ commit 列表仍以 Git 历史为准。发布新版本时，应把 `Unreleased` 
 - 修正平滑网格的着色法线语义：连续 Lambert/GGX 按有效着色法线及 `AbsDot`
   求值，定向几何法线统一负责物理半空间、介质栈和所有表面射线偏移；光滑
   dielectric/water 的 Fresnel 与 Snell 方向不再被顶点法线扭曲。
+- 修正 sRGB 图像纹理的过滤顺序：CUDA 现在先在线性空间解码颜色，再执行
+  双线性插值，不再对编码码值插值后才解码。
 
 ### 移除
 

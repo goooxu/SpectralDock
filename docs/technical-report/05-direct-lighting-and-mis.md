@@ -1,6 +1,6 @@
 # 05　直接光照、NEE 与 MIS
 
-仅按 BSDF 随机游走在数学上可行，但一盏小灯或 HDR 环境中的高亮区域在表面半球中只占很小方向范围。随机射线可能经过成千上万次尝试也找不到它，画面便出现高方差亮点。SpectralDock 在 Lambert、metal 和非零粗糙度的 dielectric/water 表面主动连接有限灯与 HDR 环境样本，并逐盏连接 point/directional delta 灯。这叫 Next Event Estimation（NEE）。
+仅按 BSDF 随机游走在数学上可行，但一盏小灯或 HDR 环境中的高亮区域在表面半球中只占很小方向范围。随机射线可能经过成千上万次尝试也找不到它，画面便出现高方差亮点。SpectralDock 在 Lambert、metal、metallic-roughness PBR 和非零粗糙度的 dielectric/water 表面主动连接有限灯与 HDR 环境样本，并逐盏连接 point/directional delta 灯。这叫 Next Event Estimation（NEE）。
 
 ## 1. 在灯面上取一个随机点
 
@@ -123,7 +123,7 @@ V(\mathbf x,\mathbf y)
 }{p_L(\boldsymbol\omega_i)}.
 $$
 
-对所有连续表面散射，实现按 PBRT 风格使用 $c_s=|\mathbf n_s^{\mathrm{eff}}\!\cdot\boldsymbol\omega_i|$，并把 $f_s c_s$ 一起保存为 `f_cos`。定向几何法线 $\mathbf n_g$ 独立决定这条连接是真实反射还是透射：Lambert/metal 不允许穿过几何背面，粗糙介电则按 $\mathbf n_g$ 选反射或透射公式。因此一个物理上有效、但位于着色法线负半球的灯方向仍可有有限 `f_cos`；它的 BSDF 方向 PDF 可以是零，此时灯采样策略自然获得完整 MIS 权重。
+对所有连续表面散射，实现按 PBRT 风格使用 $c_s=|\mathbf n_s^{\mathrm{eff}}\!\cdot\boldsymbol\omega_i|$，并把 $f_s c_s$ 一起保存为 `f_cos`。定向几何法线 $\mathbf n_g$ 独立决定这条连接是真实反射还是透射：Lambert/metal/PBR 不允许穿过几何背面，粗糙介电则按 $\mathbf n_g$ 选反射或透射公式。因此一个物理上有效、但位于着色法线负半球的灯方向仍可有有限 `f_cos`；它的 BSDF 方向 PDF 可以是零，此时灯采样策略自然获得完整 MIS 权重。
 
 一个公式同时解释了几个常见现象：
 
@@ -394,7 +394,7 @@ $$
 
 ## 7. 当前直接光采样的边界
 
-[`sample_finite_direct_light`](../../src/device_programs.cu) 与 [`sample_environment_direct_light`](../../src/device_programs.cu) 在 Lambert、metal 和 `roughness > 0` 的 dielectric/water 表面执行。`roughness = 0` 的介电质仍是 delta BSDF，通过继续路径寻找灯光；首个光滑 water 命中另有一次有界 Fresnel 分裂，但不是普通 NEE。
+[`sample_finite_direct_light`](../../src/device_programs.cu) 与 [`sample_environment_direct_light`](../../src/device_programs.cu) 在 Lambert、metal、PBR 和 `roughness > 0` 的 dielectric/water 表面执行。`roughness = 0` 的介电质仍是 delta BSDF，通过继续路径寻找灯光；首个光滑 water 命中另有一次有界 Fresnel 分裂，但不是普通 NEE。
 
 有限灯 NEE 支持 rectangle、disk、sphere 面积灯和程序化 flame，HDR environment 则通过独立的无限远 NEE 域采样；point/directional 在第三个域逐灯求值。以下光源仍不被主动采样：
 

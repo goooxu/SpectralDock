@@ -51,6 +51,7 @@ run_gpu_check() {
 run_gpu_check check_integrator_mis.py --spp 4
 run_gpu_check check_delta_lights_and_firefly.py
 run_gpu_check check_shading_normals.py
+run_gpu_check check_pbr_materials.py
 run_gpu_check check_flame_transport.py --spp 32
 run_gpu_check check_environment_importance.py \
   --deterministic-spp 4 --rotation-spp 32 \

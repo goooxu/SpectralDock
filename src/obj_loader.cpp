@@ -3,12 +3,17 @@
 #define TINYOBJLOADER_IMPLEMENTATION
 #include "tiny_obj_loader.h"
 
+#include "mikktspace.h"
+
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <fstream>
 #include <iterator>
 #include <limits>
+#include <queue>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -109,6 +114,304 @@ Vec3 checked_unit_normal(const std::filesystem::path& path, Vec3 value,
 
 bool same_position(Vec3 left, Vec3 right) {
   return left.x == right.x && left.y == right.y && left.z == right.z;
+}
+
+std::uint32_t triangle_vertex(const MeshTriangle& triangle, int corner) {
+  if (corner == 0) return triangle.x;
+  if (corner == 1) return triangle.y;
+  return triangle.z;
+}
+
+struct TangentVertexKey {
+  Vec3 position{};
+  Vec3 normal{};
+  Vec2 texcoord{};
+
+  bool operator==(const TangentVertexKey& other) const noexcept {
+    return position.x == other.position.x &&
+           position.y == other.position.y &&
+           position.z == other.position.z && normal.x == other.normal.x &&
+           normal.y == other.normal.y && normal.z == other.normal.z &&
+           texcoord.x == other.texcoord.x &&
+           texcoord.y == other.texcoord.y;
+  }
+};
+
+std::uint32_t float_bits(float value) {
+  // MikkTSpace welds with float equality, for which -0 and +0 compare equal.
+  if (value == 0.0f) return 0;
+  std::uint32_t bits = 0;
+  static_assert(sizeof(bits) == sizeof(value));
+  std::memcpy(&bits, &value, sizeof(bits));
+  return bits;
+}
+
+void hash_float(std::size_t& seed, float value) {
+  seed ^= static_cast<std::size_t>(float_bits(value)) +
+          static_cast<std::size_t>(0x9e3779b9u) + (seed << 6) + (seed >> 2);
+}
+
+struct TangentVertexKeyHash {
+  std::size_t operator()(const TangentVertexKey& key) const noexcept {
+    std::size_t seed = 0;
+    hash_float(seed, key.position.x);
+    hash_float(seed, key.position.y);
+    hash_float(seed, key.position.z);
+    hash_float(seed, key.normal.x);
+    hash_float(seed, key.normal.y);
+    hash_float(seed, key.normal.z);
+    hash_float(seed, key.texcoord.x);
+    hash_float(seed, key.texcoord.y);
+    return seed;
+  }
+};
+
+struct TangentEdgeKey {
+  std::uint32_t low = 0;
+  std::uint32_t high = 0;
+
+  bool operator==(const TangentEdgeKey& other) const noexcept {
+    return low == other.low && high == other.high;
+  }
+};
+
+struct TangentEdgeKeyHash {
+  std::size_t operator()(const TangentEdgeKey& key) const noexcept {
+    std::size_t seed = static_cast<std::size_t>(key.low);
+    seed ^= static_cast<std::size_t>(key.high) +
+            static_cast<std::size_t>(0x9e3779b9u) + (seed << 6) +
+            (seed >> 2);
+    return seed;
+  }
+};
+
+struct TangentEdge {
+  std::array<std::uint32_t, 2> vertices{};
+  std::array<std::size_t, 2> corners{};
+};
+
+struct TangentEdgeGroup {
+  TangentEdge first{};
+  TangentEdge second{};
+  std::size_t count = 0;
+};
+
+bool mikk_nonzero(float value) {
+  return std::fabs(value) > std::numeric_limits<float>::min();
+}
+
+bool mikk_nonzero(Vec3 value) {
+  return mikk_nonzero(value.x) || mikk_nonzero(value.y) ||
+         mikk_nonzero(value.z);
+}
+
+bool has_tangent_derivatives(const TriangleMesh& mesh,
+                             const MeshTriangle& triangle) {
+  const std::uint32_t i0 = triangle.x;
+  const std::uint32_t i1 = triangle.y;
+  const std::uint32_t i2 = triangle.z;
+  const Vec3 dp1 = mesh.positions[i1] - mesh.positions[i0];
+  const Vec3 dp2 = mesh.positions[i2] - mesh.positions[i0];
+  const Vec2 uv0 = mesh.texcoords[i0];
+  const Vec2 uv1 = mesh.texcoords[i1];
+  const Vec2 uv2 = mesh.texcoords[i2];
+  const float du1 = uv1.x - uv0.x;
+  const float dv1 = uv1.y - uv0.y;
+  const float du2 = uv2.x - uv0.x;
+  const float dv2 = uv2.y - uv0.y;
+  const float determinant = du1 * dv2 - dv1 * du2;
+  const Vec3 tangent_numerator = dp1 * dv2 - dp2 * dv1;
+  const Vec3 bitangent_numerator = dp2 * du1 - dp1 * du2;
+  const float tangent_length_squared = length_squared(tangent_numerator);
+  const float bitangent_length_squared = length_squared(bitangent_numerator);
+  return finite(determinant) && mikk_nonzero(determinant) &&
+         finite(tangent_numerator) && finite(bitangent_numerator) &&
+         finite(tangent_length_squared) && finite(bitangent_length_squared) &&
+         mikk_nonzero(tangent_numerator) &&
+         mikk_nonzero(bitangent_numerator) &&
+         mikk_nonzero(std::sqrt(tangent_length_squared)) &&
+         mikk_nonzero(std::sqrt(bitangent_length_squared));
+}
+
+std::vector<std::uint8_t> resolved_tangent_corners(
+    const TriangleMesh& mesh) {
+  const std::size_t corner_count = mesh.indices.size() * 3;
+  std::vector<std::uint8_t> resolved(corner_count, 0);
+  std::queue<std::size_t> pending;
+  for (std::size_t face = 0; face < mesh.indices.size(); ++face) {
+    if (!has_tangent_derivatives(mesh, mesh.indices[face])) continue;
+    for (std::size_t corner = 0; corner < 3; ++corner) {
+      const std::size_t slot = face * 3 + corner;
+      resolved[slot] = 1;
+      pending.push(slot);
+    }
+  }
+
+  std::unordered_map<TangentVertexKey, std::uint32_t, TangentVertexKeyHash>
+      welded_vertices;
+  std::vector<std::uint32_t> welded_corner(corner_count);
+  for (std::size_t face = 0; face < mesh.indices.size(); ++face) {
+    const MeshTriangle& triangle = mesh.indices[face];
+    for (int corner = 0; corner < 3; ++corner) {
+      const std::uint32_t vertex = triangle_vertex(triangle, corner);
+      const TangentVertexKey key{mesh.positions[vertex],
+                                 mesh.normals[vertex],
+                                 mesh.texcoords[vertex]};
+      const auto inserted = welded_vertices.emplace(
+          key, static_cast<std::uint32_t>(welded_vertices.size()));
+      welded_corner[face * 3 + static_cast<std::size_t>(corner)] =
+          inserted.first->second;
+    }
+  }
+
+  std::unordered_map<TangentEdgeKey, TangentEdgeGroup, TangentEdgeKeyHash>
+      edges;
+  for (std::size_t face = 0; face < mesh.indices.size(); ++face) {
+    for (std::size_t edge = 0; edge < 3; ++edge) {
+      const std::size_t first_corner = face * 3 + edge;
+      const std::size_t second_corner = face * 3 + ((edge + 1) % 3);
+      const std::uint32_t first_vertex = welded_corner[first_corner];
+      const std::uint32_t second_vertex = welded_corner[second_corner];
+      const TangentEdgeKey key{std::min(first_vertex, second_vertex),
+                               std::max(first_vertex, second_vertex)};
+      TangentEdgeGroup& group = edges[key];
+      const TangentEdge value{{first_vertex, second_vertex},
+                              {first_corner, second_corner}};
+      if (group.count == 0) {
+        group.first = value;
+      } else if (group.count == 1) {
+        group.second = value;
+      }
+      ++group.count;
+    }
+  }
+
+  constexpr std::size_t kNoCorner = std::numeric_limits<std::size_t>::max();
+  std::vector<std::array<std::size_t, 2>> neighbors(
+      corner_count, {kNoCorner, kNoCorner});
+  const auto add_neighbor = [&](std::size_t from, std::size_t to) {
+    auto& slots = neighbors[from];
+    if (slots[0] == kNoCorner) {
+      slots[0] = to;
+    } else if (slots[0] != to && slots[1] == kNoCorner) {
+      slots[1] = to;
+    }
+  };
+  for (const auto& item : edges) {
+    const TangentEdgeGroup& group = item.second;
+    // Non-manifold edges have no unique MikkTSpace neighbor. Be
+    // conservative and leave any corner that depends on one detectable.
+    if (group.count != 2) continue;
+    // MikkTSpace recognizes manifold adjacency only when the two faces walk
+    // their shared edge in opposite directions. Do not let an inconsistent
+    // winding make a fallback tangent look inherited and therefore valid.
+    if (group.first.vertices[0] != group.second.vertices[1] ||
+        group.first.vertices[1] != group.second.vertices[0]) {
+      continue;
+    }
+    for (std::size_t a = 0; a < 2; ++a) {
+      const std::size_t b = 1u - a;
+      add_neighbor(group.first.corners[a], group.second.corners[b]);
+      add_neighbor(group.second.corners[b], group.first.corners[a]);
+    }
+  }
+
+  while (!pending.empty()) {
+    const std::size_t corner = pending.front();
+    pending.pop();
+    for (std::size_t neighbor : neighbors[corner]) {
+      if (neighbor == kNoCorner || resolved[neighbor]) continue;
+      resolved[neighbor] = 1;
+      pending.push(neighbor);
+    }
+  }
+  return resolved;
+}
+
+struct MikkMesh {
+  TriangleMesh* mesh = nullptr;
+  const std::vector<std::uint8_t>* resolved = nullptr;
+};
+
+const MikkMesh& mikk_mesh(const SMikkTSpaceContext* context) {
+  return *static_cast<const MikkMesh*>(context->m_pUserData);
+}
+
+int mikk_face_count(const SMikkTSpaceContext* context) {
+  return static_cast<int>(mikk_mesh(context).mesh->indices.size());
+}
+
+int mikk_face_vertex_count(const SMikkTSpaceContext*, int) { return 3; }
+
+std::uint32_t mikk_vertex(const SMikkTSpaceContext* context, int face,
+                          int corner) {
+  const MeshTriangle& triangle =
+      mikk_mesh(context).mesh->indices[static_cast<std::size_t>(face)];
+  return triangle_vertex(triangle, corner);
+}
+
+void mikk_position(const SMikkTSpaceContext* context, float out[], int face,
+                   int corner) {
+  const Vec3 value =
+      mikk_mesh(context).mesh->positions[mikk_vertex(context, face, corner)];
+  out[0] = value.x;
+  out[1] = value.y;
+  out[2] = value.z;
+}
+
+void mikk_normal(const SMikkTSpaceContext* context, float out[], int face,
+                 int corner) {
+  const Vec3 value =
+      mikk_mesh(context).mesh->normals[mikk_vertex(context, face, corner)];
+  out[0] = value.x;
+  out[1] = value.y;
+  out[2] = value.z;
+}
+
+void mikk_texcoord(const SMikkTSpaceContext* context, float out[], int face,
+                   int corner) {
+  const Vec2 value =
+      mikk_mesh(context).mesh->texcoords[mikk_vertex(context, face, corner)];
+  out[0] = value.x;
+  out[1] = value.y;
+}
+
+void mikk_tangent(const SMikkTSpaceContext* context, const float tangent[],
+                  float sign, int face, int corner) {
+  MikkMesh& user =
+      *static_cast<MikkMesh*>(context->m_pUserData);
+  const std::size_t slot =
+      static_cast<std::size_t>(face) * 3 + static_cast<std::size_t>(corner);
+  if (!(*user.resolved)[slot]) return;
+  const Vec3 direction{tangent[0], tangent[1], tangent[2]};
+  const float direction_length_squared = length_squared(direction);
+  if (!finite(direction) || !finite(direction_length_squared) ||
+      direction_length_squared <= 0.0f || !finite(sign) || sign == 0.0f)
+    return;
+  user.mesh->tangents[slot] = {direction, sign < 0.0f ? -1.0f : 1.0f};
+}
+
+void generate_tangents(const std::filesystem::path& path,
+                       TriangleMesh& mesh) {
+  if (!mesh.has_complete_uvs()) return;
+  if (mesh.indices.size() > static_cast<std::size_t>(
+                                std::numeric_limits<int>::max() / 3))
+    obj_fail(path, "triangle count exceeds MikkTSpace int range");
+
+  const std::vector<std::uint8_t> resolved =
+      resolved_tangent_corners(mesh);
+  mesh.tangents.assign(mesh.indices.size() * 3, MeshTangent{});
+  MikkMesh user{&mesh, &resolved};
+  SMikkTSpaceInterface interface{};
+  interface.m_getNumFaces = mikk_face_count;
+  interface.m_getNumVerticesOfFace = mikk_face_vertex_count;
+  interface.m_getPosition = mikk_position;
+  interface.m_getNormal = mikk_normal;
+  interface.m_getTexCoord = mikk_texcoord;
+  interface.m_setTSpaceBasic = mikk_tangent;
+  SMikkTSpaceContext context{&interface, &user};
+  if (!genTangSpaceDefault(&context))
+    obj_fail(path, "MikkTSpace tangent generation failed");
 }
 
 TriangleMesh load_obj_mesh_impl(
@@ -302,6 +605,7 @@ TriangleMesh load_obj_mesh_impl(
     if (triangle_material_names != nullptr)
       triangle_material_names->push_back(face.material_name);
   }
+  generate_tangents(path, result);
   return result;
 }
 

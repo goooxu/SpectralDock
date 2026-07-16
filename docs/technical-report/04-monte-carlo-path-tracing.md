@@ -42,7 +42,7 @@ $$
 
 因此标准差大约按 $1/\sqrt N$ 下降。把每像素样本数从 16 提高到 64，计算量约增至四倍，随机误差通常只减半。路径追踪中的颗粒并非算法“算错”，而是有限随机样本的统计波动。
 
-**重要性采样**让 $p$ 的形状接近 $|g|$：把样本集中在贡献大的方向，从而用同样样本数降低方差。Lambert 的余弦加权采样和 GGX 的微表面法线采样都属于重要性采样。
+**重要性采样**让 $p$ 的形状接近 $|g|$：把样本集中在贡献大的方向，从而用同样样本数降低方差。Lambert 的余弦加权采样、GGX 的微表面法线采样，以及 PBR 对这两者的显式混合都属于重要性采样。
 
 ## 2. 路径吞吐量
 
@@ -63,7 +63,7 @@ f_s(\boldsymbol\omega_i,\boldsymbol\omega_o)
 }{p_B(\boldsymbol\omega_i)}.
 $$
 
-对连续的 Lambert/GGX 分支——包括非零粗糙度的 dielectric 与 water——`sample_bsdf` 返回的 `weight` 正是这个分式。只有 `roughness = 0` 的 dielectric/water 是 delta 离散事件，不能用普通有限 BSDF 除以连续方向 PDF；其等价事件权重由反射/折射分支概率、`base_color` 和透射时的 $(\eta_i/\eta_t)^2$ 构成。$\boldsymbol\beta$ 记录路径到当前位置的整体权重；它不是剩余光子数量，也不是概率，所以经过 PDF 或俄罗斯轮盘补偿后可以大于 1。
+对连续的 Lambert/GGX 分支——包括 PBR 的混合瓣和非零粗糙度的 dielectric/water——`sample_bsdf` 返回的 `weight` 正是这个分式。只有 `roughness = 0` 的 dielectric/water 是 delta 离散事件，不能用普通有限 BSDF 除以连续方向 PDF；其等价事件权重由反射/折射分支概率、`base_color` 和透射时的 $(\eta_i/\eta_t)^2$ 构成。$\boldsymbol\beta$ 记录路径到当前位置的整体权重；它不是剩余光子数量，也不是概率，所以经过 PDF 或俄罗斯轮盘补偿后可以大于 1。
 
 下面是公式在路径循环中的落点：`scatter.weight` 对应分式，`throughput` 对应 $\boldsymbol\beta$。非负截断只消除浮点或实现错误产生的负分量；若三通道均为零，路径不可能再产生贡献。局部方向 PDF、是否为 delta 事件以及当前顶点的有限选灯模式则留给下一顶点的 MIS 使用。
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Material Cathedral: compare diffuse, metal, and dielectric transport."""
+"""Material Cathedral: compare legacy and metallic-roughness transport."""
 
 from pathlib import Path
 
@@ -36,12 +36,17 @@ def create_renderer() -> Renderer:
         name="cool_wall", type="lambertian", base_color=(0.12, 0.23, 0.34)
     )
     ceramic = renderer.material(
-        name="ceramic", type="lambertian", base_color=(0.93, 0.88, 0.75)
+        name="ceramic",
+        type="pbr",
+        base_color=(0.93, 0.88, 0.75),
+        metallic=0.0,
+        roughness=0.28,
     )
     rough_metal = renderer.material(
         name="rough_metal",
-        type="metal",
+        type="pbr",
         base_color=(0.74, 0.42, 0.18),
+        metallic=1.0,
         roughness=0.34,
     )
     glass = renderer.material(
