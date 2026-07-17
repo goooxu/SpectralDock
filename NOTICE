@@ -9,8 +9,12 @@ THIRD_PARTY_NOTICES.md.
 
 Except where a different license is stated, the source code, scripts, tools,
 documentation, scenes, SVG figures, and tests are licensed under Apache-2.0.
-The eighteen visual assets explicitly listed in
-assets/examples/models/CC0-1.0.txt are dedicated under CC0-1.0.
+The twenty-one files explicitly listed in
+assets/examples/models/CC0-1.0.txt are distributed under CC0-1.0. Nineteen
+project-contributed assets are dedicated there by their contributors; the two
+Spot assets retain Keenan Crane's upstream CC0-1.0 dedication.
+The Capsule Mascot and Sparky bundles are AI-generated project contributions;
+the deterministic Capsule generator records reproducibility, not authorship.
 third_party/tinyobjloader remains under its upstream MIT license.
 The vendored third_party/mikktspace/mikktspace.c and mikktspace.h remain
 under their upstream zlib-style license; the complete notice is retained at

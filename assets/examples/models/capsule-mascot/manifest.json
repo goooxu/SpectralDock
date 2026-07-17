@@ -1,0 +1,176 @@
+{
+  "schema_version": 3,
+  "name": "capsule-mascot",
+  "path_base": "manifest_directory",
+  "asset": "capsule-mascot.obj",
+  "material_library": "capsule-mascot.mtl",
+  "description": "AI-generated modular low-poly capsule robot mascot with visor, eyes, asymmetric antenna, gloves, boots, belt flange, and 15 named material slots.",
+  "source": "AI-generated for SpectralDock",
+  "generator": "spectraldock-mascot-generator/1.2",
+  "license": "CC0-1.0",
+  "license_file": "../CC0-1.0.txt",
+  "source_archives_in_distribution": false,
+  "coordinate_system": {
+    "up": "+Y",
+    "front": "+Z",
+    "ground_y": 0.0,
+    "units": "scene units"
+  },
+  "materials": [
+    {
+      "name": "mascot_torso",
+      "diffuse": [
+        0.95,
+        0.82,
+        0.18
+      ]
+    },
+    {
+      "name": "mascot_arm_left",
+      "diffuse": [
+        0.95,
+        0.82,
+        0.18
+      ]
+    },
+    {
+      "name": "mascot_arm_right",
+      "diffuse": [
+        0.95,
+        0.82,
+        0.18
+      ]
+    },
+    {
+      "name": "mascot_leg_left",
+      "diffuse": [
+        0.95,
+        0.82,
+        0.18
+      ]
+    },
+    {
+      "name": "mascot_leg_right",
+      "diffuse": [
+        0.95,
+        0.82,
+        0.18
+      ]
+    },
+    {
+      "name": "mascot_visor",
+      "diffuse": [
+        0.25,
+        0.27,
+        0.3
+      ]
+    },
+    {
+      "name": "mascot_eye_left",
+      "diffuse": [
+        0.95,
+        0.95,
+        0.98
+      ]
+    },
+    {
+      "name": "mascot_eye_right",
+      "diffuse": [
+        0.95,
+        0.95,
+        0.98
+      ]
+    },
+    {
+      "name": "mascot_belt_flange",
+      "diffuse": [
+        0.1,
+        0.18,
+        0.35
+      ]
+    },
+    {
+      "name": "mascot_glove_left",
+      "diffuse": [
+        0.22,
+        0.12,
+        0.06
+      ]
+    },
+    {
+      "name": "mascot_glove_right",
+      "diffuse": [
+        0.22,
+        0.12,
+        0.06
+      ]
+    },
+    {
+      "name": "mascot_boot_left",
+      "diffuse": [
+        0.22,
+        0.12,
+        0.06
+      ]
+    },
+    {
+      "name": "mascot_boot_right",
+      "diffuse": [
+        0.22,
+        0.12,
+        0.06
+      ]
+    },
+    {
+      "name": "mascot_antenna_stem",
+      "diffuse": [
+        0.55,
+        0.57,
+        0.6
+      ]
+    },
+    {
+      "name": "mascot_antenna_tip",
+      "diffuse": [
+        1.0,
+        0.9,
+        0.3
+      ]
+    }
+  ],
+  "vertices": 2936,
+  "triangles": 5816,
+  "components": [
+    "mascot_torso",
+    "mascot_visor",
+    "mascot_eye_left",
+    "mascot_eye_right",
+    "mascot_belt_flange",
+    "mascot_arm_left",
+    "mascot_glove_left",
+    "mascot_arm_right",
+    "mascot_glove_right",
+    "mascot_leg_left",
+    "mascot_boot_left",
+    "mascot_leg_right",
+    "mascot_boot_right",
+    "mascot_antenna_stem",
+    "mascot_antenna_tip"
+  ],
+  "bounds": {
+    "min": [
+      -0.7,
+      0.0,
+      -0.5
+    ],
+    "max": [
+      0.7,
+      2.0,
+      0.5
+    ]
+  },
+  "obj_sha256": "7a9aa447bb920a5dab049a0ad44dd1217c3b7ad7d2dcb6efb851238d1259b0bf",
+  "obj_bytes": 180904,
+  "mtl_sha256": "f0a64ddaaa69531f54c6bac98ab4fe08e862b32844a7d8488c4fd6f3e9a452cd",
+  "mtl_bytes": 641
+}

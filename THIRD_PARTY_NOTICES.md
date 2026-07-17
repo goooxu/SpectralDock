@@ -1,8 +1,8 @@
 # Third-party notices
 
-This file records third-party code or formulas present in the SpectralDock
-source distribution. The repository-level Apache-2.0 license does not replace
-the licenses identified below.
+This file records third-party code, data, or formulas present in the
+SpectralDock source distribution. The repository-level Apache-2.0 license does
+not replace the licenses identified below.
 
 ## PCG-XSH-RR 64/32
 
@@ -32,6 +32,23 @@ the licenses identified below.
 This compact per-channel fit is not the complete Academy Color Encoding
 System, and it does not implement ACES color-space transforms, RRT, ODT, or
 display selection.
+
+## Spot model and texture
+
+- Creator: Keenan Crane
+- Source: https://www.cs.cmu.edu/~kmcrane/Projects/ModelRepository/
+- Upstream archive:
+  https://www.cs.cmu.edu/~kmcrane/Projects/ModelRepository/spot.zip
+- License: CC0 1.0 Universal
+- Included files: `assets/examples/models/spot/spot_triangulated.obj` and
+  `assets/examples/models/spot/spot_texture.png`
+- Local changes: none
+
+The upstream page describes Spot as a spotted animal and permits use for any
+purpose. Attribution is not required by CC0, but the author asks paper authors
+to consider citing Keenan Crane, Ulrich Pinkall, and Peter Schröder, “Robust
+fairing via conformal curvature flow,” ACM Transactions on Graphics 32(4),
+2013.
 
 ## tinyobjloader 2.0.0
 

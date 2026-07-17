@@ -113,7 +113,8 @@ def create_renderer() -> Renderer:
         base_color=(1.0, 0.85, 0.20),
     )
     mascot = renderer.mesh(
-        name="mascot", path=ROOT / "assets/examples/models/capsule-mascot.obj"
+        name="mascot",
+        path=ROOT / "assets/examples/models/capsule-mascot/capsule-mascot.obj",
     )
     sparky = renderer.mesh(
         name="sparky",

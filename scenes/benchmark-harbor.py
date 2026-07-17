@@ -68,7 +68,8 @@ def create_renderer(seed: int = DEFAULT_SEED) -> Renderer:
         renderer.material(name="mascot_3", type="lambertian", base_color=(0.82, 0.82, 0.76)),
     )
     mascot = renderer.mesh(
-        name="mascot", path=ROOT / "assets/examples/models/capsule-mascot.obj"
+        name="mascot",
+        path=ROOT / "assets/examples/models/capsule-mascot/capsule-mascot.obj",
     )
 
     rng = random.Random(seed)

@@ -102,7 +102,7 @@ python3 scenes/lava-temple-oracle.py
 
 八个静态示例直接进入 OptiX。两个物理示例在同一个 Python 程序中显式创建 `PhysicsWorld`、运行 fresh GPU PhysX、把结果应用到 `Renderer`，然后调用 OptiX；它们不会读取或生成场景 JSON，也不会回退到 CPU 物理。
 
-Radiance Pavilion 以胶囊吉祥物和显式十槽材质映射的 Sparky 为双主角，且 HDR 环境是唯一光源；gallery 与同 stem stats 来自 RTX 5090 正式渲染。
+Radiance Pavilion 以两个 AI 生成角色——胶囊吉祥物和显式十槽材质映射的 Sparky——为双主角，且 HDR 环境是唯一光源；gallery 与同 stem stats 来自 RTX 5090 正式渲染。
 
 维护者可用 `./scripts/render-examples.sh` 依次直接执行十个程序。该脚本只是批处理，不把 Python 文件作为参数传给渲染器。正式示例参数较高，其中封面为 3840×2160、2048 spp。
 

@@ -222,7 +222,8 @@ def create_renderer() -> Renderer:
         name="magenta_glow", type="emitter", emission=(11.0, 0.35, 6.8)
     )
     mascot = renderer.mesh(
-        name="mascot", path=ROOT / "assets/examples/models/capsule-mascot.obj"
+        name="mascot",
+        path=ROOT / "assets/examples/models/capsule-mascot/capsule-mascot.obj",
     )
 
     for name, p1, p2, p3, material in (

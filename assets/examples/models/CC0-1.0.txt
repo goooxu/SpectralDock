@@ -1,13 +1,17 @@
 CC0 1.0 Universal
 
-The following eighteen assets, and only these assets, are dedicated under
-Creative Commons CC0 1.0 Universal:
+The following twenty-one assets, and only these assets, are distributed under
+Creative Commons CC0 1.0 Universal.
 
-- assets/examples/models/capsule-mascot.obj
+The following nineteen project-contributed assets are dedicated under CC0 by
+their contributors:
+
+- assets/examples/models/capsule-mascot/capsule-mascot.obj
+- assets/examples/models/capsule-mascot/capsule-mascot.mtl
+- assets/examples/models/capsule-mascot/manifest.json
 - assets/examples/models/sparky/sparky.obj
 - assets/examples/models/sparky/sparky.mtl
 - assets/examples/models/sparky/sparky_albedo.png
-- assets/examples/model-manifest.json
 - assets/examples/environments/radiance-pavilion.hdr
 - assets/examples/textures/planet-azure.png
 - assets/examples/textures/planet-ember.png
@@ -22,10 +26,20 @@ Creative Commons CC0 1.0 Universal:
 - docs/gallery/ember-forge.png
 - docs/gallery/radiance-pavilion.png
 
+The following two third-party assets retain Keenan Crane's upstream CC0 1.0
+Universal dedication:
+
+- assets/examples/models/spot/spot_triangulated.obj
+- assets/examples/models/spot/spot_texture.png
+
+Upstream source:
+https://www.cs.cmu.edu/~kmcrane/Projects/ModelRepository/
+
 To the extent the contributors hold copyright or related or neighboring
-rights in these files, they waive those rights as permitted by law. The files
-are provided as-is and without warranties. For AI-generated or AI-assisted
-images, this dedication makes no representation of uniqueness or exclusivity.
+rights in the nineteen project-contributed files above, they waive those
+rights as permitted by law. All twenty-one files are provided as-is and without
+warranties. For AI-generated or AI-assisted assets, the project dedication
+makes no representation of uniqueness or exclusivity.
 
 This dedication does not apply to tools/generate_mascot.py,
 tools/generate_hdr_environment.py,

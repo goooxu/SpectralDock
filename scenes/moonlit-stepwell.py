@@ -66,7 +66,8 @@ def create_renderer() -> Renderer:
         name="submerged_emitter", type="emitter", emission=(0.28, 1.05, 1.9)
     )
     mascot = renderer.mesh(
-        name="mascot", path=ROOT / "assets/examples/models/capsule-mascot.obj"
+        name="mascot",
+        path=ROOT / "assets/examples/models/capsule-mascot/capsule-mascot.obj",
     )
 
     def rectangle(name, p1, p2, p3, material):

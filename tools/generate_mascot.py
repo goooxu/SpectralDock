@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the original low-poly capsule mascot and its stable manifest."""
+"""Rebuild the AI-generated low-poly capsule mascot bundle and manifest."""
 
 import argparse
 import hashlib
@@ -12,10 +12,30 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
-VERSION = "spectraldock-mascot-generator/1.0"
+VERSION = "spectraldock-mascot-generator/1.2"
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_OUTPUT = ROOT / "assets" / "examples" / "models" / "capsule-mascot.obj"
-DEFAULT_MANIFEST = ROOT / "assets" / "examples" / "model-manifest.json"
+MTL_NAME = "capsule-mascot.mtl"
+ASSET_DIR = ROOT / "assets" / "examples" / "models" / "capsule-mascot"
+DEFAULT_OUTPUT = ASSET_DIR / "capsule-mascot.obj"
+DEFAULT_MANIFEST = ASSET_DIR / "manifest.json"
+
+MATERIALS = (
+    ("mascot_torso", "0.95 0.82 0.18"),
+    ("mascot_arm_left", "0.95 0.82 0.18"),
+    ("mascot_arm_right", "0.95 0.82 0.18"),
+    ("mascot_leg_left", "0.95 0.82 0.18"),
+    ("mascot_leg_right", "0.95 0.82 0.18"),
+    ("mascot_visor", "0.25 0.27 0.30"),
+    ("mascot_eye_left", "0.95 0.95 0.98"),
+    ("mascot_eye_right", "0.95 0.95 0.98"),
+    ("mascot_belt_flange", "0.10 0.18 0.35"),
+    ("mascot_glove_left", "0.22 0.12 0.06"),
+    ("mascot_glove_right", "0.22 0.12 0.06"),
+    ("mascot_boot_left", "0.22 0.12 0.06"),
+    ("mascot_boot_right", "0.22 0.12 0.06"),
+    ("mascot_antenna_stem", "0.55 0.57 0.60"),
+    ("mascot_antenna_tip", "1.0 0.9 0.3"),
+)
 
 
 @dataclass
@@ -386,17 +406,37 @@ def build_model():
     return model
 
 
-def serialize_obj(model):
+def serialize_mtl():
+    blocks = [f"newmtl {name}\nKd {diffuse}\n" for name, diffuse in MATERIALS]
+    return "\n".join(blocks).encode("ascii")
+
+
+def serialize_obj(model, material_library):
+    component_names = {component.name for component in model.components}
+    material_names = {name for name, _ in MATERIALS}
+    if len(component_names) != len(model.components):
+        raise ValueError("capsule mascot component names must be unique")
+    if len(material_names) != len(MATERIALS):
+        raise ValueError("capsule mascot material names must be unique")
+    if component_names != material_names:
+        missing = sorted(component_names - material_names)
+        extra = sorted(material_names - component_names)
+        raise ValueError(
+            f"capsule mascot material mismatch: missing={missing}, extra={extra}"
+        )
+
     lines = [
-        "# Original capsule mascot for SpectralDock",
+        "# AI-generated capsule mascot for SpectralDock",
         f"# Generated deterministically by {VERSION}",
         "# SPDX-License-Identifier: CC0-1.0",
+        f"mtllib {material_library}",
         "o capsule_mascot",
         "s off",
     ]
     vertex_offset = 0
     for component in model.components:
         lines.append(f"g {component.name}")
+        lines.append(f"usemtl {component.name}")
         for x, y, z in component.vertices:
             lines.append(f"v {x:.6f} {y:.6f} {z:.6f}")
         for a, b, c in component.faces:
@@ -424,19 +464,23 @@ def model_stats(model):
     }
 
 
-def serialize_manifest(model, obj_bytes):
+def serialize_manifest(model, obj_bytes, mtl_bytes):
     stats = model_stats(model)
     manifest = {
-        "schema_version": 1,
+        "schema_version": 3,
         "name": "capsule-mascot",
-        "asset": "models/capsule-mascot.obj",
+        "path_base": "manifest_directory",
+        "asset": "capsule-mascot.obj",
+        "material_library": MTL_NAME,
         "description": (
-            "Original modular low-poly capsule robot mascot with visor, eyes, "
-            "asymmetric antenna, gloves, boots, and belt flange."
+            "AI-generated modular low-poly capsule robot mascot with visor, eyes, "
+            "asymmetric antenna, gloves, boots, belt flange, and 15 named "
+            "material slots."
         ),
+        "source": "AI-generated for SpectralDock",
         "generator": VERSION,
         "license": "CC0-1.0",
-        "license_file": "models/CC0-1.0.txt",
+        "license_file": "../CC0-1.0.txt",
         "source_archives_in_distribution": False,
         "coordinate_system": {
             "up": "+Y",
@@ -444,9 +488,18 @@ def serialize_manifest(model, obj_bytes):
             "ground_y": 0.0,
             "units": "scene units",
         },
+        "materials": [
+            {
+                "name": name,
+                "diffuse": [float(value) for value in diffuse.split()],
+            }
+            for name, diffuse in MATERIALS
+        ],
         **stats,
         "obj_sha256": hashlib.sha256(obj_bytes).hexdigest(),
         "obj_bytes": len(obj_bytes),
+        "mtl_sha256": hashlib.sha256(mtl_bytes).hexdigest(),
+        "mtl_bytes": len(mtl_bytes),
     }
     return (
         json.dumps(manifest, indent=2, ensure_ascii=True) + "\n"
@@ -484,9 +537,15 @@ def parse_args(argv=None):
 def main(argv=None):
     args = parse_args(argv)
     try:
+        mtl_output = args.output.with_name(MTL_NAME)
+        output_paths = (args.output, mtl_output, args.manifest)
+        if len({path.resolve() for path in output_paths}) != len(output_paths):
+            raise ValueError("OBJ, MTL, and manifest outputs must be distinct")
         model = build_model()
-        obj_bytes = serialize_obj(model)
-        manifest_bytes = serialize_manifest(model, obj_bytes)
+        mtl_bytes = serialize_mtl()
+        obj_bytes = serialize_obj(model, MTL_NAME)
+        manifest_bytes = serialize_manifest(model, obj_bytes, mtl_bytes)
+        atomic_write(mtl_output, mtl_bytes)
         atomic_write(args.output, obj_bytes)
         atomic_write(args.manifest, manifest_bytes)
     except (OSError, ValueError) as error:
@@ -495,11 +554,12 @@ def main(argv=None):
 
     stats = model_stats(model)
     print(
-        "generated {} ({} vertices, {} triangles, {} components) and {}".format(
+        "generated {} ({} vertices, {} triangles, {} components), {}, and {}".format(
             args.output,
             stats["vertices"],
             stats["triangles"],
             len(stats["components"]),
+            mtl_output,
             args.manifest,
         )
     )

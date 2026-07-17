@@ -1,0 +1,44 @@
+newmtl mascot_torso
+Kd 0.95 0.82 0.18
+
+newmtl mascot_arm_left
+Kd 0.95 0.82 0.18
+
+newmtl mascot_arm_right
+Kd 0.95 0.82 0.18
+
+newmtl mascot_leg_left
+Kd 0.95 0.82 0.18
+
+newmtl mascot_leg_right
+Kd 0.95 0.82 0.18
+
+newmtl mascot_visor
+Kd 0.25 0.27 0.30
+
+newmtl mascot_eye_left
+Kd 0.95 0.95 0.98
+
+newmtl mascot_eye_right
+Kd 0.95 0.95 0.98
+
+newmtl mascot_belt_flange
+Kd 0.10 0.18 0.35
+
+newmtl mascot_glove_left
+Kd 0.22 0.12 0.06
+
+newmtl mascot_glove_right
+Kd 0.22 0.12 0.06
+
+newmtl mascot_boot_left
+Kd 0.22 0.12 0.06
+
+newmtl mascot_boot_right
+Kd 0.22 0.12 0.06
+
+newmtl mascot_antenna_stem
+Kd 0.55 0.57 0.60
+
+newmtl mascot_antenna_tip
+Kd 1.0 0.9 0.3

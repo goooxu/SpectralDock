@@ -42,7 +42,8 @@ def create_renderer() -> Renderer:
         name="white_light", type="emitter", emission=(10.0, 9.4, 8.5)
     )
     mascot = renderer.mesh(
-        name="mascot", path=ROOT / "assets/examples/models/capsule-mascot.obj"
+        name="mascot",
+        path=ROOT / "assets/examples/models/capsule-mascot/capsule-mascot.obj",
     )
 
     renderer.object(

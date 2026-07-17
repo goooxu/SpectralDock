@@ -176,8 +176,10 @@ def create_renderer(physics: PhysicsWorld, *, metadata_output: Path | None = Non
     )
     materials = {name: renderer.material(name=name, type=kind, **parameters)
                  for name, kind, parameters in definitions}
-    mascot = renderer.mesh(name="mascot",
-                           path=ROOT / "assets/examples/models/capsule-mascot.obj")
+    mascot = renderer.mesh(
+        name="mascot",
+        path=ROOT / "assets/examples/models/capsule-mascot/capsule-mascot.obj",
+    )
     renderer.object(name="pool_floor", type="rectangle", p1=(-8.0, 0.0, 5.0),
                     p2=(-8.0, 0.0, -5.0), p3=(8.0, 0.0, -5.0),
                     material=materials["floor"])

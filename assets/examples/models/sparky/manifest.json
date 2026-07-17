@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "name": "sparky",
-  "description": "Original boxy tread robot with articulated arms, screen details, glass head shell, and ten explicit OBJ material slots.",
-  "source": "Direct contribution by the project owner",
+  "description": "AI-generated boxy tread robot with articulated arms, screen details, glass head shell, and ten explicit OBJ material slots.",
+  "source": "AI-generated asset contributed by the project owner",
   "source_archives_in_distribution": false,
   "asset_license": "CC0-1.0",
   "license_file": "../CC0-1.0.txt",

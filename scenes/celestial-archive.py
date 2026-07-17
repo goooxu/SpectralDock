@@ -80,7 +80,8 @@ def create_renderer() -> Renderer:
         name="gold_light", type="emitter", emission=(3.2, 1.6, 0.6)
     )
     mascot = renderer.mesh(
-        name="mascot", path=ROOT / "assets/examples/models/capsule-mascot.obj"
+        name="mascot",
+        path=ROOT / "assets/examples/models/capsule-mascot/capsule-mascot.obj",
     )
 
     renderer.object(

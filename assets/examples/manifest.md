@@ -1,12 +1,15 @@
 # Example asset manifest
 
-Runtime image paths are relative to this directory. Two PNG textures were
+Runtime image paths are relative to this directory. Two planet PNG textures were
 generated for this project on 2026-07-07 through the built-in `imagegen`
 workflow. They are provided as-is, without a representation of uniqueness or
-exclusivity. The separate `models/sparky/sparky_albedo.png` is an original
-project-owner contribution, not an output of that workflow. The Radiance HDR
+exclusivity. The separate `models/sparky/sparky_albedo.png` belongs to the
+AI-generated Sparky model bundle contributed by the project owner; it is not
+one of the two planet imagegen outputs documented below. The Radiance HDR
 environment is an analytical, deterministic output of the Apache-2.0 Python
-generator in `tools/`, not an AI-generated image.
+generator in `tools/`, not an AI-generated image. The separate
+`models/spot/spot_texture.png` is an unmodified third-party bitmap from Keenan
+Crane's Spot model archive, not a project-authored or AI-generated image.
 
 The compact distribution omits PNG generation and seam-repair intermediate
 bitmaps; their dimensions, processing steps, prompts, and SHA-256 digests
@@ -17,8 +20,10 @@ the image model lightly redrew pixels outside the requested center band rather
 than keeping those regions byte-identical. The initial-bitmap digests remain in
 this manifest so this distinction stays auditable.
 
-The three runtime texture PNG files and the HDR environment listed here are
-dedicated under CC0-1.0. This Markdown sidecar is licensed under Apache-2.0.
+The four texture PNG files and the HDR environment listed here are distributed
+under CC0-1.0. The Spot texture retains its upstream CC0 dedication; the other
+listed visual assets are dedicated by project contributors. This Markdown
+sidecar is licensed under Apache-2.0.
 
 ## `environments/radiance-pavilion.hdr`
 
@@ -47,13 +52,30 @@ dedicated under CC0-1.0. This Markdown sidecar is licensed under Apache-2.0.
 - Runtime byte size: 15,103 bytes.
 - Runtime SHA-256:
   `e0c5f6b728a53d3cfbc1ef6f29bd55417170d5f02c53305a7a4b1a9f931e22f0`.
-- Source: direct original contribution by the project owner together with
-  `sparky.obj` and `sparky.mtl`; it is not represented as imagegen output and
-  has no upstream archive in the distribution.
+- Source: AI-generated asset contributed by the project owner together with
+  `sparky.obj` and `sparky.mtl`. It is not one of the two planet
+  images produced by the recorded built-in imagegen workflow, and no upstream
+  archive is included in the distribution.
 - Use: one sRGB atlas shared by the `ScreenFace`, `ScreenChest`, and
   `ScreenPalm` material slots. The full geometry/material/file record is in
   `models/sparky/manifest.json`.
 - Licensing: explicitly dedicated under CC0-1.0.
+
+## `models/spot/spot_texture.png`
+
+- Runtime size and encoding: 1024 x 1024, 8-bit RGB PNG with an embedded IEC
+  sRGB color profile.
+- Runtime byte size: 78,699 bytes.
+- Runtime SHA-256:
+  `cddabbae52a666173e7953e238b88340d285044dc20b36f8ed3f1a41db534fa5`.
+- Source: the `spot_texture.png` bitmap in Keenan Crane's upstream
+  [`spot.zip`](https://www.cs.cmu.edu/~kmcrane/Projects/ModelRepository/spot.zip)
+  archive.
+- Use: albedo atlas matching `models/spot/spot_triangulated.obj`; a scene must
+  register it explicitly as an sRGB image texture with repeat wrapping because
+  the upstream UVs extend slightly outside the unit square.
+- Licensing: unmodified upstream asset dedicated under CC0-1.0 by Keenan
+  Crane.
 
 ## `textures/planet-azure.png`
 

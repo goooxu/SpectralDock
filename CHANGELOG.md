@@ -17,12 +17,19 @@ commit 列表仍以 Git 历史为准。发布新版本时，应把 `Unreleased` 
 - 提供隔离进程中的受限 PhysX Python API，使同一个 Python 程序可以运行 GPU
   刚体模拟、应用 actor-local 渲染附件并立即启动 OptiX。
 - 增加 `mesh(materials={...})` 显式多材质 OBJ 接口，通过逐三角形材质索引
-  在单个 GAS 中解析 `usemtl` 槽；新增 CC0 Sparky OBJ/MTL/albedo 资产。
+  在单个 GAS 中解析 `usemtl` 槽；新增 AI 生成的 CC0 Sparky OBJ/MTL/albedo 资产。
 - 增加 metallic-roughness PBR 材质、独立 base-color/MR/normal 纹理槽、
   MikkTSpace OBJ 切线生成，以及 clamp/repeat/mirrored-repeat 纹理寻址。
+- 增加 Keenan Crane / CMU Model Repository 以 CC0-1.0 发布的 Spot
+  三角网格与位图纹理，作为可复用示例模型资产；现有场景保持不变。
+- 为 capsule mascot 增加包含 15 个部件槽的 CC0 MTL；确定性生成器现在同时
+  重建 OBJ、MTL 与 manifest，并明确记录原始资产的 AI 来源。现有场景继续
+  显式选择材质，画面保持不变。
 
 ### 变更
 
+- 将 Capsule Mascot 的 OBJ、MTL 与 manifest 归整到独立模型目录，与 Sparky
+  和 Spot 的资产包布局保持一致；使用该模型的九个场景只同步仓库内路径。
 - 十个示例改为十个可直接执行的 Python 程序。SpectralDock 不再发现、加载或
   解释所谓“场景文件”，用户自定义渲染程序也不需要注册。
 - 构建与运行改为仓库内宿主流程；CUDA 13.3/OptiX 9.1 renderer 和 CUDA

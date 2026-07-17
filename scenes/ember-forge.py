@@ -70,7 +70,8 @@ def create_renderer() -> Renderer:
         name="mascot_ivory", type="lambertian", base_color=(0.90, 0.83, 0.69)
     )
     mascot = renderer.mesh(
-        name="mascot", path=ROOT / "assets/examples/models/capsule-mascot.obj"
+        name="mascot",
+        path=ROOT / "assets/examples/models/capsule-mascot/capsule-mascot.obj",
     )
 
     def rectangle(name, p1, p2, p3, material):

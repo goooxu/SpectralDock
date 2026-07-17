@@ -59,7 +59,8 @@ def create_renderer() -> Renderer:
         name="key_emitter", type="emitter", emission=(13.0, 9.0, 5.2)
     )
     mascot = renderer.mesh(
-        name="mascot", path=ROOT / "assets/examples/models/capsule-mascot.obj"
+        name="mascot",
+        path=ROOT / "assets/examples/models/capsule-mascot/capsule-mascot.obj",
     )
 
     renderer.object(
