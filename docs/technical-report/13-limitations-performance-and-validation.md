@@ -41,7 +41,7 @@
 
 - cylinder 没有端盖；`parabola` 是由 AABB 裁剪的抛物柱面；
 - alpha 是二值 cutoff，不是连续透明或折射；
-- 所有表面 radiance/shadow ray 统一沿 $\mathbf n_g$ 偏移，但固定世界空间 `scene_epsilon` 仍不随场景尺度变化；
+- 所有表面 radiance/shadow ray 都按 primitive-aware 的 `SurfaceHit.position_error` 沿 $\mathbf n_g$ 做尺度自适应偏移并向外舍入；解析/custom primitive 在 conservative fallback 上加入可评估曲面的 residual，但尚不保证严格封闭所有近切求交的条件数放大；固定世界空间 `water_solver_epsilon` 只用于水面 endpoint crossing probe 与无法分辨的近切 enter/exit 对，极端缩放的波面参数仍不在当前验收范围内；
 - 色调映射是逐通道 ACES 风格拟合曲线，不是完整 ACES；
 - 8 bit PNG 不保存 HDR 缓冲区；可选 PFM 保存贡献钳位之后、未降噪和未显示映射的线性 RGB 样本均值，没有 OpenEXR 的元数据、任意通道和压缩能力。只有 clamp 0/0 的 PFM 才适合无偏均值验证。
 - 图像纹理只有 base-level 双线性过滤，没有 mipmap、ray differential 或
@@ -160,10 +160,10 @@ $$
 
 1. Host-only 单元测试检查向量、typed SceneBuilder、OBJ、PNG/HDR/PFM I/O、CDF 分布和输入语义；
 2. typed SceneBuilder fixtures 覆盖 primitive、灯、UV、alpha、实例与共享 GAS 的输入组合，但不执行 GPU 着色；
-3. 无 golden 的积分器 GPU 对照覆盖末端 bound/unbound MIS、HDR 环境唯一照明、旋转、确定性、零强度黑场，以及 uniform/importance 的高 spp 均值与低 spp MSE；
+3. 无 golden 的积分器 GPU 对照覆盖末端 bound/unbound MIS；rectangle、disk、sphere 共位 emitter 在单位坐标与 $10^6$ 平移下还要求 bound/unbound 像素完全一致，定向保护有限灯 endpoint residual/区间收缩；其余对照覆盖 HDR 环境唯一照明、旋转、确定性、零强度黑场，以及 uniform/importance 的高 spp 均值与低 spp MSE；
 4. 多灯对照分别触发 rectangle、disk、sphere、flame，再验证功率选择降低强弱灯场景的低 spp MSE；sphere 对所有连续 BSDF 顶点验证可见锥采样，metal 另验证 VNDF 的均值与低样本误差；
-5. 综合 mesh GPU fixture 定向覆盖共享 GAS、实例变换、UV、平滑法线、alpha 和 custom primitives；另一组极端倾斜顶点法线 fixture 检查几何正面不变黑、几何背面不漏光、共享边连续性，以及光滑 dielectric 对顶点法线的像素不变性；
-6. PBR host/API 测试检查独立 base-color/MR/normal 槽、linear 数据纹理、范围与 ownership、解析几何限制及无效 tangent 拒绝；GPU 对照检查过滤前 sRGB 解码、U/V wrap、MR 的 G/B 通道路由与 factor、`metallic=1` legacy 端点、`normal_scale`、镜像 UV/Mikk handedness、反向法线、OpenGL `+Y`、几何侧和非均匀变换；
+5. 综合 mesh GPU fixture 定向覆盖共享 GAS、实例变换、UV、平滑法线、alpha 和 custom primitives；另一组极端倾斜顶点法线 fixture 检查几何正面/背面、共享边、metal/PBR half-vector、有限灯零-PDF MIS，以及光滑 dielectric 对顶点法线的像素不变性；scale-aware ray-spawn fixture 再把 directional/point 薄遮挡和 metal/dielectric 次级路径放到 $10^{-3}$、$1$、$10^4$ 尺度及 $10^6$ 平移坐标，检查可见性、非黑传输、尺度一致性与固定 seed 确定性；其中 translated case 保留一枚 custom disk blocker，专门防止 AABB 向内取整造成 BVH 漏交；
+6. PBR host/API 测试检查独立 base-color/MR/normal 槽、linear 数据纹理、范围与 ownership、解析几何限制及无效 tangent 拒绝；GPU 对照检查过滤前 sRGB 解码、U/V wrap、MR 的 G/B 通道路由与 factor、`metallic=1` legacy 端点、`normal_scale`、镜像 UV/Mikk handedness、反向法线、OpenGL `+Y`、几何侧和非均匀变换；depth-2 对照还检查 secondary ray、固定 seed 确定性，并在极端着色法线下分别强制 `metallic=0/1` 的 diffuse-heavy 与纯 specular sampled transport；
 7. delta 灯对照检查 point 逆平方、directional 距离不变性、背面、遮挡、逐灯确定性、粗糙介电两侧和水中 Beer；firefly 对照检查 direct/indirect 独立触发、最大 RGB 通道保色相缩放、计数器、Python API 参数覆盖和 clamp 0/0 兼容路径；
 8. water GPU 对照用 clamp 0/0 线性 PFM 检查粗糙反射/透射、两侧介质、Beer、TIR、透明阻断、光滑有界 split，并以等散射阶数（bound depth 2 / unbound depth 3）比较高 spp 均值与三 seed 低 spp MSE；
 9. 技术报告 pytest 逐字核对标记过的源码片段，并检查章节结构、导航、链接和若干关键语义；PhysX host 测试用 typed `PhysicsWorld`/`PhysicsResult`、合成结果和定向 mutation 覆盖协议版本、GPU-only 身份、body 顺序、附件交接与封面 validator，但不假装执行 subprocess worker、真实刚体或像素渲染；

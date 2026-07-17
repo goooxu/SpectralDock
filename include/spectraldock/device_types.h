@@ -7,6 +7,11 @@
 
 namespace spectraldock {
 
+// Numeric guard used only when custom intersection roots are clipped against
+// their declared bounds. The host mirrors it in the traversal AABB; it is not
+// a surface-ray spawn distance.
+constexpr float kCustomPrimitiveClipTolerance = 2.0e-5f;
+
 enum RayType : std::uint32_t {
   kRayRadiance = 0,
   kRayShadow = 1,
@@ -237,7 +242,10 @@ struct LaunchParams {
   std::uint32_t spp = 1;
   std::uint32_t max_depth = 12;
   std::uint32_t seed = 1;
-  float scene_epsilon = 1.0e-4f;
+  // Numeric tolerance for the analytic water root solver. Surface ray
+  // spawning derives a scale-aware world-space error bound at each hit and
+  // must not reuse this solver-specific value as a global ray epsilon.
+  float water_solver_epsilon = 1.0e-4f;
   std::uint32_t background_type = kBackgroundConstant;
 
   CameraData camera;

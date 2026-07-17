@@ -269,7 +269,27 @@ $$
 
 *图 5：左侧展示 BVH 如何跳过未命中的整组几何；右侧展示 SpectralDock 的两级 OptiX 加速结构。*
 
-BVH 不改变求交答案，只改变寻找答案的工作量。最坏情况仍可能很差，但典型场景会比线性遍历少测试大量 primitive。
+BVH 不改变求交答案，只改变寻找答案的工作量——前提是叶节点 AABB 保守包含真实 primitive。大坐标下，把解析边界直接转换/上传成 `float` 可能让某个 min 向上或 max 向下取整；BVH 随后会在 intersection 程序运行前错误剔除本应命中的 custom primitive。
+
+SpectralDock 先把 custom primitive 的 `GeometryData.aabb_min/max` 向外舍入一个 binary32 ULP。disk、cylinder、parabola 和自定义实心 sphere 的 root clip 仍保留共享的 `kCustomPrimitiveClipTolerance`；主机把完全相同的范围纳入 GAS，再对遍历用 `OptixAabb` 留一个 ULP guard。解析水面的每个 tile 则在既有 overlap 上直接做最后一层 directed rounding。min 使用 `nextafter(value,-inf)`，max 使用 `nextafter(value,+inf)`；因此固定 clip 容差即使在大坐标下小于一个 ULP，也不会让最终 traversal box 向内取整。这个 clip 容差只属于 custom intersection 边界，不是表面 ray-spawn 距离。
+
+<!-- source-snippet id="custom-aabb-directed-rounding" path="src/optix_renderer.cpp" anchor="outward_aabb" -->
+```cpp
+float next_float_down(float value) {
+  return std::nextafter(value, -std::numeric_limits<float>::infinity());
+}
+
+float next_float_up(float value) {
+  return std::nextafter(value, std::numeric_limits<float>::infinity());
+}
+
+OptixAabb outward_aabb(float min_x, float min_y, float min_z,
+                       float max_x, float max_y, float max_z) {
+  return {next_float_down(min_x), next_float_down(min_y),
+          next_float_down(min_z), next_float_up(max_x),
+          next_float_up(max_y), next_float_up(max_z)};
+}
+```
 
 ## 6. SpectralDock 的 GAS 与 IAS
 
@@ -419,7 +439,87 @@ $$
 | radiance | 最近交点的位置、法线、UV、材质和灯索引 | 执行 closest-hit，未命中执行 radiance miss |
 | shadow | 到指定距离是否无阻挡 | 首个有效遮挡即终止，不执行 closest-hit |
 
-自交偏移和有限的阴影 `tmax` 都是必要的数值边界。`offset_ray_origin` 统一沿 $\mathbf n_g$ 移动，再根据新射线方向与 $\mathbf n_g$ 的点积选正侧或负侧；插值法线再倾斜也不能把起点推到真实表面的错误一侧。但固定世界尺度的 `scene_epsilon = 1e-4` 不是尺度自适应方案：场景极大或极小时，可能需要更精细的误差处理。PBRT v4 的 [`SurfaceInteraction` 与 `SpawnRay`](https://www.pbr-book.org/4ed/Geometry_and_Transformations/Interactions) 同样把几何法线与着色法线分开；其[基于交点误差界的射线起点算法](https://www.pbr-book.org/4ed/Shapes/Managing_Rounding_Error) 比本项目的固定 epsilon 更完整。
+自交偏移和有限 shadow 的端点排除都是必要的数值边界。closest-hit 不只返回位置，还构造 `SurfaceHit.position_error`。triangle/mesh 从对象空间顶点和 edge extent 建立重建/求交界，将其传播过对象到世界重建，并对非单位实例加入 world→object traversal 的绝对仿射误差界；解析/custom primitive 没有同样的顶点误差输入，改由世界命中点、$t\mathbf d$ 和 primitive 包围 extent 给出 conservative fallback。sphere/solid sphere、disk、cylinder 与 parabola 把重新代入隐式曲面所得的距离 residual 沿 $|\mathbf n_g|$ 并入；water 同样重新求值高度场，以命中点的垂直 residual 作保守上界，而不是把 solver 接受阈值直接当作 offset。基础运算使用 binary32 单位舍入误差 $u=2^{-24}$ 与 $\gamma_7=7u/(1-7u)$，三角形/仿射项另使用 RTX 的 $c_1,c_2$ 常数。custom 模型会随位置、几何尺度和已观测 residual 增长，但不保证严格封闭所有近切求交的条件数放大。
+
+相关基础常数集中在这里，而不是提前放进相机章节：
+
+<!-- source-snippet id="ray-hit-position-error" path="src/device_programs.cu" anchor="kFloatUnitRoundoff" -->
+```cpp
+constexpr float kFloatUnitRoundoff = 5.9604644775390625e-8f;
+// NVIDIA RTX triangle-intersection and affine-transform error constants.
+constexpr float kTriangleErrorC1 =
+    1.788139769587360206060111522674560546875e-7f;
+constexpr float kTransformErrorC2 =
+    1.19209317972490680404007434844970703125e-7f;
+constexpr float kRayPointGamma =
+    (7.0f * kFloatUnitRoundoff) /
+    (1.0f - 7.0f * kFloatUnitRoundoff);
+```
+
+解析 primitive 的实际 residual 沿几何法线逐分量并入；任何 solver 接受阈值都不会直接成为 ray offset：
+
+<!-- source-snippet id="analytic-primitive-residual-bound" path="src/device_programs.cu" anchor="primitive_surface_residual" -->
+```cpp
+  const float3 world_outward = normalize3(
+      optixTransformNormalFromObjectToWorldSpace(object_geometric));
+  if (!triangle_hit) {
+    position_error = add(
+        position_error,
+        mul(abs3(world_outward),
+            primitive_surface_residual(geometry, object_point)));
+  }
+```
+
+ray spawn 将逐分量误差投影到 $\mathbf n_g$，按新方向选择几何正侧或负侧，再逐坐标用 `nextafterf` 外推。这样插值法线再倾斜也不能把起点推到真实表面的错误一侧，同时偏移量会随坐标、primitive 类别与当前误差界变化，不再绑定固定场景尺度。
+
+外推后的 radiance/shadow origin 使用 `tmin=0`。point shadow 从 robust origin 到理想点重算区间；rectangle/disk/sphere 灯面连接还按 anchor/edge extent 或采样点/radius 及实际灯面 residual 构造 `finite_light_position_error`，沿灯面法线把采样端点向连接内部外推。然后以两端之间的重算距离和 `nextafterf(distance,0)` 定义 `tmax`。这既不命中数值端点，也不凭空删除固定世界空间长度，并排除端点附近 coincident geometry 或闭区间舍入误命中。bound target geometry 已由 any-hit 按 `light_index` 忽略；unbound fixture 仍可有同位置但 `light_index = -1` 的独立 emitter geometry，endpoint shift 负责把后者留在开区间之外。解析水面的 `water_solver_epsilon` 只用于 endpoint crossing probe 与无法分辨的近切 enter/exit 对；其他 residual/stationary 阈值仍是独立常数，全部都与 ray spawn 解耦。这个设计遵循 PBRT v4 [`SurfaceInteraction` 与 `SpawnRay`](https://www.pbr-book.org/4ed/Geometry_and_Transformations/Interactions) 的几何/着色法线分工和[基于交点误差界的射线起点原则](https://www.pbr-book.org/4ed/Shapes/Managing_Rounding_Error)。
+
+有限段 helper 同时完成 robust origin、到端点的重算与退化区间拒绝；`physical_direction` 保留未偏移交点处的真实 BSDF 侧别，而实际 shadow direction 从外推后的 origin 重新归一化：
+
+<!-- source-snippet id="finite-shadow-segment" path="src/device_programs.cu" anchor="finite_shadow_segment" -->
+```cpp
+static __forceinline__ __device__ ShadowSegment finite_shadow_segment(
+    const SurfaceHit& hit, float3 endpoint, float3 physical_direction) {
+  ShadowSegment segment{};
+  segment.origin = offset_ray_origin(
+      hit.position, hit.position_error, hit.geometric_normal,
+      physical_direction);
+  segment.direction = physical_direction;
+  const float3 displacement = sub(endpoint, segment.origin);
+  const float distance2 = length2(displacement);
+  if (!(distance2 > 0.0f) || !isfinite(distance2) ||
+      !(dot3(displacement, physical_direction) > 0.0f)) {
+    return segment;
+  }
+  segment.distance = sqrtf(distance2);
+  if (!(segment.distance > 0.0f) || !isfinite(segment.distance) ||
+      !(nextafterf(segment.distance, 0.0f) > 0.0f)) {
+    segment.distance = 0.0f;
+    return segment;
+  }
+  segment.direction = divv(displacement, segment.distance);
+  segment.has_interval = 1;
+  return segment;
+}
+```
+
+有限表面灯在调用上述通用 helper 之前先收缩灯侧端点；`neg(physical_direction)` 只选择灯面法线朝连接内部的一侧，原始 `physical_direction` 仍保留 BSDF 的真实几何侧别：
+
+<!-- source-snippet id="finite-light-endpoint-offset" path="src/device_programs.cu" anchor="finite_light_position_error(light, endpoint)" -->
+```cpp
+static __forceinline__ __device__ ShadowSegment
+finite_surface_shadow_segment(
+    const SurfaceHit& hit, const LightData& light, float3 endpoint,
+    float3 endpoint_normal, float3 physical_direction) {
+  // A visibility connection has numerical uncertainty at both surfaces.
+  // Move the sampled light endpoint toward the connection's interior before
+  // the ordinary one-ULP tmax shortening excludes it from traversal.
+  const float3 shifted_endpoint = offset_ray_origin(
+      endpoint, finite_light_position_error(light, endpoint),
+      endpoint_normal, neg(physical_direction));
+  return finite_shadow_segment(hit, shifted_endpoint, physical_direction);
+}
+```
 
 下一章将把路径状态、BVH 和材质程序接到 OptiX 的 GPU 执行模型中。
 

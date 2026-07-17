@@ -22,6 +22,15 @@ namespace {
 constexpr float kPi = 3.14159265358979323846f;
 constexpr float kInvPi = 0.31830988618379067154f;
 constexpr float kInfinity = 1.0e16f;
+constexpr float kFloatUnitRoundoff = 5.9604644775390625e-8f;
+// NVIDIA RTX triangle-intersection and affine-transform error constants.
+constexpr float kTriangleErrorC1 =
+    1.788139769587360206060111522674560546875e-7f;
+constexpr float kTransformErrorC2 =
+    1.19209317972490680404007434844970703125e-7f;
+constexpr float kRayPointGamma =
+    (7.0f * kFloatUnitRoundoff) /
+    (1.0f - 7.0f * kFloatUnitRoundoff);
 
 static __forceinline__ __device__ float3 f3(float x, float y, float z) {
   return make_float3(x, y, z);
@@ -66,6 +75,75 @@ static __forceinline__ __device__ float3 normalize3(float3 a) {
 }
 static __forceinline__ __device__ float3 neg(float3 a) {
   return f3(-a.x, -a.y, -a.z);
+}
+static __forceinline__ __device__ float3 abs3(float3 a) {
+  return f3(fabsf(a.x), fabsf(a.y), fabsf(a.z));
+}
+static __forceinline__ __device__ float3 transform_abs_linear(
+    const float matrix[12], float3 value) {
+  return f3(
+      fabsf(matrix[0]) * value.x + fabsf(matrix[1]) * value.y +
+          fabsf(matrix[2]) * value.z,
+      fabsf(matrix[4]) * value.x + fabsf(matrix[5]) * value.y +
+          fabsf(matrix[6]) * value.z,
+      fabsf(matrix[8]) * value.x + fabsf(matrix[9]) * value.y +
+          fabsf(matrix[10]) * value.z);
+}
+static __forceinline__ __device__ float3 transform_abs_affine(
+    const float matrix[12], float3 point) {
+  return add(
+      transform_abs_linear(matrix, abs3(point)),
+      f3(fabsf(matrix[3]), fabsf(matrix[7]), fabsf(matrix[11])));
+}
+static __forceinline__ __device__ bool is_identity_transform(
+    const float matrix[12]) {
+  return matrix[0] == 1.0f && matrix[1] == 0.0f &&
+      matrix[2] == 0.0f && matrix[3] == 0.0f &&
+      matrix[4] == 0.0f && matrix[5] == 1.0f &&
+      matrix[6] == 0.0f && matrix[7] == 0.0f &&
+      matrix[8] == 0.0f && matrix[9] == 0.0f &&
+      matrix[10] == 1.0f && matrix[11] == 0.0f;
+}
+static __forceinline__ __device__ float3 transform_point_precise(
+    const float matrix[12], float3 point) {
+  return f3(
+      __fadd_rn(matrix[3],
+                __fmaf_rn(matrix[0], point.x,
+                          __fmaf_rn(matrix[1], point.y,
+                                    __fmul_rn(matrix[2], point.z)))),
+      __fadd_rn(matrix[7],
+                __fmaf_rn(matrix[4], point.x,
+                          __fmaf_rn(matrix[5], point.y,
+                                    __fmul_rn(matrix[6], point.z)))),
+      __fadd_rn(matrix[11],
+                __fmaf_rn(matrix[8], point.x,
+                          __fmaf_rn(matrix[9], point.y,
+                                    __fmul_rn(matrix[10], point.z)))));
+}
+static __forceinline__ __device__ float3 triangle_point_precise(
+    float3 vertex, float3 edge1, float3 edge2, float2 barycentrics) {
+  return f3(
+      __fadd_rn(vertex.x,
+                __fmaf_rn(barycentrics.x, edge1.x,
+                          __fmul_rn(barycentrics.y, edge2.x))),
+      __fadd_rn(vertex.y,
+                __fmaf_rn(barycentrics.x, edge1.y,
+                          __fmul_rn(barycentrics.y, edge2.y))),
+      __fadd_rn(vertex.z,
+                __fmaf_rn(barycentrics.x, edge1.z,
+                          __fmul_rn(barycentrics.y, edge2.z))));
+}
+static __forceinline__ __device__ float primitive_error_extent(
+    const GeometryData& geometry) {
+  if (geometry.primitive_type == spectraldock::kPrimitiveSphere ||
+      geometry.primitive_type == spectraldock::kPrimitiveSolidSphere) {
+    return 2.0f * fabsf(geometry.radius);
+  }
+  const float3 span = abs3(sub(geometry.aabb_max, geometry.aabb_min));
+  return fmaxf(span.x, fmaxf(span.y, span.z));
+}
+static __forceinline__ __device__ float positive_infinity() {
+  return __int_as_float(0x7f800000);
 }
 static __forceinline__ __device__ float3 lerp3(float3 a, float3 b, float t) {
   return add(mul(a, 1.0f - t), mul(b, t));
@@ -187,7 +265,7 @@ static __forceinline__ __device__ float3 reflect3(float3 incident, float3 n) {
 }
 static __forceinline__ __device__ bool inside_aabb(
     float3 p, const GeometryData& g) {
-  const float e = 2.0e-5f;
+  const float e = spectraldock::kCustomPrimitiveClipTolerance;
   return p.x >= g.aabb_min.x - e && p.x <= g.aabb_max.x + e &&
          p.y >= g.aabb_min.y - e && p.y <= g.aabb_max.y + e &&
          p.z >= g.aabb_min.z - e && p.z <= g.aabb_max.z + e;
@@ -564,6 +642,7 @@ struct SurfaceHit {
   int front_face;
   float distance;
   float3 position;
+  float3 position_error;
   float3 geometric_normal;
   float3 normal;
   float2 uv;
@@ -875,7 +954,7 @@ static __forceinline__ __device__ bool validate_water_endpoint_crossing(
       8.0 * static_cast<double>(1.1920928955078125e-7f) *
       fmax(1.0, fabs(static_cast<double>(root)));
   const double probe_distance =
-      fmax(static_cast<double>(params.scene_epsilon), ulp_scale);
+      fmax(static_cast<double>(params.water_solver_epsilon), ulp_scale);
   const double left = water_function_value_precise(
       geometry, origin, direction,
       static_cast<double>(root) - probe_distance);
@@ -1211,6 +1290,47 @@ static __forceinline__ __device__ float3 object_outward_normal(
   return normalize3(sub(mul(v, 2.0f * x), mul(m, 4.0f * focal_distance)));
 }
 
+static __forceinline__ __device__ float primitive_surface_residual(
+    const GeometryData& geometry, float3 point) {
+  float residual = 0.0f;
+  if (geometry.primitive_type == spectraldock::kPrimitiveSphere ||
+      geometry.primitive_type == spectraldock::kPrimitiveSolidSphere) {
+    residual = fabsf(length3(sub(point, geometry.p0)) - geometry.radius);
+  } else if (geometry.primitive_type == spectraldock::kPrimitiveDisk) {
+    residual = fabsf(dot3(normalize3(geometry.p1),
+                          sub(point, geometry.p0)));
+  } else if (geometry.primitive_type == spectraldock::kPrimitiveCylinder) {
+    const float3 axis = normalize3(geometry.p1);
+    const float3 q = sub(point, geometry.p0);
+    const float3 radial = sub(q, mul(axis, dot3(q, axis)));
+    residual = fabsf(length3(radial) - geometry.radius);
+  } else if (geometry.primitive_type ==
+             spectraldock::kPrimitiveWaterSurface) {
+    // This is the observed root residual, not the solver's acceptance
+    // tolerance. The vertical distance conservatively bounds the shorter
+    // normal distance because a height field's gradient norm is at least one.
+    residual = fabsf(
+        point.y - water_height(geometry, point.x, point.z));
+  } else if (geometry.primitive_type == spectraldock::kPrimitiveParabola) {
+    const float3 focus = sub(geometry.p2, geometry.p0);
+    const float focal_distance = length3(focus);
+    if (focal_distance > 0.0f) {
+      const float3 axis = normalize3(geometry.p1);
+      const float3 m = divv(focus, focal_distance);
+      const float3 v = normalize3(cross3(m, axis));
+      const float3 q = sub(point, geometry.p0);
+      const float x = dot3(q, v);
+      const float y = dot3(q, m);
+      const float gradient = sqrtf(
+          4.0f * x * x + 16.0f * focal_distance * focal_distance);
+      if (gradient > 0.0f) {
+        residual = fabsf(x * x - 4.0f * focal_distance * y) / gradient;
+      }
+    }
+  }
+  return residual >= 0.0f && isfinite(residual) ? residual : 0.0f;
+}
+
 static __forceinline__ __device__ float3 object_shading_normal(
     const HitgroupData& hitgroup, float3 object_point,
     const MaterialData* material, float2 uv) {
@@ -1334,17 +1454,122 @@ static __forceinline__ __device__ float3 effective_shading_normal(
 }
 
 static __forceinline__ __device__ float3 offset_ray_origin(
-    float3 position, float3 geometric_normal, float3 direction,
-    float distance) {
+    float3 position, float3 position_error, float3 geometric_normal,
+    float3 direction) {
   const float side = dot3(geometric_normal, direction) >= 0.0f
       ? 1.0f : -1.0f;
-  return add(position, mul(geometric_normal, side * distance));
+  const float3 oriented_normal = mul(geometric_normal, side);
+  const float offset_distance =
+      dot3(abs3(oriented_normal), position_error);
+  float3 result = add(position, mul(oriented_normal, offset_distance));
+
+  // The rounded addition above can still land on the inner edge of the error
+  // interval. Advance each participating coordinate by one representable
+  // value so the spawned origin is strictly outside it.
+  if (oriented_normal.x > 0.0f) {
+    result.x = nextafterf(result.x, positive_infinity());
+  } else if (oriented_normal.x < 0.0f) {
+    result.x = nextafterf(result.x, -positive_infinity());
+  }
+  if (oriented_normal.y > 0.0f) {
+    result.y = nextafterf(result.y, positive_infinity());
+  } else if (oriented_normal.y < 0.0f) {
+    result.y = nextafterf(result.y, -positive_infinity());
+  }
+  if (oriented_normal.z > 0.0f) {
+    result.z = nextafterf(result.z, positive_infinity());
+  } else if (oriented_normal.z < 0.0f) {
+    result.z = nextafterf(result.z, -positive_infinity());
+  }
+  return result;
 }
 
-static __forceinline__ __device__ float3 offset_ray_origin(
-    float3 position, float3 geometric_normal, float3 direction) {
-  return offset_ray_origin(position, geometric_normal, direction,
-                           params.scene_epsilon * 2.0f);
+struct ShadowSegment {
+  float3 origin;
+  float3 direction;
+  float distance;
+  int has_interval;
+};
+
+static __forceinline__ __device__ ShadowSegment finite_shadow_segment(
+    const SurfaceHit& hit, float3 endpoint, float3 physical_direction) {
+  ShadowSegment segment{};
+  segment.origin = offset_ray_origin(
+      hit.position, hit.position_error, hit.geometric_normal,
+      physical_direction);
+  segment.direction = physical_direction;
+  const float3 displacement = sub(endpoint, segment.origin);
+  const float distance2 = length2(displacement);
+  if (!(distance2 > 0.0f) || !isfinite(distance2) ||
+      !(dot3(displacement, physical_direction) > 0.0f)) {
+    return segment;
+  }
+  segment.distance = sqrtf(distance2);
+  if (!(segment.distance > 0.0f) || !isfinite(segment.distance) ||
+      !(nextafterf(segment.distance, 0.0f) > 0.0f)) {
+    segment.distance = 0.0f;
+    return segment;
+  }
+  segment.direction = divv(displacement, segment.distance);
+  segment.has_interval = 1;
+  return segment;
+}
+
+static __forceinline__ __device__ float3 finite_light_position_error(
+    const LightData& light, float3 point) {
+  if (light.type == spectraldock::kLightRectangle) {
+    const float3 abs_u = abs3(light.edge_u);
+    const float3 abs_v = abs3(light.edge_v);
+    const float3 extent3 = add(
+        add(abs_u, abs_v), abs3(sub(abs_u, abs_v)));
+    const float extent =
+        fmaxf(extent3.x, fmaxf(extent3.y, extent3.z));
+    const float3 normal = normalize3(cross3(light.edge_u, light.edge_v));
+    const float residual = fabsf(dot3(normal, sub(point, light.p0)));
+    return add(add(
+        mul(abs3(light.p0), kFloatUnitRoundoff),
+        f3(kTriangleErrorC1 * extent,
+           kTriangleErrorC1 * extent,
+           kTriangleErrorC1 * extent)),
+        mul(abs3(normal), residual));
+  }
+  if (light.type == spectraldock::kLightDisk) {
+    const float extent = 2.0f * fabsf(light.radius);
+    const float3 normal = normalize3(light.normal);
+    const float residual = fabsf(dot3(normal, sub(point, light.p0)));
+    return add(add(
+        mul(abs3(point), kTriangleErrorC1),
+        f3(kRayPointGamma * extent,
+           kRayPointGamma * extent,
+           kRayPointGamma * extent)),
+        mul(abs3(normal), residual));
+  }
+  if (light.type == spectraldock::kLightSphere) {
+    const float extent = 2.0f * fabsf(light.radius);
+    const float3 normal = normalize3(sub(point, light.p0));
+    const float residual = fabsf(
+        length3(sub(point, light.p0)) - light.radius);
+    return add(add(
+        mul(abs3(point), kTriangleErrorC1),
+        f3(kRayPointGamma * extent,
+           kRayPointGamma * extent,
+           kRayPointGamma * extent)),
+        mul(abs3(normal), residual));
+  }
+  return f3(0.0f, 0.0f, 0.0f);
+}
+
+static __forceinline__ __device__ ShadowSegment
+finite_surface_shadow_segment(
+    const SurfaceHit& hit, const LightData& light, float3 endpoint,
+    float3 endpoint_normal, float3 physical_direction) {
+  // A visibility connection has numerical uncertainty at both surfaces.
+  // Move the sampled light endpoint toward the connection's interior before
+  // the ordinary one-ULP tmax shortening excludes it from traversal.
+  const float3 shifted_endpoint = offset_ray_origin(
+      endpoint, finite_light_position_error(light, endpoint),
+      endpoint_normal, neg(physical_direction));
+  return finite_shadow_segment(hit, shifted_endpoint, physical_direction);
 }
 
 static __forceinline__ __device__ SurfaceHit trace_radiance(
@@ -1357,7 +1582,7 @@ static __forceinline__ __device__ SurfaceHit trace_radiance(
   unsigned int p1;
   pack_pointer(&hit, p0, p1);
   ++traced_rays;
-  optixTrace(params.traversable, origin, direction, params.scene_epsilon,
+  optixTrace(params.traversable, origin, direction, 0.0f,
              maximum_distance, 0.0f, OptixVisibilityMask(255),
              OPTIX_RAY_FLAG_NONE, spectraldock::kRayRadiance,
              spectraldock::kRayTypeCount, spectraldock::kRayRadiance, p0, p1);
@@ -1367,11 +1592,14 @@ static __forceinline__ __device__ SurfaceHit trace_radiance(
 static __forceinline__ __device__ bool trace_visible(
     float3 origin, float3 direction, float distance, int light_index,
     unsigned long long& traced_rays) {
+  if (!(distance > 0.0f)) return true;
+  const float maximum_distance = nextafterf(distance, 0.0f);
+  if (!(maximum_distance > 0.0f)) return true;
   unsigned int visible = 0u;
   unsigned int target_light = static_cast<unsigned int>(light_index);
   ++traced_rays;
-  optixTrace(params.traversable, origin, direction, params.scene_epsilon,
-             fmaxf(distance - params.scene_epsilon, params.scene_epsilon),
+  optixTrace(params.traversable, origin, direction, 0.0f,
+             maximum_distance,
              0.0f, OptixVisibilityMask(255),
              OPTIX_RAY_FLAG_TERMINATE_ON_FIRST_HIT |
                  OPTIX_RAY_FLAG_DISABLE_CLOSESTHIT,
@@ -1963,6 +2191,7 @@ static __forceinline__ __device__ BsdfSample sample_bsdf(
 static __forceinline__ __device__ float3 direct_segment_transmittance(
     const SurfaceHit& hit, const MaterialData& material,
     float3 shadow_origin, float3 shadow_direction, float shadow_distance,
+    float medium_distance,
     int target_light, bool transmitted_connection, const MediumState& media,
     unsigned long long& traced_rays, WaterCounters& counters) {
   MediumState shadow_media = media;
@@ -1980,7 +2209,7 @@ static __forceinline__ __device__ float3 direct_segment_transmittance(
   }
   return params.water_surface_count != 0u
       ? medium_segment_transmittance(
-            shadow_media, shadow_distance, counters)
+            shadow_media, medium_distance, counters)
       : f3(1.0f, 1.0f, 1.0f);
 }
 
@@ -2025,9 +2254,8 @@ static __forceinline__ __device__ float sphere_visible_solid_angle_pdf(
   const float3 to_center = sub(light.p0, from);
   const float distance2 = length2(to_center);
   const float radius2 = light.radius * light.radius;
-  const float minimum_distance = light.radius + params.scene_epsilon;
   if (!(light.radius > 0.0f) ||
-      !(distance2 > minimum_distance * minimum_distance)) {
+      !isfinite(distance2) || !(distance2 > radius2)) {
     return 0.0f;
   }
   const float sin2_theta_max =
@@ -2243,7 +2471,7 @@ static __forceinline__ __device__ float3 sample_finite_direct_light(
     if (!(sigma > 0.0f)) return f3(0.0f, 0.0f, 0.0f);
     const float3 displacement = sub(light_point, hit.position);
     const float distance2 = length2(displacement);
-    if (distance2 <= params.scene_epsilon * params.scene_epsilon) {
+    if (!(distance2 > 0.0f) || !isfinite(distance2)) {
       return f3(0.0f, 0.0f, 0.0f);
     }
     const float distance = sqrtf(distance2);
@@ -2259,23 +2487,16 @@ static __forceinline__ __device__ float3 sample_finite_direct_light(
     if (!(max_component(evaluation.f_cos) > 0.0f)) {
       return f3(0.0f, 0.0f, 0.0f);
     }
-    const float3 shadow_origin = offset_ray_origin(
-        hit.position, hit.geometric_normal, wi);
-    const float3 shadow_displacement = sub(light_point, shadow_origin);
-    const float shadow_distance = length3(shadow_displacement);
-    if (!(shadow_distance > params.scene_epsilon * 2.0f)) {
-      return f3(0.0f, 0.0f, 0.0f);
-    }
-    const float3 shadow_direction =
-        divv(shadow_displacement, shadow_distance);
+    const ShadowSegment shadow = finite_shadow_segment(hit, light_point, wi);
     const float3 surface_transmittance = direct_segment_transmittance(
-        hit, material, shadow_origin, shadow_direction, shadow_distance,
+        hit, material, shadow.origin, shadow.direction, shadow.distance,
+        distance,
         static_cast<int>(light_index), transmitted_connection, media,
         traced_rays, water_counters);
     if (!(max_component(surface_transmittance) > 0.0f)) {
       return f3(0.0f, 0.0f, 0.0f);
     }
-    if (track_volume(shadow_origin, shadow_direction, shadow_distance, rng,
+    if (track_volume(hit.position, wi, distance, rng,
                      volume_counters).collided != 0) {
       return f3(0.0f, 0.0f, 0.0f);
     }
@@ -2320,7 +2541,7 @@ static __forceinline__ __device__ float3 sample_finite_direct_light(
   }
   const float3 displacement = sub(light_point, hit.position);
   const float distance2 = length2(displacement);
-  if (distance2 <= params.scene_epsilon * params.scene_epsilon) {
+  if (!(distance2 > 0.0f) || !isfinite(distance2)) {
     return f3(0.0f, 0.0f, 0.0f);
   }
   const float distance = sqrtf(distance2);
@@ -2353,23 +2574,17 @@ static __forceinline__ __device__ float3 sample_finite_direct_light(
   if (!(max_component(evaluation.f_cos) > 0.0f)) {
     return f3(0.0f, 0.0f, 0.0f);
   }
-  const float3 shadow_origin = offset_ray_origin(
-      hit.position, hit.geometric_normal, wi);
-  const float3 shadow_displacement = sub(light_point, shadow_origin);
-  const float shadow_distance = length3(shadow_displacement);
-  if (shadow_distance <= params.scene_epsilon * 2.0f) {
-    return f3(0.0f, 0.0f, 0.0f);
-  }
-  const float3 shadow_direction =
-      divv(shadow_displacement, shadow_distance);
+  const ShadowSegment shadow = finite_surface_shadow_segment(
+      hit, light, light_point, light_normal, wi);
   const float3 surface_transmittance = direct_segment_transmittance(
-      hit, material, shadow_origin, shadow_direction, shadow_distance,
+      hit, material, shadow.origin, shadow.direction, shadow.distance,
+      distance,
       static_cast<int>(light_index), transmitted_connection, media,
       traced_rays, water_counters);
   if (!(max_component(surface_transmittance) > 0.0f)) {
     return f3(0.0f, 0.0f, 0.0f);
   }
-  if (track_volume(shadow_origin, shadow_direction, shadow_distance, rng,
+  if (track_volume(hit.position, wi, distance, rng,
                    volume_counters).collided != 0) {
     return f3(0.0f, 0.0f, 0.0f);
   }
@@ -2437,7 +2652,6 @@ static __forceinline__ __device__ void accumulate_delta_direct_lights(
     float3 wi;
     float radiometric_distance2 = 1.0f;
     float radiometric_distance = kInfinity;
-    float shadow_distance = kInfinity;
     if (is_point) {
       const float3 displacement = sub(light.p0, hit.position);
       radiometric_distance2 = length2(displacement);
@@ -2447,7 +2661,6 @@ static __forceinline__ __device__ void accumulate_delta_direct_lights(
       }
       radiometric_distance = sqrtf(radiometric_distance2);
       wi = divv(displacement, radiometric_distance);
-      shadow_distance = radiometric_distance;
     } else {
       if (!(length2(light.axis) > 1.0e-20f)) continue;
       wi = normalize3(light.axis);
@@ -2463,26 +2676,22 @@ static __forceinline__ __device__ void accumulate_delta_direct_lights(
         eta_i, eta_t);
     if (!(max_component(evaluation.f_cos) > 0.0f)) continue;
 
-    const float offset_distance = is_point
-        ? fminf(params.scene_epsilon * 2.0f,
-                radiometric_distance * 0.25f)
-        : params.scene_epsilon * 2.0f;
-    const float3 shadow_origin = offset_ray_origin(
-        hit.position, hit.geometric_normal, wi, offset_distance);
-    float3 shadow_direction = wi;
+    ShadowSegment shadow{};
     if (is_point) {
-      const float3 shadow_displacement = sub(light.p0, shadow_origin);
-      shadow_distance = length3(shadow_displacement);
-      if (!(shadow_distance > 0.0f) || !isfinite(shadow_distance)) continue;
-      shadow_direction = divv(shadow_displacement, shadow_distance);
+      shadow = finite_shadow_segment(hit, light.p0, wi);
+    } else {
+      shadow.origin = offset_ray_origin(
+          hit.position, hit.position_error, hit.geometric_normal, wi);
+      shadow.direction = wi;
+      shadow.distance = kInfinity;
+      shadow.has_interval = 1;
     }
 
     float3 surface_transmittance;
-    if (is_point && shadow_distance <= params.scene_epsilon * 2.0f) {
-      // There is no numerically representable shadow interval between tmin
-      // and this very near ideal point. Do not invent a minimum light range;
-      // retain the medium transition/Beer term and treat the tiny segment as
-      // geometrically unobstructed.
+    if (is_point && shadow.has_interval == 0) {
+      // There is no representable open interval between the robust origin and
+      // this ideal point. Do not invent a minimum range: retain the physical
+      // medium distance and treat the unresolved segment as unobstructed.
       MediumState shadow_media = media;
       if (params.water_surface_count != 0u &&
           is_rough_dielectric(material) && transmitted_connection &&
@@ -2493,15 +2702,16 @@ static __forceinline__ __device__ void accumulate_delta_direct_lights(
       }
       surface_transmittance = params.water_surface_count != 0u
           ? medium_segment_transmittance(
-                shadow_media, shadow_distance, water_counters)
+                shadow_media, radiometric_distance, water_counters)
           : f3(1.0f, 1.0f, 1.0f);
     } else {
       surface_transmittance = direct_segment_transmittance(
-          hit, material, shadow_origin, shadow_direction, shadow_distance, -1,
+          hit, material, shadow.origin, shadow.direction, shadow.distance,
+          radiometric_distance, -1,
           transmitted_connection, media, traced_rays, water_counters);
     }
     if (!(max_component(surface_transmittance) > 0.0f)) continue;
-    if (track_volume(shadow_origin, shadow_direction, shadow_distance, rng,
+    if (track_volume(hit.position, wi, radiometric_distance, rng,
                      volume_counters).collided != 0) {
       continue;
     }
@@ -2720,15 +2930,15 @@ static __forceinline__ __device__ float3 sample_environment_direct_light(
   }
 
   const float3 shadow_origin = offset_ray_origin(
-      hit.position, hit.geometric_normal, wi);
+      hit.position, hit.position_error, hit.geometric_normal, wi);
   const float3 surface_transmittance = direct_segment_transmittance(
-      hit, material, shadow_origin, wi, kInfinity, -1,
+      hit, material, shadow_origin, wi, kInfinity, kInfinity, -1,
       transmitted_connection, media,
       traced_rays, water_counters);
   if (!(max_component(surface_transmittance) > 0.0f)) {
     return f3(0.0f, 0.0f, 0.0f);
   }
-  if (track_volume(shadow_origin, wi, kInfinity, rng,
+  if (track_volume(hit.position, wi, kInfinity, rng,
                    volume_counters).collided != 0) {
     return f3(0.0f, 0.0f, 0.0f);
   }
@@ -2941,13 +3151,19 @@ extern "C" __global__ void __raygen__pathtrace() {
       if (params.water_surface_count != 0u && hit.hit != 0) {
         infer_base_water_incident_medium(hit, media);
       }
+      // Geometry traversal begins at the robustly shifted origin, but volume
+      // tracking and Beer attenuation belong to the unshifted transport
+      // segment. previous_position is the camera or preceding surface vertex.
+      const float physical_surface_distance = hit.hit != 0
+          ? length3(sub(hit.position, previous_position))
+          : kInfinity;
       const VolumeCollision volume = track_volume(
-          ray_origin, ray_direction, hit.hit != 0 ? hit.distance : kInfinity,
+          previous_position, ray_direction, physical_surface_distance,
           rng, volume_counters);
       if (params.water_surface_count != 0u) {
         const float travel_distance = volume.collided != 0
             ? volume.distance
-            : (hit.hit != 0 ? hit.distance : kInfinity);
+            : physical_surface_distance;
         throughput = mul(
             throughput,
             medium_segment_transmittance(
@@ -3127,7 +3343,8 @@ extern "C" __global__ void __raygen__pathtrace() {
           previous_light_mode = current_light_mode;
           previous_position = hit.position;
           ray_origin = offset_ray_origin(
-              hit.position, hit.geometric_normal, reflected);
+              hit.position, hit.position_error, hit.geometric_normal,
+              reflected);
           ray_direction = reflected;
           continue;
         }
@@ -3146,7 +3363,8 @@ extern "C" __global__ void __raygen__pathtrace() {
                      static_cast<unsigned int>(hit.material_index));
         pending_path = 1;
         pending_origin = offset_ray_origin(
-            hit.position, hit.geometric_normal, reflected);
+            hit.position, hit.position_error, hit.geometric_normal,
+            reflected);
         pending_direction = reflected;
         pending_throughput = clamp_nonnegative(
             mul(mul(throughput, base_color), reflectance));
@@ -3168,7 +3386,8 @@ extern "C" __global__ void __raygen__pathtrace() {
         previous_light_mode = current_light_mode;
         previous_position = hit.position;
         ray_origin = offset_ray_origin(
-            hit.position, hit.geometric_normal, transmitted);
+            hit.position, hit.position_error, hit.geometric_normal,
+            transmitted);
         ray_direction = transmitted;
         if (!update_medium_after_transmission(
                 media, hit.material_index, material, hit.front_face,
@@ -3209,7 +3428,8 @@ extern "C" __global__ void __raygen__pathtrace() {
         throughput = mul(throughput, continuation.throughput_scale);
       }
       ray_origin = offset_ray_origin(
-          hit.position, hit.geometric_normal, scatter.wi);
+          hit.position, hit.position_error, hit.geometric_normal,
+          scatter.wi);
       ray_direction = scatter.wi;
       }
       if (pending_path == 0) break;
@@ -3270,15 +3490,89 @@ extern "C" __global__ void __closesthit__radiance() {
       reinterpret_cast<const HitgroupData*>(optixGetSbtDataPointer());
   const GeometryData& geometry = record->geometry;
   const float t = optixGetRayTmax();
+  const float3 world_origin = optixGetWorldRayOrigin();
   const float3 world_direction = optixGetWorldRayDirection();
-  const float3 world_point =
-      add(optixGetWorldRayOrigin(), mul(world_direction, t));
-  const float3 object_point =
-      optixTransformPointFromWorldToObjectSpace(world_point);
+  const float3 scaled_direction = mul(world_direction, t);
+  float3 world_point;
+  float3 object_point;
+  float3 position_error;
+  const bool triangle_hit =
+      geometry.primitive_type == spectraldock::kPrimitiveTriangle ||
+      geometry.primitive_type == spectraldock::kPrimitiveMesh;
+  if (triangle_hit) {
+    float3 vertices[3];
+    optixGetTriangleVertexData(vertices);
+    const float3 edge1 = sub(vertices[1], vertices[0]);
+    const float3 edge2 = sub(vertices[2], vertices[0]);
+    object_point = triangle_point_precise(
+        vertices[0], edge1, edge2, optixGetTriangleBarycentrics());
+    const float3 abs_edge1 = abs3(edge1);
+    const float3 abs_edge2 = abs3(edge2);
+    const float3 extent3 = add(
+        add(abs_edge1, abs_edge2), abs3(sub(abs_edge1, abs_edge2)));
+    const float extent =
+        fmaxf(extent3.x, fmaxf(extent3.y, extent3.z));
+    float3 object_error = add(
+        mul(abs3(vertices[0]), kFloatUnitRoundoff),
+        f3(kTriangleErrorC1 * extent,
+           kTriangleErrorC1 * extent,
+           kTriangleErrorC1 * extent));
+
+    float object_to_world[12];
+    optixGetObjectToWorldTransformMatrix(object_to_world);
+    if (is_identity_transform(object_to_world)) {
+      // Rectangles and untransformed meshes already live in traversal space;
+      // charging an affine round trip here would double-count coordinates.
+      world_point = object_point;
+      position_error = object_error;
+    } else {
+      float world_to_object[12];
+      optixGetWorldToObjectTransformMatrix(world_to_object);
+      world_point = transform_point_precise(object_to_world, object_point);
+
+      // Bound the explicit O2W reconstruction and the independent W2O
+      // transform performed during traversal. Absolute affine magnitudes are
+      // intentional: an observed round-trip closure can cancel to zero and
+      // is not a worst-case error bound.
+      const float3 world_reconstruction_error = add(
+          mul(transform_abs_linear(
+                  object_to_world, abs3(object_point)),
+              kTriangleErrorC1),
+          mul(f3(fabsf(object_to_world[3]),
+                 fabsf(object_to_world[7]),
+                 fabsf(object_to_world[11])),
+              kTransformErrorC2));
+      object_error = add(
+          object_error,
+          mul(transform_abs_affine(world_to_object, world_point),
+              kTransformErrorC2));
+      position_error = add(
+          world_reconstruction_error,
+          transform_abs_linear(object_to_world, object_error));
+    }
+  } else {
+    world_point = f3(
+        fmaf(world_direction.x, t, world_origin.x),
+        fmaf(world_direction.y, t, world_origin.y),
+        fmaf(world_direction.z, t, world_origin.z));
+    object_point =
+        optixTransformPointFromWorldToObjectSpace(world_point);
+    const float extent = primitive_error_extent(geometry);
+    position_error = add(
+        mul(abs3(world_point), kTriangleErrorC1),
+        mul(add(abs3(scaled_direction), f3(extent, extent, extent)),
+            kRayPointGamma));
+  }
   const float3 object_geometric =
       object_outward_normal(*record, object_point);
   const float3 world_outward = normalize3(
       optixTransformNormalFromObjectToWorldSpace(object_geometric));
+  if (!triangle_hit) {
+    position_error = add(
+        position_error,
+        mul(abs3(world_outward),
+            primitive_surface_residual(geometry, object_point)));
+  }
   const bool front_face =
       dot3(world_direction, world_outward) < 0.0f;
   const int material = hit_material(*record, front_face);
@@ -3306,6 +3600,7 @@ extern "C" __global__ void __closesthit__radiance() {
   hit->front_face = front_face ? 1 : 0;
   hit->distance = t;
   hit->position = world_point;
+  hit->position_error = position_error;
   hit->geometric_normal = front_face ? world_outward : neg(world_outward);
   const float3 oriented_shading =
       front_face ? world_shading : neg(world_shading);
@@ -3771,7 +4066,7 @@ extern "C" __global__ void __intersection__water_surface() {
     if (i + 1u < root_count &&
         root_candidates[i].orientation != root_candidates[i + 1u].orientation &&
         root_candidates[i + 1u].distance - root_candidates[i].distance <=
-            2.0f * params.scene_epsilon) {
+            2.0f * params.water_solver_epsilon) {
       // A sub-epsilon enter/exit pair is an unresolved grazing contact. A
       // single reported side would corrupt the LIFO medium stack, while the
       // pair has zero resolvable optical thickness and no net transition.

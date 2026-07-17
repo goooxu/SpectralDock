@@ -7,7 +7,7 @@
 | 标准步骤 | SpectralDock 的实现 | 时机 | 详细位置 |
 |---|---|---|---|
 | 准备 CUDA 几何数据 | 将 mesh 的 position、normal、UV、MikkTSpace face-corner tangent、index、可选逐三角形材质 ID 和解析 primitive 的构建输入放入设备缓冲区 | 运行期，单帧 | 第 7 章 |
-| 构建 GAS / IAS 加速结构 | 每份 mesh 资源或解析对象构建 GAS，再用对象变换、GAS handle 与 `sbtOffset` 构建 IAS；两级都只在紧凑结果更小时压缩 | 运行期，单帧 | 第 7 章 |
+| 构建 GAS / IAS 加速结构 | 每份 mesh 资源或解析对象构建 GAS；custom GAS 镜像设备 root clip/水面 tile overlap，并对遍历 `OptixAabb` 向外舍入一个 ULP；然后用对象变换、GAS handle 与 `sbtOffset` 构建 IAS；两级都只在紧凑结果更小时压缩 | 运行期，单帧 | 第 7 章 |
 | 编译 RayGen、Miss、Hit 等程序 | NVCC 把设备程序编译成 OptiX IR；运行时从 IR 创建 module 和 program groups | 构建期 + 运行期初始化 | 本章第 3、4 节 |
 | 创建 Pipeline 和 Shader Binding Table | 先链接 pipeline；GAS/IAS 完成后再为 raygen、miss 和每个对象的两类射线打包 SBT | 运行期，单帧 | 本章第 4、6 节 |
 | 调用 optixLaunch | 上传 `LaunchParams`，以 `width × height × 1` 启动二维工作网格 | 运行期，单帧 | 本章第 7、8 节 |
@@ -201,10 +201,10 @@ SBT 完成后，主机分配并清零输出与统计缓冲，再填写 `LaunchPa
 
 | 分组 | 当前字段与职责 |
 |---|---|
-| 遍历与输出 | IAS `traversable`；`beauty`、`albedo`、`normal`；宽高、spp、`max_depth`、seed、`scene_epsilon` 与 camera |
+| 遍历与输出 | IAS `traversable`；`beauty`、`albedo`、`normal`；宽高、spp、`max_depth`、seed 与 camera |
 | 背景与环境分布 | constant/sky 参数；HDR environment texture、row CDF、conditional CDF、宽高、intensity 与 rotation |
 | 场景与直接光采样 | materials/textures/all lights；随机有限灯的 `light_cdf` 与 `sampled_light_indices`；确定性 delta 灯的 `delta_light_indices`；各数组计数和 direct/indirect clamp 阈值 |
-| 安全与统计 | 逐像素 `traced_rays`、volume counters、water counters，以及启用贡献钳位时的全局 firefly counters |
+| 安全与统计 | 解析水面专用 `water_solver_epsilon`；逐像素 `traced_rays`、volume counters、water counters，以及启用贡献钳位时的全局 firefly counters |
 
 <!-- source-snippet id="optix-launch-params-population" path="src/optix_renderer.cpp" anchor="parameters.traversable = ias.handle;" -->
 ```cpp
@@ -269,13 +269,15 @@ static __forceinline__ __device__ SurfaceHit trace_radiance(
   unsigned int p1;
   pack_pointer(&hit, p0, p1);
   ++traced_rays;
-  optixTrace(params.traversable, origin, direction, params.scene_epsilon,
+  optixTrace(params.traversable, origin, direction, 0.0f,
              maximum_distance, 0.0f, OptixVisibilityMask(255),
              OPTIX_RAY_FLAG_NONE, spectraldock::kRayRadiance,
              spectraldock::kRayTypeCount, spectraldock::kRayRadiance, p0, p1);
   return hit;
 }
 ```
+
+表面续射的 origin 已在调用前根据 `position_error` 外推，因此 `optixTrace` 不再用固定 `tmin` 重复裁掉一段世界空间距离。相机首射也使用同一个查询入口；它没有表面自交问题，合法最近根直接从 0 以上参与遍历。
 
 一次查询中各类程序的分工如下：
 
@@ -284,7 +286,7 @@ static __forceinline__ __device__ SurfaceHit trace_radiance(
 | traversal | `optixTrace` 内部 | 从 IAS 进入实例对应的 GAS，用 BVH 排除无关包围盒 |
 | intersection | 遇到候选 primitive | disk、cylinder、parabola、water surface 和 solid sphere 运行自定义交点代码；普通 sphere、triangle/mesh 使用内建求交 |
 | any-hit | 候选交点被报告后 | 对 radiance 和 shadow 都执行 alpha cutoff；shadow 还忽略目标灯自身 |
-| closest-hit | radiance 最近有效命中确定后 | 计算位置、几何/着色法线、UV、材质与灯索引，写入 `SurfaceHit` |
+| closest-hit | radiance 最近有效命中确定后 | 计算位置及其误差界、几何/着色法线、UV、材质与灯索引，写入 `SurfaceHit` |
 | miss | 没有有效命中 | radiance 保留“未命中”，shadow 把 payload 写成“可见” |
 | raygen | 每个像素入口 | 评估背景/发光、BSDF、NEE/MIS、throughput、俄罗斯轮盘和反弹循环 |
 
@@ -302,7 +304,7 @@ raygen
 
 ### 9.1 Radiance payload
 
-payload 0 和 1 合并为 `SurfaceHit*`。miss 不填写命中数据，closest-hit 通过该指针写入结果；`optixTrace` 返回后，raygen 像读取普通查询结果一样消费它。
+payload 0 和 1 合并为 `SurfaceHit*`。miss 不填写命中数据，closest-hit 通过该指针写入结果；`optixTrace` 返回后，raygen 像读取普通查询结果一样消费它。primitive-aware 的 `position_error` 与命中位置一起返回，后续 radiance 和 shadow ray 都用它生成尺度自适应、ULP 外推的 origin。
 
 ### 9.2 Shadow payload 与透明边界语义
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare terminal-depth MIS for bound and unbound versions of one light."""
+"""Compare finite-light endpoint visibility for bound and unbound variants."""
 
 import argparse
 import sys
@@ -18,6 +18,10 @@ MAX_DEPTH = 1
 SEED = 1
 
 
+def add(left, right):
+    return tuple(a + b for a, b in zip(left, right))
+
+
 def positive_integer(value: str) -> int:
     result = int(value)
     if result <= 0:
@@ -32,19 +36,22 @@ def nonnegative_integer(value: str) -> int:
     return result
 
 
-def create_renderer(*, bound: bool, device: int) -> Renderer:
+def create_renderer(*, light_shape: str, bound: bool, device: int, offset) -> Renderer:
     """Build the smoke fixture, optionally binding its light to emitter geometry."""
 
     renderer = Renderer(
         device=device,
-        scene_name="integrator-mis-bound" if bound else "integrator-mis-unbound",
+        scene_name=(
+            f"integrator-mis-{light_shape}-"
+            f"{'bound' if bound else 'unbound'}"
+        ),
     )
     renderer.integrator(
         direct_light_sampling="importance", clamp_direct=0.0, clamp_indirect=0.0
     )
     renderer.camera(
-        look_from=(3.0, 2.0, 5.0),
-        look_at=(0.0, 0.5, 0.0),
+        look_from=add(offset, (3.0, 2.0, 5.0)),
+        look_at=add(offset, (0.0, 0.5, 0.0)),
         up=(0.0, 1.0, 0.0),
         vfov=38.0,
         aperture=0.0,
@@ -73,53 +80,76 @@ def create_renderer(*, bound: bool, device: int) -> Renderer:
     renderer.object(
         name="floor",
         type="rectangle",
-        p1=(-3.0, 0.0, 2.0),
-        p2=(-3.0, 0.0, -3.0),
-        p3=(3.0, 0.0, -3.0),
+        p1=add(offset, (-3.0, 0.0, 2.0)),
+        p2=add(offset, (-3.0, 0.0, -3.0)),
+        p3=add(offset, (3.0, 0.0, -3.0)),
         material=white,
     )
     renderer.object(
         name="red_ball",
         type="sphere",
-        center=(-0.7, 0.7, 0.0),
+        center=add(offset, (-0.7, 0.7, 0.0)),
         radius=0.7,
         material=red,
     )
     renderer.object(
         name="mirror_ball",
         type="sphere",
-        center=(0.9, 0.5, -0.4),
+        center=add(offset, (0.9, 0.5, -0.4)),
         radius=0.5,
         material=mirror,
     )
-    ceiling_light = renderer.object(
-        name="ceiling_light",
-        type="rectangle",
-        p1=(-0.7, 3.0, -0.7),
-        p2=(0.7, 3.0, -0.7),
-        p3=(0.7, 3.0, 0.7),
-        material=emitter,
-    )
+    if light_shape == "rectangle":
+        ceiling_light = renderer.object(
+            name="ceiling_light",
+            type="rectangle",
+            p1=add(offset, (-0.7, 3.0, -0.7)),
+            p2=add(offset, (0.7, 3.0, -0.7)),
+            p3=add(offset, (0.7, 3.0, 0.7)),
+            material=emitter,
+        )
+        light_parameters = {
+            "position": add(offset, (-0.7, 3.0, -0.7)),
+            "edge_u": (1.4, 0.0, 0.0),
+            "edge_v": (0.0, 0.0, 1.4),
+        }
+    elif light_shape == "disk":
+        ceiling_light = renderer.object(
+            name="ceiling_light",
+            type="disk",
+            center=add(offset, (0.0, 3.0, 0.0)),
+            normal=(0.0, -1.0, 0.0),
+            radius=0.8,
+            material=emitter,
+        )
+        light_parameters = {
+            "position": add(offset, (0.0, 3.0, 0.0)),
+            "normal": (0.0, -1.0, 0.0),
+            "radius": 0.8,
+        }
+    elif light_shape == "sphere":
+        ceiling_light = renderer.object(
+            name="ceiling_light",
+            type="sphere",
+            center=add(offset, (0.0, 3.0, 0.0)),
+            radius=0.65,
+            material=emitter,
+        )
+        light_parameters = {
+            "position": add(offset, (0.0, 3.0, 0.0)),
+            "radius": 0.65,
+        }
+    else:
+        raise RuntimeError(f"unsupported finite light shape: {light_shape}")
 
     if bound:
-        renderer.light(
-            name="ceiling_light_sample",
-            type="rectangle",
-            object=ceiling_light,
-            position=(-0.7, 3.0, -0.7),
-            edge_u=(1.4, 0.0, 0.0),
-            edge_v=(0.0, 0.0, 1.4),
-            emission=(12.0, 10.0, 8.0),
-        )
-    else:
-        renderer.light(
-            name="ceiling_light_sample",
-            type="rectangle",
-            position=(-0.7, 3.0, -0.7),
-            edge_u=(1.4, 0.0, 0.0),
-            edge_v=(0.0, 0.0, 1.4),
-            emission=(12.0, 10.0, 8.0),
-        )
+        light_parameters["object"] = ceiling_light
+    renderer.light(
+        name="ceiling_light_sample",
+        type=light_shape,
+        emission=(12.0, 10.0, 8.0),
+        **light_parameters,
+    )
     return renderer
 
 
@@ -135,10 +165,19 @@ def decoded_rgba(path: Path) -> bytes:
 
 
 def render_variant(
-    directory: Path, name: str, *, bound: bool, device: int, spp: int
+    directory: Path,
+    name: str,
+    *,
+    light_shape: str,
+    bound: bool,
+    device: int,
+    spp: int,
+    offset,
 ) -> bytes:
     output = directory / f"{name}.png"
-    create_renderer(bound=bound, device=device).render(
+    create_renderer(
+        light_shape=light_shape, bound=bound, device=device, offset=offset
+    ).render(
         output=output,
         width=WIDTH,
         height=HEIGHT,
@@ -151,25 +190,48 @@ def render_variant(
 
 
 def run_check(directory: Path, *, device: int, spp: int) -> None:
-    bound_pixels = render_variant(
-        directory, "bound", bound=True, device=device, spp=spp
-    )
-    unbound_pixels = render_variant(
-        directory, "unbound", bound=False, device=device, spp=spp
-    )
+    for light_shape in ("rectangle", "disk", "sphere"):
+        for case_name, offset in (
+            ("unit", (0.0, 0.0, 0.0)),
+            ("translated", (0.0, 0.0, 1.0e6)),
+        ):
+            label = f"{light_shape}-{case_name}"
+            bound_pixels = render_variant(
+                directory,
+                f"{label}-bound",
+                light_shape=light_shape,
+                bound=True,
+                device=device,
+                spp=spp,
+                offset=offset,
+            )
+            unbound_pixels = render_variant(
+                directory,
+                f"{label}-unbound",
+                light_shape=light_shape,
+                bound=False,
+                device=device,
+                spp=spp,
+                offset=offset,
+            )
 
-    if bound_pixels != unbound_pixels:
-        differences = sum(
-            left != right for left, right in zip(bound_pixels, unbound_pixels)
-        )
-        raise RuntimeError(
-            "terminal-depth bound/unbound render mismatch: "
-            f"{differences} decoded RGBA bytes differ"
-        )
-    if not any(
-        value for index, value in enumerate(bound_pixels) if index % 4 != 3
-    ):
-        raise RuntimeError("terminal-depth comparison rendered a blank image")
+            if bound_pixels != unbound_pixels:
+                differences = sum(
+                    left != right
+                    for left, right in zip(bound_pixels, unbound_pixels)
+                )
+                raise RuntimeError(
+                    f"{label} terminal-depth bound/unbound render mismatch: "
+                    f"{differences} decoded RGBA bytes differ"
+                )
+            if not any(
+                value
+                for index, value in enumerate(bound_pixels)
+                if index % 4 != 3
+            ):
+                raise RuntimeError(
+                    f"{label} terminal-depth comparison rendered a blank image"
+                )
 
 
 def parse_args() -> argparse.Namespace:

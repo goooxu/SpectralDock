@@ -90,6 +90,21 @@ std::size_t checked_product(std::size_t a, std::size_t b, const char* what) {
   return a * b;
 }
 
+float next_float_down(float value) {
+  return std::nextafter(value, -std::numeric_limits<float>::infinity());
+}
+
+float next_float_up(float value) {
+  return std::nextafter(value, std::numeric_limits<float>::infinity());
+}
+
+OptixAabb outward_aabb(float min_x, float min_y, float min_z,
+                       float max_x, float max_y, float max_z) {
+  return {next_float_down(min_x), next_float_down(min_y),
+          next_float_down(min_z), next_float_up(max_x),
+          next_float_up(max_y), next_float_up(max_z)};
+}
+
 template <typename T>
 unsigned int checked_u32(T value, const char* what) {
   if (value > static_cast<T>(std::numeric_limits<unsigned int>::max()))
@@ -600,6 +615,18 @@ DeviceGeometryData geometry_for(const Scene& scene, const Object& object,
   } else {
     throw std::runtime_error("unsupported object geometry type");
   }
+  if (d.primitive_type == kPrimitiveDisk ||
+      d.primitive_type == kPrimitiveCylinder ||
+      d.primitive_type == kPrimitiveParabola ||
+      d.primitive_type == kPrimitiveWaterSurface ||
+      d.primitive_type == kPrimitiveSolidSphere) {
+    d.aabb_min = make_float3(next_float_down(d.aabb_min.x),
+                             next_float_down(d.aabb_min.y),
+                             next_float_down(d.aabb_min.z));
+    d.aabb_max = make_float3(next_float_up(d.aabb_max.x),
+                             next_float_up(d.aabb_max.y),
+                             next_float_up(d.aabb_max.z));
+  }
   return d;
 }
 
@@ -776,9 +803,9 @@ Gas build_object(OptixDeviceContext context, cudaStream_t stream,
         const float z0 = minimum_z + tile_depth * static_cast<float>(z);
         const float z1 =
             minimum_z + tile_depth * static_cast<float>(z + 1u);
-        boxes[index] = {x0 - overlap, g.aabb_min.y - overlap,
-                        z0 - overlap, x1 + overlap,
-                        g.aabb_max.y + overlap, z1 + overlap};
+        boxes[index] = outward_aabb(
+            x0 - overlap, g.aabb_min.y - overlap, z0 - overlap,
+            x1 + overlap, g.aabb_max.y + overlap, z1 + overlap);
       }
     }
     a.allocate(tracker, boxes.size() * sizeof(OptixAabb));
@@ -792,7 +819,10 @@ Gas build_object(OptixDeviceContext context, cudaStream_t stream,
     input.customPrimitiveArray.flags = &flag;
     input.customPrimitiveArray.numSbtRecords = 1;
   } else {
-    const OptixAabb box{g.aabb_min.x,g.aabb_min.y,g.aabb_min.z,g.aabb_max.x,g.aabb_max.y,g.aabb_max.z};
+    constexpr float clip = kCustomPrimitiveClipTolerance;
+    const OptixAabb box = outward_aabb(
+        g.aabb_min.x - clip, g.aabb_min.y - clip, g.aabb_min.z - clip,
+        g.aabb_max.x + clip, g.aabb_max.y + clip, g.aabb_max.z + clip);
     a.allocate(tracker,sizeof(box)); a.upload(&box,sizeof(box),stream); ap=a.pointer();
     input.type=OPTIX_BUILD_INPUT_TYPE_CUSTOM_PRIMITIVES;
     input.customPrimitiveArray.aabbBuffers=&ap; input.customPrimitiveArray.numPrimitives=1;

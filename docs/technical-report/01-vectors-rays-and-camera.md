@@ -61,7 +61,7 @@ $$
 
 这里的“射线”是数学对象，不对应一条主机端 CPU 渲染路径。当前生产实现只在设备程序中用 `float3` 的 origin/direction 保存射线状态，再交给 OptiX 遍历；主机端 `math.h` 只保留 SceneBuilder 校验、相机和实例变换需要的向量与 AABB 基础类型。
 
-实际浮点运算不精确。SpectralDock 把追踪区间下限设为 `scene_epsilon = 1e-4`；从表面生成的 radiance/shadow 射线还会沿出射方向所在一侧的**定向几何法线** $\mathbf n_g$ 偏移。通常距离是 `2 * scene_epsilon = 2e-4`；对极近 point 灯的 shadow ray 还会封顶为灯距的 25%，避免偏移越过灯点。偏移侧由 $\mathrm{sign}(\mathbf n_g\cdot\boldsymbol\omega)$ 决定；插值着色法线不参与这个几何判定。这是数值防护，不是物体的物理厚度。
+实际浮点运算不精确，所以从交点继续发射的新射线不能简单复用舍入后的表面坐标。SpectralDock 为每次命中携带尺度相关的位置误差界，并沿出射侧的几何法线把新 origin 推到不确定区间之外；shadow 的数值端点与 PDF、Beer、体积跟踪所用的物理距离也彼此分开。这里先保留“误差界随交点与 primitive 改变”这一结论；triangle/解析几何的具体界、`nextafter` 外推与有限灯双端区间统一放在第 7 章，解析水面求根器的独立容差放在第 11 章。
 
 ## 3. 相机自己的三根坐标轴
 

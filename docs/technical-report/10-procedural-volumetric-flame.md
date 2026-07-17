@@ -107,32 +107,30 @@ $$
 
 ## 4. 相机、镜面路径与估计器分工
 
-相机射线和 delta 镜面/介质事件后的射线使用首次真实碰撞估计：碰撞时累积 $\boldsymbol\beta\odot\mathbf S_{\mathrm{mix}}$ 并终止；没有碰撞才继续到最近表面或背景。
+相机射线和 delta 镜面/介质事件后的射线使用首次真实碰撞估计：碰撞时累积 $\boldsymbol\beta\odot\mathbf S_{\mathrm{mix}}$ 并终止；没有碰撞才继续到最近表面或背景。几何遍历使用 robustly shifted origin，但体积跟踪与 Beer 距离保留从相机或上一表面顶点 `previous_position` 开始的未偏移物理段。
 
 普通 Lambert/GGX 事件之后，真实体积碰撞只终止路径，不再次累积源函数。这部分发光由前一个表面的体积 NEE 独占。两种情况以 `previous_delta` 分开，因此不会让同一贡献同时进入“沿 BSDF 射线撞到火焰”和“从表面连接火焰”两个估计器，也不需要为这两种体积策略补做 MIS。
 
 <!-- source-snippet id="volume-path-estimator-partition" path="src/device_programs.cu" anchor="const VolumeCollision volume = track_volume(" -->
 ```cpp
+      // Geometry traversal begins at the robustly shifted origin, but volume
+      // tracking and Beer attenuation belong to the unshifted transport
+      // segment. previous_position is the camera or preceding surface vertex.
+      const float physical_surface_distance = hit.hit != 0
+          ? length3(sub(hit.position, previous_position))
+          : kInfinity;
       const VolumeCollision volume = track_volume(
-          ray_origin, ray_direction, hit.hit != 0 ? hit.distance : kInfinity,
+          previous_position, ray_direction, physical_surface_distance,
           rng, volume_counters);
       if (params.water_surface_count != 0u) {
         const float travel_distance = volume.collided != 0
             ? volume.distance
-            : (hit.hit != 0 ? hit.distance : kInfinity);
+            : physical_surface_distance;
         throughput = mul(
             throughput,
             medium_segment_transmittance(
                 media, travel_distance, water_counters));
         if (!(max_component(throughput) > 0.0f)) break;
-      }
-      if (volume.collided != 0) {
-        if (previous_delta != 0) {
-          accumulate_path_contribution(
-              radiance, mul(throughput, volume.source), clamp_threshold,
-              clamped_counter);
-        }
-        break;
       }
 ```
 
@@ -156,18 +154,20 @@ $$
 {p_{\mathrm{select}}q_Vr^2}.
 $$
 
-有效着色法线提供 `evaluation.f_cos` 中的 `AbsDot` 余弦，几何法线 $\mathbf n_g$ 另行判定真实反射/透射侧并决定 shadow-ray 起点。体积点没有表面法线，因此没有面积光公式中的光源侧余弦。圆柱中落在零密度区的样本直接贡献零；实现没有用隐藏暖色面积灯替代火焰照明。
+有效着色法线提供 `evaluation.f_cos` 中的 `AbsDot` 余弦，几何法线 $\mathbf n_g$ 另行判定真实反射/透射侧并决定 shadow-ray 起点；表面可见性使用 robustly shifted 段，体积透射仍评估未偏移交点到采样点的物理段。体积点没有表面法线，因此没有面积光公式中的光源侧余弦。圆柱中落在零密度区的样本直接贡献零；实现没有用隐藏暖色面积灯替代火焰照明。
 
 <!-- source-snippet id="volume-nee-estimator" path="src/device_programs.cu" anchor="const float support_volume =" -->
 ```cpp
+    const ShadowSegment shadow = finite_shadow_segment(hit, light_point, wi);
     const float3 surface_transmittance = direct_segment_transmittance(
-        hit, material, shadow_origin, shadow_direction, shadow_distance,
+        hit, material, shadow.origin, shadow.direction, shadow.distance,
+        distance,
         static_cast<int>(light_index), transmitted_connection, media,
         traced_rays, water_counters);
     if (!(max_component(surface_transmittance) > 0.0f)) {
       return f3(0.0f, 0.0f, 0.0f);
     }
-    if (track_volume(shadow_origin, shadow_direction, shadow_distance, rng,
+    if (track_volume(hit.position, wi, distance, rng,
                      volume_counters).collided != 0) {
       return f3(0.0f, 0.0f, 0.0f);
     }

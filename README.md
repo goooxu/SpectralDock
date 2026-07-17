@@ -132,6 +132,15 @@ gallery 与 mesh golden 只代表记录中的 RTX 5090、驱动、编译器和 s
 - `water_surface` 是静态有限解析界面，需要不透明池壁和池底；它不是 PhysX 流体。
 - flame 是确定性吸收/自发光体积代理，不是烟流或燃烧模拟。
 - point/directional 是理想 delta 灯；软阴影需使用有限面积灯。
+- 表面派生射线已使用 primitive-aware 位置误差界与 ULP 外推，不再把固定 epsilon 当作
+  ray-spawn 距离；解析水面的端点交叉探测与无法分辨的近切 enter/exit 对仍使用
+  独立的固定世界空间
+  `water_solver_epsilon`，极端缩放的波面参数不在当前验收范围内。解析 primitive
+  的误差界在通用 fallback 上为 sphere、disk、cylinder、parabola 和 water 加入实际曲面
+  residual，但仍不保证严格封闭所有近切求交的条件数放大。custom primitive
+  的设备边界先向外舍入一个 float ULP；普通 custom GAS 还镜像设备 root clip
+  容差，构建遍历用 `OptixAabb`（包括每个 water tile）时再保留一个 ULP guard，
+  避免大坐标包围盒向内取整导致 BVH 漏交。
 - 默认 direct 64、indirect 16 的贡献钳位有偏；能量或收敛实验必须在 Python 调用中把两个阈值设为 0。
 - PhysX GPU 不承诺重复运行逐字节相同；固定 seed 和 actor 顺序约束输入，契约验证约束结果。
 

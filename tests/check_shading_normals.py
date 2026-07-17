@@ -102,6 +102,14 @@ def direct_renderer(
             base_color=(0.9, 0.75, 0.55),
             roughness=0.55,
         )
+    elif material_type == "pbr":
+        material = renderer.material(
+            name="receiver",
+            type="pbr",
+            base_color=(0.9, 0.75, 0.55),
+            metallic=0.65,
+            roughness=0.55,
+        )
     else:
         raise RuntimeError(f"unsupported direct-light material: {material_type}")
     mesh = renderer.mesh(name="adversarial-quad", path=EXTREME_MESH)
@@ -117,12 +125,23 @@ def direct_renderer(
     return renderer
 
 
-def finite_light_renderer(*, device: int) -> Renderer:
+def finite_light_renderer(*, device: int, material_type="lambertian") -> Renderer:
     renderer = common_renderer(device=device)
     renderer.background(type="constant", color=(0.0, 0.0, 0.0), exposure=0.0)
-    receiver = renderer.material(
-        name="receiver", type="lambertian", base_color=(0.8, 0.7, 0.6)
-    )
+    if material_type == "lambertian":
+        receiver = renderer.material(
+            name="receiver", type="lambertian", base_color=(0.8, 0.7, 0.6)
+        )
+    elif material_type == "pbr":
+        receiver = renderer.material(
+            name="receiver",
+            type="pbr",
+            base_color=(0.8, 0.7, 0.6),
+            metallic=0.65,
+            roughness=0.55,
+        )
+    else:
+        raise RuntimeError(f"unsupported finite-light material: {material_type}")
     emitter = renderer.material(
         name="probe-emitter", type="emitter", emission=(64.0, 64.0, 64.0)
     )
@@ -174,6 +193,24 @@ def glass_renderer(*, mesh_path: Path, device: int) -> Renderer:
     )
     mesh = renderer.mesh(name="glass-quad", path=mesh_path)
     renderer.object(name="glass", type="mesh", mesh=mesh, material=glass)
+    return renderer
+
+
+def sampled_pbr_renderer(*, mesh_path: Path, metallic: float, device: int) -> Renderer:
+    """PBR probe whose only energy arrives after one sampled BSDF event."""
+    renderer = common_renderer(device=device)
+    renderer.background(
+        type="constant", color=(0.7, 0.5, 0.3), exposure=0.0
+    )
+    material = renderer.material(
+        name="sampled-pbr",
+        type="pbr",
+        base_color=(0.82, 0.47, 0.18),
+        metallic=metallic,
+        roughness=0.48,
+    )
+    mesh = renderer.mesh(name="sampled-pbr-quad", path=mesh_path)
+    renderer.object(name="sampled-pbr", type="mesh", mesh=mesh, material=material)
     return renderer
 
 
@@ -285,6 +322,11 @@ def assert_back_rejected(pixels, label: str) -> None:
         )
 
 
+def mean_interior_luminance(pixels) -> float:
+    values = interior_luminances(pixels)
+    return sum(values) / len(values)
+
+
 def run_check(directory: Path, *, device: int) -> None:
     lambert_front, lambert_bytes = render_linear(
         direct_renderer(
@@ -328,6 +370,27 @@ def run_check(directory: Path, *, device: int) -> None:
     )
     assert_front_response(metal_half_back, "rough metal back half-vector")
 
+    pbr_front, _ = render_linear(
+        direct_renderer(
+            material_type="pbr", light_direction=FRONT_LIGHT, device=device
+        ),
+        directory,
+        "pbr-front",
+    )
+    assert_front_response(pbr_front, "mixed PBR")
+
+    pbr_half_back, _ = render_linear(
+        direct_renderer(
+            material_type="pbr",
+            light_direction=FRONT_LIGHT,
+            device=device,
+            camera=HALF_BACK_CAMERA,
+        ),
+        directory,
+        "pbr-half-vector-back",
+    )
+    assert_front_response(pbr_half_back, "mixed PBR back half-vector")
+
     finite_front, _ = render_linear(
         finite_light_renderer(device=device),
         directory,
@@ -335,6 +398,53 @@ def run_check(directory: Path, *, device: int) -> None:
         depth=2,
     )
     assert_front_response(finite_front, "Lambert finite-light zero-PDF MIS")
+
+    pbr_finite_front, _ = render_linear(
+        finite_light_renderer(device=device, material_type="pbr"),
+        directory,
+        "pbr-finite-front",
+        depth=2,
+    )
+    assert_front_response(pbr_finite_front, "PBR finite-light zero-PDF MIS")
+
+    # Force both endpoints of the PBR lobe mixture through sample_bsdf.  The
+    # constant environment contributes only after the secondary ray; replacing
+    # the extreme vertex normal with Ng must therefore change the sampled
+    # transport for both the diffuse-heavy and pure-specular endpoints.
+    for metallic, label in ((0.0, "dielectric"), (1.0, "metallic")):
+        sampled_extreme, _ = render_linear(
+            sampled_pbr_renderer(
+                mesh_path=EXTREME_MESH, metallic=metallic, device=device
+            ),
+            directory,
+            f"pbr-sampled-{label}-extreme",
+            spp=32,
+            depth=2,
+        )
+        sampled_geometric, _ = render_linear(
+            sampled_pbr_renderer(
+                mesh_path=GEOMETRIC_MESH, metallic=metallic, device=device
+            ),
+            directory,
+            f"pbr-sampled-{label}-geometric",
+            spp=32,
+            depth=2,
+        )
+        extreme_mean = mean_interior_luminance(sampled_extreme)
+        geometric_mean = mean_interior_luminance(sampled_geometric)
+        if min(extreme_mean, geometric_mean) <= 1.0e-5:
+            raise RuntimeError(
+                f"sampled PBR {label} endpoint rendered black: "
+                f"extreme={extreme_mean:.8g}, geometric={geometric_mean:.8g}"
+            )
+        relative_difference = abs(extreme_mean - geometric_mean) / max(
+            extreme_mean, geometric_mean
+        )
+        if relative_difference <= 0.05:
+            raise RuntimeError(
+                f"sampled PBR {label} endpoint ignored the shading frame: "
+                f"extreme={extreme_mean:.8g}, geometric={geometric_mean:.8g}"
+            )
 
     # Raw Ns points away from this camera even though Ng remains front-facing.
     # The corrected shading frame must stay finite and retain the front-light
@@ -351,7 +461,7 @@ def run_check(directory: Path, *, device: int) -> None:
     )
     assert_front_response(wrong_view, "Lambert wrong-view correction")
 
-    for material_type in ("lambertian", "metal"):
+    for material_type in ("lambertian", "metal", "pbr"):
         back, _ = render_linear(
             direct_renderer(
                 material_type=material_type,

@@ -42,6 +42,23 @@ commit 列表仍以 Git 历史为准。发布新版本时，应把 `Unreleased` 
 
 ### 修复
 
+- 修正表面派生射线在极大坐标与极小几何上的自交/漏交风险：交点现在携带
+  primitive-aware 位置误差界；triangle/mesh 计入顶点 extent、对象到世界重建与
+  traversal 的世界到对象仿射误差，解析 primitive 使用命中点、位移和包围 extent 的保守 fallback，
+  sphere/disk/cylinder/parabola 与解析水面还加入实际曲面 residual。
+  radiance 与 shadow origin 沿定向几何法线
+  偏移后再用 `nextafterf` 外推；rectangle/disk/sphere 有限灯的采样端点也按
+  anchor/extent 与实际灯面 residual 的位置误差界沿法线向连接内部外推，统一有限灯的数值 endpoint，并排除
+  unbound light 同位置但 `light_index = -1` 的 emitter geometry，以及其他端点
+  附近 coincident geometry 的闭区间舍入误命中；bound target geometry 仍由
+  any-hit 按 `light_index` 忽略。最终 `tmax` 再向零舍入一个 ULP。固定
+  `water_solver_epsilon` 仅用于
+  水面端点交叉探测与无法分辨的近切
+  enter/exit 对，不再控制 ray spawn。
+- 修正大坐标 custom primitive 的 float AABB 可能向内取整并被 BVH 错误剔除：
+  设备侧语义边界先逐分量把 min 向负无穷、max 向正无穷外推一个 ULP，构建
+  `OptixAabb` 时再保留一个 traversal ULP guard；普通 custom GAS 同时镜像设备
+  root clip 的共享容差，water tile 则镜像既有 overlap。该 clip 容差不参与 ray spawn。
 - 修正平滑网格的着色法线语义：连续 Lambert/GGX 按有效着色法线及 `AbsDot`
   求值，定向几何法线统一负责物理半空间、介质栈和所有表面射线偏移；光滑
   dielectric/water 的 Fresnel 与 Snell 方向不再被顶点法线扭曲。

@@ -216,20 +216,20 @@ $$
 }{p_E(\boldsymbol\omega_i)}w_E.
 $$
 
-所有连续 BSDF 的 `f_cos` 都融合 $|\mathbf n_s^{\mathrm{eff}}\cdot\boldsymbol\omega_i|$；真实反射/透射侧由 $\mathbf n_g$ 判定。对几何上合法、却落在有效着色法线背面的 Lambert/metal/PBR 方向，NEE 求值仍可非零而 BSDF 竞争 PDF 为 0，MIS 因而把完整权重交给灯策略。$\mathbf T$ 包含二值几何/alpha 可见性、flame 吸收，以及当前粗糙透射事件之后同一介质到无穷远的 Beer 衰减。环境 shadow 使用无限 `tmax`；任何后续透明边界都阻断当前连接，不再沿直线穿界。
+所有连续 BSDF 的 `f_cos` 都融合 $|\mathbf n_s^{\mathrm{eff}}\cdot\boldsymbol\omega_i|$；真实反射/透射侧由 $\mathbf n_g$ 判定。对几何上合法、却落在有效着色法线背面的 Lambert/metal/PBR 方向，NEE 求值仍可非零而 BSDF 竞争 PDF 为 0，MIS 因而把完整权重交给灯策略。$\mathbf T$ 包含二值几何/alpha 可见性、flame 吸收，以及当前粗糙透射事件之后同一介质到无穷远的 Beer 衰减。环境连接以 `kInfinity` 表示无穷段，shadow 查询再把上界向零舍入一个 ULP；任何后续透明边界都阻断当前连接，不再沿直线穿界。
 
 <!-- source-snippet id="environment-infinite-nee" path="src/device_programs.cu" anchor="direct_segment_transmittance" -->
 ```cpp
   const float3 shadow_origin = offset_ray_origin(
-      hit.position, hit.geometric_normal, wi);
+      hit.position, hit.position_error, hit.geometric_normal, wi);
   const float3 surface_transmittance = direct_segment_transmittance(
-      hit, material, shadow_origin, wi, kInfinity, -1,
+      hit, material, shadow_origin, wi, kInfinity, kInfinity, -1,
       transmitted_connection, media,
       traced_rays, water_counters);
   if (!(max_component(surface_transmittance) > 0.0f)) {
     return f3(0.0f, 0.0f, 0.0f);
   }
-  if (track_volume(shadow_origin, wi, kInfinity, rng,
+  if (track_volume(hit.position, wi, kInfinity, rng,
                    volume_counters).collided != 0) {
     return f3(0.0f, 0.0f, 0.0f);
   }

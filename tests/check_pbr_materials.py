@@ -229,6 +229,75 @@ def pbr_renderer(
     return renderer
 
 
+def sampled_pbr_renderer(*, device: int) -> Renderer:
+    """Mixed diffuse/specular PBR probe with energy only after a BSDF sample."""
+    renderer = Renderer(device=device)
+    renderer.integrator(
+        direct_light_sampling="importance", clamp_direct=0.0, clamp_indirect=0.0
+    )
+    renderer.camera(
+        look_from=(0.0, 0.0, 4.0),
+        look_at=(0.0, 0.0, 0.0),
+        up=(0.0, 1.0, 0.0),
+        vfov=2.0,
+        aperture=0.0,
+        focus_distance=4.0,
+    )
+    renderer.background(
+        type="constant", color=(0.7, 0.5, 0.3), exposure=0.0
+    )
+    material = renderer.material(
+        name="sampled-surface",
+        type="pbr",
+        base_color=(0.8, 0.42, 0.16),
+        metallic=0.45,
+        roughness=0.38,
+    )
+    mesh = renderer.mesh(name="sampled-quad", path=QUAD)
+    renderer.object(
+        name="sampled-surface", type="mesh", mesh=mesh, material=material
+    )
+    return renderer
+
+
+def render_sampled_probe(
+    renderer: Renderer, directory: Path, name: str
+) -> tuple[tuple[float, float, float], bytes]:
+    png = directory / f"{name}.png"
+    pfm = directory / f"{name}.pfm"
+    spp = 16
+    stats = renderer.render(
+        output=png,
+        stats_output=png.with_suffix(".stats.json"),
+        linear_output=pfm,
+        width=1,
+        height=1,
+        spp=spp,
+        depth=2,
+        seed=SEED,
+        denoise=False,
+        clamp_direct=0.0,
+        clamp_indirect=0.0,
+    )
+    with Image.open(png) as decoded:
+        decoded.load()
+        if decoded.size != (1, 1) or decoded.mode != "RGBA":
+            raise RuntimeError(
+                f"{name}: unexpected PNG output {decoded.size} {decoded.mode}"
+            )
+    render = stats.get("render", {})
+    if (
+        render.get("max_depth") != 2
+        or render.get("denoised") is not False
+        or render.get("clamp_direct") != 0.0
+        or render.get("clamp_indirect") != 0.0
+    ):
+        raise RuntimeError(f"{name}: sampled PBR probe used biased render settings")
+    if stats.get("performance", {}).get("traced_rays", 0) <= spp:
+        raise RuntimeError(f"{name}: depth=2 PBR probe traced no secondary rays")
+    return read_single_pixel_pfm(pfm), pfm.read_bytes()
+
+
 def assert_close(
     actual: tuple[float, ...],
     expected: tuple[float, ...],
@@ -603,10 +672,26 @@ def check_normal_mapping(directory: Path, *, device: int) -> None:
     )
 
 
+def check_sampled_transport(directory: Path, *, device: int) -> None:
+    first, first_bytes = render_sampled_probe(
+        sampled_pbr_renderer(device=device), directory, "pbr-sampled-depth-two"
+    )
+    repeated, repeated_bytes = render_sampled_probe(
+        sampled_pbr_renderer(device=device),
+        directory,
+        "pbr-sampled-depth-two-repeat",
+    )
+    if luminance(first) <= 1.0e-4:
+        raise RuntimeError(f"depth=2 mixed PBR transport rendered black: {first!r}")
+    if first != repeated or first_bytes != repeated_bytes:
+        raise RuntimeError("fixed-seed depth=2 mixed PBR transport is not deterministic")
+
+
 def run_check(directory: Path, *, device: int) -> None:
     check_srgb_filtering_and_wrap(directory, device=device)
     check_metallic_roughness(directory, device=device)
     check_normal_mapping(directory, device=device)
+    check_sampled_transport(directory, device=device)
 
 
 def parse_args() -> argparse.Namespace:
