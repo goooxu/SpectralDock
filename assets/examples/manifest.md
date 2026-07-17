@@ -15,6 +15,10 @@ maps produced by the Apache-2.0 generator `tools/generate_showcase_panel.py`;
 they are neither AI-generated images nor third-party assets. Geometry, byte
 sizes and file digests for the complete panel bundle are recorded in
 `models/showcase-panel/manifest.json`, an Apache-2.0 sidecar.
+The separate `environments/assembly-hall-noon.hdr` and
+`textures/assembly-hall-gear-alpha.png` files are deterministic procedural
+outputs of `tools/generate_assembly_hall_assets.py`; they are neither
+AI-generated images nor third-party assets.
 
 The compact distribution omits PNG generation and seam-repair intermediate
 bitmaps; their dimensions, processing steps, prompts, and SHA-256 digests
@@ -25,7 +29,7 @@ the image model lightly redrew pixels outside the requested center band rather
 than keeping those regions byte-identical. The initial-bitmap digests remain in
 this manifest so this distinction stays auditable.
 
-The six texture/data-map PNG files and the HDR environment listed here are
+The seven texture/data-map PNG files and two HDR environments listed here are
 distributed under CC0-1.0. The Spot texture retains its upstream CC0
 dedication; the other listed visual assets are dedicated by project
 contributors. This Markdown sidecar is licensed under Apache-2.0.
@@ -48,6 +52,34 @@ contributors. This Markdown sidecar is licensed under Apache-2.0.
   metadata.
 - Licensing: the generator is Apache-2.0; the generated `.hdr` file is one of
   the visual assets explicitly dedicated under CC0-1.0.
+
+## `environments/assembly-hall-noon.hdr`
+
+- Runtime size and encoding: 2048 x 1024 Radiance RGBE, linear Rec.709 RGB,
+  `FORMAT=32-bit_rle_rgbe`, `-Y 1024 +X 2048`, modern per-component scanline
+  RLE.
+- Runtime byte size: 249,620 bytes.
+- Runtime SHA-256:
+  `032f091333a6035ec2898430aec6d7b8decb8cdc2667edde52fed4040812fb07`.
+- Construction and rebuild: the Python-standard-library generator
+  `python3 tools/generate_assembly_hall_assets.py` analytically constructs a
+  bright noon sky and compact solar hotspot in a fixed equirectangular order.
+  It writes no timestamp or machine-dependent metadata.
+- Licensing: the generator is Apache-2.0; the generated `.hdr` is explicitly
+  dedicated under CC0-1.0.
+
+## `textures/assembly-hall-gear-alpha.png`
+
+- Runtime size and encoding: 1024 x 1024, 8-bit RGBA PNG without an embedded
+  color profile or sRGB chunk.
+- Runtime byte size: 12,339 bytes.
+- Runtime SHA-256:
+  `7cde4cd9f598954a39197ced1b23ace5d5e452e65f8ba2dd25663606d4f110ee`.
+- Construction and rebuild: the same deterministic standard-library generator
+  constructs the gear silhouette and alpha edge used by an alpha-clipped
+  rectangle; no image model or third-party bitmap participates.
+- Licensing: the generated PNG is explicitly dedicated under CC0-1.0; the
+  generator remains Apache-2.0.
 
 ## `models/showcase-panel/showcase-panel-normal.png`
 

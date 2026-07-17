@@ -108,7 +108,7 @@ rotating、四个水平象限全部占用、0 个 sleeping dynamic actors，且
 
 ## 定向 GPU fixture
 
-综合 GPU fixture 使用 64×64、1 spp、depth 6、seed 1 和无降噪输出，覆盖带 UV/平滑法线/alpha 的 mesh、两个共享 GAS 且使用不同变换/材质的实例，以及 custom primitives。其 RTX 5090 SHA-256 为 `43650d358dac4202a3fdf2761d715a39d72bcfd610a80f96b9e97fa033fca28f`；`acceptance.sh` 在 Release smoke 后调用 `check_mesh_smoke.py` 验证它。
+综合 GPU fixture 使用 64×64、1 spp、depth 6、seed 1 和无降噪输出，覆盖带 UV/平滑法线/alpha 的 mesh、两个共享 GAS 且使用不同变换/材质的实例，以及 custom primitives。其 RTX 5090 SHA-256 为 `43650d358dac4202a3fdf2761d715a39d72bcfd610a80f96b9e97fa033fca28f`；`acceptance.sh` 在 Release smoke 后调用 `check_mesh_smoke.py` 验证它。非 RTX 5090 机器可显式设置 `SPECTRALDOCK_SKIP_RTX5090_GOLDEN=ON`，此时只跳过 GPU 型号与哈希比较，仍检查 fixture 结构、几何统计、图像尺寸和非空像素。
 
 多材质 mesh fixture 使用 64×64、1 spp、depth 4、seed 211 和无降噪输出，
 把同一份六三角形 OBJ 的 `RedPanel`、`ScreenPanel`、`MetalPanel` 显式绑定
@@ -142,9 +142,14 @@ python3 scenes/lava-temple-oracle.py
 ./scripts/render-examples.sh
 
 # 默认维护者验收会自行构建 Release renderer 与 PhysX worker，
-# 并运行旧八个静态程序与五个 Gallery 程序的 preview
+# 并运行旧八个静态程序、五个纯 Renderer Gallery 程序、两个 PhysX Gallery
+# 封面以及原有两个 PhysX 教学程序的 preview
 ./scripts/acceptance.sh
 
-# 没有 PhysX SDK 时，显式只运行 Renderer 验收、八个静态预览与五个 Gallery preview
+# 没有 PhysX SDK 时，显式只运行 Renderer 验收、八个静态预览与五个纯
+# Renderer Gallery preview；两个封面和两个 PhysX 教学程序会明确跳过
 SPECTRALDOCK_BUILD_PHYSX=OFF ./scripts/acceptance.sh
+
+# 非 RTX 5090：保留 mesh 结构/图像检查，只跳过该机型专属哈希
+SPECTRALDOCK_SKIP_RTX5090_GOLDEN=ON ./scripts/acceptance.sh
 ```

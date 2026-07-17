@@ -1,7 +1,8 @@
 # 示例画廊：综合展示与特性对比
 
-本页只展示两类正式图片：一张覆盖大部分渲染能力的综合场景，以及六组在同一
-场景、同一相机局部下只改变一个变量的 OFF/ON 对比。每张 PNG 都是
+本页只展示两类正式图片：按 Tidal Observatory、Atelier、Assembly Hall
+排列的三张综合场景，以及六组在同一场景、同一相机局部下只改变一个变量的
+OFF/ON 对比。每张 PNG 都是
 SpectralDock renderer 的直接输出，不包含拼接、文字叠加或其他像素后处理。
 
 Gallery 生产程序默认写入 `output/gallery/`，不会覆盖本页图片。正式图片通过
@@ -36,6 +37,54 @@ Denoiser。
 该场景不运行 PhysX，所有姿态固定。正式参数为 2560×1440、1024 spp、
 depth 12、seed 909、importance direct-light sampling、direct clamp 64、
 indirect clamp 16 和 Denoiser ON。
+
+### Atelier / 工坊
+
+![Atelier 工坊](gallery/showcase/atelier.png)
+
+Atelier 是落定后的室内静物与角色封面。九块彩砖、金属球、磨砂外观球、
+Capsule、Spot 和 Sparky 共 14 个 dynamic actors；box/sphere/capsule 等简化
+collision proxy 在 `480 × 1/120 s = 4 s` 的 PhysX 求解中处理下落、接触与
+休眠，最终姿态再应用到六面砖附件和完整多材质角色网格。validator 检查数量、
+明显下落、场景边界、水盆隔离、低速度以及多数 actor 已 sleeping。
+
+左后砖砌壁炉使用吸收—自发光 flame；右前石盆由不透明池壁/池底封住有限
+解析 `water_surface`，并使用 RGB Beer 吸收。渲染器没有 spotlight，因此
+局部光斑由朝向工作区的 disk 面积灯近似，rectangle 顶灯负责整体软填充。
+磨砂外观球使用高粗糙度 PBR 代理；它是不透明的 GGX/Lambert 外观，不代表
+玻璃透射或真实多层磨砂涂层。这样水面仍是场景中唯一介质边界，正式采样下
+不会让一个装饰球进入严格水体介质栈。以上都是场景对现有 Renderer 特性的
+组合，没有扩展公开 API。
+
+正式参数为 2560×1440、1024 spp、depth 12、seed 20260717、importance
+direct-light sampling、direct/indirect clamp 64/16 和 Denoiser ON。
+
+### Assembly Hall / 装配大厅
+
+![Assembly Hall 装配大厅](gallery/showcase/assembly-hall.png)
+
+Assembly Hall 使用带真实开口的屋顶；确定性生成的正午 HDR 太阳热点继续走
+环境重要性采样，开口内同置的有限 rectangle 面灯则让低样本预览也能稳定
+读出地面光斑和软阴影。Capsule 站在光斑内，四个
+糖果色 Sparky 位于传送带上，12 个 Spot 使用 box collision proxy；场景从
+`BodyState` 手动实例化对应完整纹理网格，在 `36 × 1/120 s = 0.3 s` 的 PhysX
+求解中从倾斜玩具箱倾泻。
+validator 要求 12 个 Spot 全在大厅边界内、至少 8 个仍在空中、至少 6 个已经
+移动且未 sleeping。
+
+开放炉火由一簇 flame 表现；另一侧用三个重叠的有限 emitter 球并置于浅蓝色
+高粗糙度 PBR 肋条安全罩内，以暖色软轮廓代替场景描述中的平面磨砂玻璃隔间。
+安全罩是不透明的外观代理，不宣称玻璃透射。近零自发光、高吸收 flame
+只代理遮挡环境光的烟影，不包含散射、烟流或流体模拟。Sparky 糖果色外观用
+现有 PBR 的 GGX 镜面与 Lambert 漫反射瓣代替独立 clearcoat；唤醒屏幕仍显示
+纹理，但其直接光采样由屏幕前的同位 rectangle 面灯承担，不宣称纹理网格灯
+进入 NEE。
+
+冷却池使用四项尺度递减的解析正弦波近似 fBm 外观，仍保留真实介质栈与 RGB
+Beer 吸收；金属桁架由 cylinder、disk、rectangle 组合，后墙齿轮标志使用
+RGBA alpha mask。正式参数为 2560×1440、2048 spp、depth 12、seed
+20260718、importance direct-light sampling、direct/indirect clamp 64/16 和
+Denoiser ON。
 
 ## 第二类：单特性 OFF/ON 对比
 
@@ -115,6 +164,8 @@ source ./scripts/activate.sh Release
 
 # 低成本构图预览；所有输出和临时 stats 留在 output/gallery/
 python3 scenes/tidal-observatory.py --preview
+python3 scenes/atelier.py --preview
+python3 scenes/assembly-hall.py --preview
 python3 scenes/compare-light-transport.py --preview
 python3 scenes/compare-hdr-sampling.py --preview
 python3 scenes/compare-normal-mapping.py --preview
@@ -122,11 +173,18 @@ python3 scenes/compare-water-absorption.py --preview
 
 # 正式质量；每个程序也可用 --device 和 --output-dir 明确选择设备与目录
 python3 scenes/tidal-observatory.py
+python3 scenes/atelier.py
+python3 scenes/assembly-hall.py
 python3 scenes/compare-light-transport.py
 python3 scenes/compare-hdr-sampling.py
 python3 scenes/compare-normal-mapping.py
 python3 scenes/compare-water-absorption.py
 ```
+
+Atelier 与 Assembly Hall 的 preview 固定为 640×360、16 spp、depth 8；
+Gallery 程序普通执行默认只写 `output/gallery/`。两个新封面需要可用的 PhysX worker，
+并在每次预览或正式渲染前 fresh 求解；晋升到本页的正式产物只有对应 PNG，
+不提交新图的 render stats、physics sidecar 或性能基准。
 
 同一 ON/OFF 对应在同一 GPU、同一进程内顺序生成；多个独立程序可以通过外部
 多进程调度分配到不同 GPU。这不改变 Renderer “一次渲染使用一张 GPU”的

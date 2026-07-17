@@ -34,6 +34,10 @@ GALLERY_PROGRAMS=(
   compare-normal-mapping
   compare-water-absorption
 )
+PHYSX_GALLERY_PROGRAMS=(
+  atelier
+  assembly-hall
+)
 
 die() {
   echo "error: $*" >&2

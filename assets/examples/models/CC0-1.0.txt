@@ -1,9 +1,9 @@
 CC0 1.0 Universal
 
-The following thirty-seven assets, and only these assets, are distributed under
+The following forty-one assets, and only these assets, are distributed under
 Creative Commons CC0 1.0 Universal.
 
-The following thirty-five project-contributed assets are dedicated under CC0 by
+The following thirty-nine project-contributed assets are dedicated under CC0 by
 their contributors:
 
 - assets/examples/models/capsule-mascot/capsule-mascot.obj
@@ -16,6 +16,8 @@ their contributors:
 - assets/examples/models/showcase-panel/showcase-panel-normal.png
 - assets/examples/models/showcase-panel/showcase-panel-metallic-roughness.png
 - assets/examples/environments/radiance-pavilion.hdr
+- assets/examples/environments/assembly-hall-noon.hdr
+- assets/examples/textures/assembly-hall-gear-alpha.png
 - assets/examples/textures/planet-azure.png
 - assets/examples/textures/planet-ember.png
 - docs/gallery/benchmark-harbor.png
@@ -29,6 +31,8 @@ their contributors:
 - docs/gallery/ember-forge.png
 - docs/gallery/radiance-pavilion.png
 - docs/gallery/showcase/tidal-observatory.png
+- docs/gallery/showcase/atelier.png
+- docs/gallery/showcase/assembly-hall.png
 - docs/gallery/comparisons/normal-mapping-off.png
 - docs/gallery/comparisons/normal-mapping-on.png
 - docs/gallery/comparisons/indirect-light-off.png
@@ -52,15 +56,17 @@ Upstream source:
 https://www.cs.cmu.edu/~kmcrane/Projects/ModelRepository/
 
 To the extent the contributors hold copyright or related or neighboring
-rights in the thirty-five project-contributed files above, they waive those
-rights as permitted by law. All thirty-seven files are provided as-is and without
+rights in the thirty-nine project-contributed files above, they waive those
+rights as permitted by law. All forty-one files are provided as-is and without
 warranties. For AI-generated or AI-assisted assets, the project dedication
 makes no representation of uniqueness or exclusivity.
 
 This dedication does not apply to tools/generate_mascot.py,
 tools/generate_hdr_environment.py,
 tools/generate_showcase_panel.py,
+tools/generate_assembly_hall_assets.py,
 scenes/kinetic-foundry.py, scenes/lava-temple-oracle.py,
+scenes/atelier.py, scenes/assembly-hall.py,
 python/spectraldock/physics.py, tools/physx_worker.cpp,
 assets/examples/manifest.md, assets/examples/models/sparky/manifest.json,
 assets/examples/models/showcase-panel/manifest.json,

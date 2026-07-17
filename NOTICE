@@ -9,8 +9,8 @@ THIRD_PARTY_NOTICES.md.
 
 Except where a different license is stated, the source code, scripts, tools,
 documentation, scenes, SVG figures, and tests are licensed under Apache-2.0.
-The thirty-seven files explicitly listed in
-assets/examples/models/CC0-1.0.txt are distributed under CC0-1.0. Thirty-five
+The forty-one files explicitly listed in
+assets/examples/models/CC0-1.0.txt are distributed under CC0-1.0. Thirty-nine
 project-contributed assets are dedicated there by their contributors; the two
 Spot assets retain Keenan Crane's upstream CC0-1.0 dedication.
 The Capsule Mascot and Sparky bundles are AI-generated project contributions;
@@ -18,7 +18,8 @@ the deterministic Capsule generator records reproducibility, not authorship.
 The Showcase Panel geometry and data maps are deterministic procedural outputs,
 not AI-generated assets; their generator and Apache-2.0 manifest are outside the
 CC0 asset list. The Gallery PNG files are renderer outputs; temporary render
-statistics are not distributed for the thirteen new showcase/comparison images.
+statistics and physics sidecars are not distributed for the fifteen new
+showcase/comparison images.
 third_party/tinyobjloader remains under its upstream MIT license.
 The vendored third_party/mikktspace/mikktspace.c and mikktspace.h remain
 under their upstream zlib-style license; the complete notice is retained at

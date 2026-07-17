@@ -28,6 +28,12 @@ commit 列表仍以 Git 历史为准。发布新版本时，应把 `Unreleased` 
 - 增加新首页与 Gallery 生产程序：2K 级“暮潮观测站”综合展示，
   以及法线贴图、间接光、环境重要性采样、OptiX Denoiser、Beer 吸收和
   firefly 贡献钳位六组 1K 级单变量 OFF/ON 对比。
+- 增加 Atelier 与 Assembly Hall 两个 2560×1440 PhysX Gallery 封面程序；
+  前者展示 14 个刚体落定、壁炉和水盆，后者展示 12 个 Spot 半空倾泻、天窗
+  HDR、炉火/烟影代理、冷却池和 alpha 齿轮。两图不附带 stats、physics
+  sidecar、像素 golden 或性能基准。
+- 增加可确定重建的 `assembly-hall-noon.hdr` 与
+  `assembly-hall-gear-alpha.png`，分别提供环境太阳热点和 alpha 裁剪标志。
 - 增加可确定重建的 showcase panel OBJ、OpenGL/+Y 法线纹理和
   metallic-roughness 数据纹理，用于 Gallery 的 PBR 对比与综合场景。
 
@@ -49,9 +55,13 @@ commit 列表仍以 Git 历史为准。发布新版本时，应把 `Unreleased` 
   parabola 使用 `clip_min`/`clip_max`，渲染深度使用 `depth`，曝光属于背景；
   `light()` 改为注册后返回 `None`。
 - 默认 GPU 验收收敛为 Release smoke、OptiX validation、受控数学契约、八个
-  静态示例预览、五个 Gallery 程序预览和两个物理预览；可用
+  静态示例预览、五个纯 Renderer Gallery 预览、两个 PhysX Gallery 预览和
+  两个原有物理教学预览；可用
   `SPECTRALDOCK_BUILD_PHYSX=OFF` 显式跳过 PhysX SDK、worker 与物理预览，host
   检查统一由 `scripts/test.sh` 进入。
+- 非 RTX 5090 测试机可用
+  `SPECTRALDOCK_SKIP_RTX5090_GOLDEN=ON` 只跳过该机型专属的 mesh 像素哈希；
+  fixture 结构、几何统计、图像尺寸和非空像素检查继续执行，默认门禁不变。
 - CUDA 构建目标增加 `sm_100` 代码；这不改变 RTX 5090 作为完整验证环境和
   历史性能记录的边界。
 - OptiX 设备 module 默认继续生成 `.optixir`，并增加显式

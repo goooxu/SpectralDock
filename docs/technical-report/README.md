@@ -6,7 +6,19 @@
 
 ![SpectralDock 的“暮潮观测站”综合能力展示](../gallery/showcase/tidal-observatory.png)
 
-> 上图由 SpectralDock 路径追踪器直接输出。“暮潮观测站”是固定姿态的纯 Renderer 场景，不创建 `PhysicsWorld`、不启动 PhysX worker；它把 HDR 环境、PBR/法线贴图、光泽金属与低粗糙度 PBR 光学外壳、解析水面与 Beer 吸收、程序化火焰和有限灯光组合在一帧中。报告同时保留对 Kinetic Foundry 与“熔岩圣殿的机械先知”两套 PhysX 专题场景的完整说明。
+> 上图由 SpectralDock 路径追踪器直接输出。“暮潮观测站”是固定姿态的纯 Renderer 场景，不创建 `PhysicsWorld`、不启动 PhysX worker；它把 HDR 环境、PBR/法线贴图、光泽金属与低粗糙度 PBR 光学外壳、解析水面与 Beer 吸收、程序化火焰和有限灯光组合在一帧中。
+
+<img alt="Atelier 工坊" src="../gallery/showcase/atelier.png">
+
+Atelier 在 `480 × 1/120 s` 的 PhysX 求解后展示落定的 14 个刚体，以 flame
+壁炉、解析水盆和有限面积灯组合现有体积、水面与软阴影路径。
+
+<img alt="Assembly Hall 装配大厅" src="../gallery/showcase/assembly-hall.png">
+
+Assembly Hall 在 `36 × 1/120 s` 后展示 12 个仍在倾泻的 Spot，并组合天窗
+HDR/有限面光、吸收性烟影代理、炉火、alpha 标志和冷却池。报告中的封面顺序固定为
+Tidal Observatory、Atelier、Assembly Hall；后两者以及 Kinetic Foundry、
+“熔岩圣殿的机械先知”都在每次运行时 fresh 求解 PhysX。
 
 ## 核心问题：一个像素如何得到颜色
 
@@ -38,10 +50,10 @@ flowchart LR
 7. [几何、可见性与 BVH](07-geometry-visibility-and-bvh.md)：追踪 CPU 几何到 CUDA 缓冲区、`OptixBuildInput`、GAS/IAS，再说明最近交点和阴影遮挡。
 8. [OptiX/GPU 实现](08-optix-gpu-implementation.md)：以 `render_optix` 为总入口，连起构建期 OptiX IR、context/pipeline/SBT、launch、traversal/callback 和资源销毁。
 9. [降噪、色调映射与输出](09-denoising-color-and-output.md)：展开可选 Denoiser 的完整生命周期，并划清纯 CUDA 后处理、D2H 和 CPU PNG/PFM 编码的边界。
-10. [程序化体积火焰](10-procedural-volumetric-flame.md)：从吸收—自发光传输方程出发，解释程序密度、Delta Tracking、体积 NEE、估计器分工与安全统计。
-11. [运行时解析水面](11-runtime-analytic-water.md)：从正弦高度场与解析法线出发，解释自定义求交、粗糙介电 GGX、Fresnel/Snell、介质栈、Beer 吸收、$q_G+q_U$ 双提议与 G/U/B balance，以及光滑首水面有界分裂。
-12. [PhysX 刚体模拟与 Python 场景即时构建](12-physx-rigid-body-scene-baking.md)：从 Newton–Euler、冲量、接触约束、复合刚体和碰撞代理出发，解释 Kinetic Foundry 与熔岩圣殿专题的 GPU 刚体姿态怎样经 private IPC 和 typed attachments 进入 SceneBuilder。
-13. [边界、性能与验证](13-limitations-performance-and-validation.md)：区分物理模型边界、近似误差、性能指标和软件测试，并从一个像素重新串起全文。
+10. [程序化体积火焰](10-procedural-volumetric-flame.md)：从吸收—自发光传输方程出发，解释程序密度、Delta Tracking、体积 NEE、安全统计，以及 Atelier/Assembly Hall 的炉火与吸收性烟影代理。
+11. [运行时解析水面](11-runtime-analytic-water.md)：从正弦高度场与解析法线出发，解释自定义求交、粗糙介电 GGX、Fresnel/Snell、介质栈、Beer 吸收、$q_G+q_U$ 双提议与 G/U/B balance，以及两个新封面怎样组合有限封闭水池。
+12. [PhysX 刚体模拟与 Python 场景即时构建](12-physx-rigid-body-scene-baking.md)：从 Newton–Euler、冲量、接触约束、复合刚体和碰撞代理出发，解释四个 PhysX 程序的 GPU 刚体姿态怎样经 private IPC 与 `BodyState`/typed attachments 进入 SceneBuilder。
+13. [边界、性能与验证](13-limitations-performance-and-validation.md)：区分物理模型边界、场景级视觉替代、性能指标和软件测试，并从一个像素重新串起全文。
 
 如果只想先建立渲染整体认识，可读第 1、2、4、5、6、9、13 章，再返回其余章节；第 10 章扩展无散射参与介质，第 11 章扩展运行时解析介电边界，第 12 章解释物理场景的 Python 即时构建与隔离 worker 交接链。
 
@@ -88,7 +100,7 @@ OptiX、CUDA、BVH、SBT（GPU 实现）
 
 因此，测试和验收不是项目主角；它们是保护渲染器数学含义和工程行为不被意外破坏的证据。
 
-两个物理场景还存在一条进入上述链条之前的必经路径：普通 Python 程序先创建 `PhysicsWorld`，经只存在于 `TemporaryDirectory` 的 private IPC 启动 CUDA 12.8 / PhysX GPU worker；返回的数值与父进程保留的 typed Renderer handles 重新结合，由 `PhysicsResult.apply_to` 直接加入 SceneBuilder，然后进入普通 OptiX 渲染流程。持久 `.physics.json` 只是审计记录，不是场景输入。旧八个静态教学程序与五个纯 Renderer Gallery 程序都不经过这一步。第 12 章完整展开这条边界。
+四个物理程序还存在一条进入上述链条之前的必经路径：普通 Python 程序先创建 `PhysicsWorld`，经只存在于 `TemporaryDirectory` 的 private IPC 启动 CUDA 12.8 / PhysX GPU worker；返回的数值以 typed attachments 或经验证的 `BodyState` 与 Renderer handles 重新结合，再加入 SceneBuilder 并进入普通 OptiX 渲染流程。持久 `.physics.json` 只是可选审计记录，不是场景输入；Atelier 与 Assembly Hall 的正式 Gallery 图不提交这种 sidecar。旧八个静态教学程序与五个纯 Renderer Gallery 程序都不经过这一步。第 12 章完整展开这条边界。
 
 ## 报告与源码
 
@@ -107,6 +119,8 @@ OptiX、CUDA、BVH、SBT（GPU 实现）
 - CUDA 12.8 / PhysX GPU worker：[`physx_worker.cpp`](../../tools/physx_worker.cpp)
 - Kinetic Foundry 物理程序：[`kinetic-foundry.py`](../../scenes/kinetic-foundry.py)
 - 熔岩圣殿 PhysX 专题程序：[`lava-temple-oracle.py`](../../scenes/lava-temple-oracle.py)
+- Atelier PhysX Gallery 程序：[`atelier.py`](../../scenes/atelier.py)
+- Assembly Hall PhysX Gallery 程序：[`assembly-hall.py`](../../scenes/assembly-hall.py)
 - 体积密度与传输：[`flame_density`、`track_volume`](../../src/device_programs.cu)
 - 水面与介质传输：[`water_height`、`__intersection__water_surface`、`direct_segment_transmittance`、`sample_bsdf`](../../src/device_programs.cu)
 

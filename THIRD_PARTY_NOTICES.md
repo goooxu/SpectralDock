@@ -84,14 +84,15 @@ generated tangent records before uploading them to the renderer.
 - Upstream tag: `110.0-omni-and-physx-5.8.0`
 - Pinned commit: `fc1018a3745664a1db2b95ce03fb5e91eb585f2e`
 - License: BSD 3-Clause License
-- Used by: the optional GPU-only PhysX worker used by Kinetic Foundry and
-  Lava Temple Oracle
+- Used by: the optional GPU-only PhysX worker used by Kinetic Foundry,
+  Lava Temple Oracle, Atelier, and Assembly Hall
 
 PhysX is obtained and built separately for the host. Its source, headers,
-libraries, and binaries are not included in this source distribution. The two
+libraries, and binaries are not included in this source distribution. The four
 Python programs call the isolated worker through private temporary IPC and
-apply returned typed attachments directly to `Renderer`; their checked-in
-`.physics.json` sidecars record the accepted run environment and parameters.
+apply returned poses through typed attachments or validated `BodyState`
+instances. Only the two original tutorial scenes keep checked-in
+`.physics.json` sidecars; the two Gallery covers do not.
 SpectralDock is an independent, unofficial project and is not affiliated with,
 sponsored by, or endorsed by NVIDIA Corporation.
 

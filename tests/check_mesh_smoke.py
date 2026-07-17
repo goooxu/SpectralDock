@@ -19,8 +19,12 @@ HASH_PATH = ROOT / "tests/golden/mesh-composite-smoke-64x64-spp1-depth6-seed1.sh
 
 
 def main() -> int:
-    if len(sys.argv) != 1:
-        raise RuntimeError("check_mesh_smoke.py does not accept arguments")
+    arguments = sys.argv[1:]
+    if arguments not in ([], ["--skip-rtx5090-golden"]):
+        raise RuntimeError(
+            "check_mesh_smoke.py only accepts --skip-rtx5090-golden"
+        )
+    skip_golden = arguments == ["--skip-rtx5090-golden"]
 
     source = SCENE_PATH.read_text(encoding="utf-8")
     tree = ast.parse(source, filename=str(SCENE_PATH))
@@ -88,17 +92,18 @@ def main() -> int:
         raise RuntimeError(
             f"unexpected mesh smoke geometry stats: {geometry!r}"
         )
-    if "RTX 5090" not in stats["hardware"]["gpu"]:
+    if not skip_golden and "RTX 5090" not in stats["hardware"]["gpu"]:
         raise RuntimeError("mesh smoke golden is restricted to RTX 5090")
     if stats["render"]["denoised"] is not False:
         raise RuntimeError("mesh smoke golden must not use denoising")
 
     actual = hashlib.sha256(IMAGE_PATH.read_bytes()).hexdigest()
-    expected = HASH_PATH.read_text(encoding="ascii").strip()
-    if actual != expected:
-        raise RuntimeError(
-            f"mesh smoke golden mismatch: expected {expected}, got {actual}"
-        )
+    if not skip_golden:
+        expected = HASH_PATH.read_text(encoding="ascii").strip()
+        if actual != expected:
+            raise RuntimeError(
+                f"mesh smoke golden mismatch: expected {expected}, got {actual}"
+            )
 
     with Image.open(IMAGE_PATH) as image:
         image.load()
@@ -110,7 +115,13 @@ def main() -> int:
         if max(deviation) < 3.0:
             raise RuntimeError("mesh smoke output is blank or nearly constant")
 
-    print(f"mesh composite GPU golden passed ({actual})")
+    if skip_golden:
+        print(
+            "mesh composite structure/image checks passed "
+            f"({stats['hardware']['gpu']}); RTX 5090 hash skipped"
+        )
+    else:
+        print(f"mesh composite GPU golden passed ({actual})")
     return 0
 
 

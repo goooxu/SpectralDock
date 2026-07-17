@@ -33,7 +33,13 @@ for scene in "${smoke_scenes[@]}"; do
   echo "== Python smoke scene: ${scene} =="
   run_python "${ROOT}/${scene}"
   if [[ "${scene}" == tests/scenes/mesh-composite-smoke.py ]]; then
-    run_python "${ROOT}/tests/check_mesh_smoke.py"
+    if [[ "${SPECTRALDOCK_SKIP_RTX5090_GOLDEN:-OFF}" == ON ]]; then
+      echo "== RTX 5090 mesh hash explicitly skipped; structural/image checks remain =="
+      run_python "${ROOT}/tests/check_mesh_smoke.py" \
+        --skip-rtx5090-golden
+    else
+      run_python "${ROOT}/tests/check_mesh_smoke.py"
+    fi
   elif [[ "${scene}" == tests/scenes/multi-material-mesh-smoke.py ]]; then
     run_python "${ROOT}/tests/check_multi_material_mesh_smoke.py"
   fi
@@ -97,10 +103,26 @@ for scene in "${GALLERY_PROGRAMS[@]}"; do
     --output-dir "${ROOT}/output/acceptance-gallery/${scene}"
 done
 
-# PhysX scenes expose ordinary constructor functions because their fresh
-# fixed-step simulation must run immediately before the OptiX render. Acceptance imports
-# each file directly and asks for a small diagnostic frame; no scene document
-# or generated scene file sits between PhysX and the renderer.
+# The two PhysX Gallery covers deliberately remain separate from the original
+# tutorial batch. Their own preview entry points run the fresh simulation,
+# scene validator, and a 640x360 diagnostic render without touching the
+# curated docs/gallery/showcase PNGs.
+if [[ "${SPECTRALDOCK_BUILD_PHYSX:-ON}" == ON ]]; then
+  for scene in "${PHYSX_GALLERY_PROGRAMS[@]}"; do
+    echo "== Python PhysX gallery program preview: ${scene} =="
+    run_python "${ROOT}/scenes/${scene}.py" \
+      --preview \
+      --output-dir "${ROOT}/output/acceptance-gallery/${scene}"
+  done
+else
+  echo "== PhysX disabled: two PhysX Gallery previews were not run =="
+fi
+
+# The original PhysX tutorial scenes expose ordinary constructor functions
+# because their fresh fixed-step simulation must run immediately before the
+# OptiX render. Acceptance imports each file directly and asks for a small
+# diagnostic frame; no scene document or generated scene file sits between
+# PhysX and the renderer.
 PHYSX_SMOKE_CODE='import runpy, sys
 from pathlib import Path
 module = runpy.run_path(sys.argv[1])
@@ -129,7 +151,7 @@ if [[ "${SPECTRALDOCK_BUILD_PHYSX:-ON}" == ON ]]; then
       "${ROOT}/output/acceptance-${scene}.png"
   done
 else
-  echo "== PhysX disabled: two PhysX example previews were not run =="
+  echo "== PhysX disabled: two PhysX tutorial previews were not run =="
 fi
 
 "$(dirname "$0")/test.sh"

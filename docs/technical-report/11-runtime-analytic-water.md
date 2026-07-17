@@ -13,6 +13,13 @@ Moonlit Stepwell 的水不是平面贴图，也不是预先烘焙的网格。Pyt
 metal sphere 作为冰晶外观代理，并以 `opaque_frost_visual_proxy: true`
 显式记录。这保留了轮廓和冷色反光，但不宣称模拟冰的透射光学。
 
+Atelier 的右前石盆和 Assembly Hall 的冷却池也复用同一有限顶界面与 RGB
+Beer 吸收，并各自用不透明池壁/池底封闭水下区域。Assembly Hall 所称的
+“fBm 水面”实际是 API 上限内四项尺度递减的解析正弦波；它只近似多尺度轮廓，
+没有新增噪声高度场、流体动力学或时间动画。两个封面的磨砂球/安全罩都使用
+不透明高粗糙度 PBR 外观代理，因此不会向这些含开放水面的场景再加入普通
+dielectric 边界。
+
 这里的“水体”有严格边界：`water_surface` 只是有限顶界面，不自带侧壁或底部。原生 SceneBuilder 强制相机 aperture 位于水和玻璃外；Python 程序还必须用不透明池壁与池底封住水下区域。它不是流体模拟，也没有时间演化、泡沫、飞溅、专用焦散或 motion blur。
 
 ## 1. 四项解析波浪
@@ -573,6 +580,7 @@ stats 分开记录 height evaluations、tile tests、roots reported、medium seg
 当前模型仍有以下边界：
 
 - 波浪是确定性静态正弦叠加，不是 CFD、浅水方程或海洋频谱动画；
+- Assembly Hall 用四项 octave-like 波浪近似 fBm 外观，不宣称渲染器原生支持 fBm；
 - `water_surface` 只是有限顶界面，依赖场景的不透明池壁/底部封闭；
 - SceneBuilder 强制相机 aperture 从水与玻璃外开始；普通 dielectric 只支持同材质双面、无 alpha 的闭合 sphere，水层加嵌套玻璃合计最多四层；
 - 熔岩圣殿专题不依靠普通 dielectric sphere 表现冰晶；其非透明冷色粗糙 metal 代理是为了在不修改渲染器时保持介质安全门为零错误，不代表真实冰材质；
