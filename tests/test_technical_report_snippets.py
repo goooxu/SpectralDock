@@ -85,6 +85,7 @@ PHYSX_CHAPTER_SNIPPET_ORDER = (
     "physx-private-ipc",
 )
 REQUIRED_VOLUME_SNIPPETS = {
+    "finite-flame-selection-pdf",
     "volume-delta-tracking-acceptance",
     "volume-host-safety-gate",
     "volume-nee-estimator",
@@ -92,6 +93,10 @@ REQUIRED_VOLUME_SNIPPETS = {
     "volume-three-octave-fbm",
 }
 REQUIRED_WATER_SNIPPETS = {
+    "finite-light-vertex-mode",
+    "finite-light-water-balance-density",
+    "finite-light-water-sphere-sampling",
+    "finite-light-water-two-sample",
     "rough-dielectric-btdf-jacobian",
     "rough-dielectric-vndf-pdf",
     "rough-water-reflection-oversampling",
@@ -115,14 +120,15 @@ REQUIRED_ENVIRONMENT_SNIPPETS = {
     "environment-infinite-nee",
     "environment-miss-mis",
     "environment-texel-solid-angle",
-    "finite-flame-selection-pdf",
-    "finite-light-vertex-mode",
     "finite-light-power-mixture",
-    "finite-light-water-balance-density",
-    "finite-light-water-sphere-sampling",
-    "finite-light-water-two-sample",
     "hdr-rgbe-linear-decode",
     "sampling-realized-float-probabilities",
+}
+REQUIRED_MATERIAL_SNIPPETS = {
+    "effective-shading-normal",
+    "mikk-normal-map-transform",
+    "pbr-lobe-mixture",
+    "resolved-pbr-material",
 }
 STANDARD_OPTIX_STAGES = (
     "准备 CUDA 几何数据",
@@ -222,7 +228,7 @@ def test_technical_report_source_snippets_match_the_repository():
         )
     )
 
-    optix_chapter = (REPORT_DIR / "07-optix-gpu-implementation.md").read_text(
+    optix_chapter = (REPORT_DIR / "08-optix-gpu-implementation.md").read_text(
         encoding="utf-8"
     )
     snippet_positions = [
@@ -250,7 +256,7 @@ def test_technical_report_source_snippets_match_the_repository():
     )
 
     physx_chapter = (
-        REPORT_DIR / "10-physx-rigid-body-scene-baking.md"
+        REPORT_DIR / "12-physx-rigid-body-scene-baking.md"
     ).read_text(encoding="utf-8")
     physx_positions = [
         physx_chapter.index('id="{}"'.format(identifier))
@@ -277,7 +283,7 @@ def test_technical_report_source_snippets_match_the_repository():
         )
     )
     volume_chapter = (
-        REPORT_DIR / "11-procedural-volumetric-flame.md"
+        REPORT_DIR / "10-procedural-volumetric-flame.md"
     ).read_text(encoding="utf-8")
     for boundary in (
         "Delta Tracking",
@@ -294,7 +300,7 @@ def test_technical_report_source_snippets_match_the_repository():
         )
     )
     water_chapter = (
-        REPORT_DIR / "12-runtime-analytic-water.md"
+        REPORT_DIR / "11-runtime-analytic-water.md"
     ).read_text(encoding="utf-8")
     for boundary in (
         "Fresnel",
@@ -304,12 +310,13 @@ def test_technical_report_source_snippets_match_the_repository():
         "不透明池壁",
         "背面剔除",
         "正退出根",
-        "roughness: 0.12",
+        "roughness=0.12",
         "512 spp",
         "MNEE",
         "PFM",
     ):
         assert boundary in water_chapter
+    assert "roughness: 0.12" not in water_chapter
 
     missing_environment_snippets = REQUIRED_ENVIRONMENT_SNIPPETS - identifiers
     assert not missing_environment_snippets, (
@@ -318,7 +325,7 @@ def test_technical_report_source_snippets_match_the_repository():
         )
     )
     environment_chapter = (
-        REPORT_DIR / "13-hdr-environment-and-importance-sampling.md"
+        REPORT_DIR / "06-hdr-environment-and-importance-sampling.md"
     ).read_text(encoding="utf-8")
     for boundary in (
         "RGBE",
@@ -333,6 +340,85 @@ def test_technical_report_source_snippets_match_the_repository():
         "2048×1024",
     ):
         assert boundary in environment_chapter
+
+    material_chapter = (
+        REPORT_DIR / "03-materials-and-bsdf.md"
+    ).read_text(encoding="utf-8")
+    material_identifiers = {
+        match.group("id") for match in SNIPPET.finditer(material_chapter)
+    }
+    missing_material_snippets = REQUIRED_MATERIAL_SNIPPETS - material_identifiers
+    assert not missing_material_snippets, (
+        "missing material source snippets: {}".format(
+            sorted(missing_material_snippets)
+        )
+    )
+
+    chapter_snippet_ownership = {
+        "finite-flame-selection-pdf": volume_chapter,
+        "finite-light-vertex-mode": water_chapter,
+        "finite-light-water-balance-density": water_chapter,
+        "finite-light-water-sphere-sampling": water_chapter,
+        "finite-light-water-two-sample": water_chapter,
+        "water-three-technique-balance": water_chapter,
+        "finite-light-power-mixture": environment_chapter,
+    }
+    for identifier, chapter in chapter_snippet_ownership.items():
+        assert 'id="{}"'.format(identifier) in chapter, (
+            "source-snippet {} is in the wrong chapter".format(identifier)
+        )
+
+    foundational_chapters = "\n".join(
+        (REPORT_DIR / "{:02d}-{}".format(index, name)).read_text(
+            encoding="utf-8"
+        )
+        for index, name in (
+            (1, "vectors-rays-and-camera.md"),
+            (2, "light-and-rendering-equation.md"),
+            (3, "materials-and-bsdf.md"),
+            (4, "monte-carlo-path-tracing.md"),
+            (5, "direct-lighting-and-mis.md"),
+        )
+    )
+    for water_specific_detail in (
+        "q_G",
+        "q_U",
+        "water_uniform_direct",
+        "use_water_finite_balance",
+        "kFiniteLightWaterPowerSample",
+    ):
+        assert water_specific_detail not in foundational_chapters, (
+            "water-specific G/U/B details belong in chapter 11: {}".format(
+                water_specific_detail
+            )
+        )
+
+
+def test_technical_report_tracks_current_gpu_and_color_contracts():
+    optix_chapter = (REPORT_DIR / "08-optix-gpu-implementation.md").read_text(
+        encoding="utf-8"
+    )
+    for contract in (
+        "settings.device",
+        "cudaSetDevice(settings.device)",
+        "metallic_roughness_texture_index",
+        "normal_texture_index",
+        "normal_scale",
+        "corner_tangents",
+    ):
+        assert contract in optix_chapter, (
+            "OptiX chapter must document {}".format(contract)
+        )
+
+    color_chapter = (
+        REPORT_DIR / "09-denoising-color-and-output.md"
+    ).read_text(encoding="utf-8")
+    color_figure = (
+        REPORT_DIR / "figures" / "color-pipeline.svg"
+    ).read_text(encoding="utf-8")
+    assert "srgb_channel_to_linear" not in color_chapter
+    assert "贡献钳位" in color_chapter
+    assert "贡献钳位" in color_figure
 
 
 def test_technical_report_avoids_unsupported_math_macros():

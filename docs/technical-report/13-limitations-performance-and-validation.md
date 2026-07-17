@@ -1,4 +1,4 @@
-# 09　边界、性能与验证
+# 13　边界、性能与验证
 
 一张看起来合理的图不一定数学正确；一张带噪声的图也不一定错误。评估路径追踪器时，应先区分误差来自哪里，再讨论性能和测试。
 
@@ -35,7 +35,7 @@
 - 不实现 shading-normal adjoint correction，所以极端倾斜顶点法线下不保证严格互易性或能量守恒；
 - 粗糙 water 为了降低反射方差，把 BSDF 反射分支概率设为 $\max(F,0.5)$；物理 BSDF 仍使用精确 Fresnel $F$，路径权重和 MIS PDF 用实际分支概率补偿，所以这是无偏采样改变而不是更改材质能量；
 - legacy 材质只强制 `base_color` 非负而不强制上界，能量合理性部分依赖输入；PBR `base_color`、`metallic` 和 `roughness` factor 则强制在 $[0,1]$；
-- 直接光连接只表示当前顶点的一次散射；粗糙介电可在当前界面 NEE 到反射或透射侧，但下一层透明边界会阻断连接。光滑首水面只做一次有界 Fresnel 分裂，不实现 MNEE、双向路径追踪或光滑多界面焦散，详见[第 12 章](12-runtime-analytic-water.md)。
+- 直接光连接只表示当前顶点的一次散射；粗糙介电可在当前界面 NEE 到反射或透射侧，但下一层透明边界会阻断连接。光滑首水面只做一次有界 Fresnel 分裂，不实现 MNEE、双向路径追踪或光滑多界面焦散，详见[第 11 章](11-runtime-analytic-water.md)。
 
 ### 几何与颜色
 
@@ -91,7 +91,7 @@ class Event {
 
 在 `render_optix()` 完成 settings 与像素数检查后开始，到返回前记录。它包括 CUDA/OptiX 初始化、pipeline、纹理解码与上传、加速结构、SBT/缓冲区、路径追踪、可选降噪、后处理、RGBA/射线计数回传和设备信息查询。
 
-它**不包括**调用前的 Python SceneBuilder 构造与 OBJ 解析，也不包括调用后的 PNG 与 stats JSON 写盘；时间戳还早于函数局部 RAII 资源析构。因此 Total 不是完整 `Renderer.render()` 调用的墙钟时间，也不等于前三个分项简单相加。BVH 与 denoise 分项由同一 CUDA stream 上的 event 包围；区间可能包含主机尚未提交下一项工作时的 stream idle，不应解读成逐 kernel 时间之和。
+它**不包括**调用前的 Python SceneBuilder 构造与 OBJ 解析，也不包括调用后的 PNG、可选 PFM 与 stats JSON 编码/写盘；启用 PFM 时，线性 beauty 的 D2H 和 float4→RGB 缓冲转换仍在 `render_optix()` 内，属于 Total。时间戳还早于函数局部 RAII 资源析构。因此 Total 不是完整 `Renderer.render()` 调用的墙钟时间，也不等于前三个分项简单相加。BVH 与 denoise 分项由同一 CUDA stream 上的 event 包围；区间可能包含主机尚未提交下一项工作时的 stream idle，不应解读成逐 kernel 时间之和。
 
 ## 4. 射线吞吐量怎样理解
 
@@ -163,10 +163,11 @@ $$
 3. 无 golden 的积分器 GPU 对照覆盖末端 bound/unbound MIS、HDR 环境唯一照明、旋转、确定性、零强度黑场，以及 uniform/importance 的高 spp 均值与低 spp MSE；
 4. 多灯对照分别触发 rectangle、disk、sphere、flame，再验证功率选择降低强弱灯场景的低 spp MSE；sphere 对所有连续 BSDF 顶点验证可见锥采样，metal 另验证 VNDF 的均值与低样本误差；
 5. 综合 mesh GPU fixture 定向覆盖共享 GAS、实例变换、UV、平滑法线、alpha 和 custom primitives；另一组极端倾斜顶点法线 fixture 检查几何正面不变黑、几何背面不漏光、共享边连续性，以及光滑 dielectric 对顶点法线的像素不变性；
-6. delta 灯对照检查 point 逆平方、directional 距离不变性、背面、遮挡、逐灯确定性、粗糙介电两侧和水中 Beer；firefly 对照检查 direct/indirect 独立触发、最大 RGB 通道保色相缩放、计数器、Python API 参数覆盖和 clamp 0/0 兼容路径；
-7. water GPU 对照用 clamp 0/0 线性 PFM 检查粗糙反射/透射、两侧介质、Beer、TIR、透明阻断、光滑有界 split，并以等散射阶数（bound depth 2 / unbound depth 3）比较高 spp 均值与三 seed 低 spp MSE；
-8. 技术报告 pytest 逐字核对引用的源码片段，并检查数学标记没有使用渲染环境不支持的宏；PhysX host 测试用 typed `PhysicsWorld`/`PhysicsResult`、合成结果和定向 mutation 覆盖协议版本、GPU-only 身份、body 顺序、附件交接与封面 validator，但不假装执行 subprocess worker、真实刚体或像素渲染；
-9. RTX 5090 的维护者 acceptance 构建 Release renderer，运行启用 OptiX validation 的 smoke、受控数学契约和八个静态低分辨率示例预览；可用 PhysX SDK 时，Kinetic Foundry 与封面还会即时求解低分辨率样本并检查契约和像素流程。4K 发布前仍人工检查爆发构图、水池、火/烟/神光代理及同次 sidecar。
+6. PBR host/API 测试检查独立 base-color/MR/normal 槽、linear 数据纹理、范围与 ownership、解析几何限制及无效 tangent 拒绝；GPU 对照检查过滤前 sRGB 解码、U/V wrap、MR 的 G/B 通道路由与 factor、`metallic=1` legacy 端点、`normal_scale`、镜像 UV/Mikk handedness、反向法线、OpenGL `+Y`、几何侧和非均匀变换；
+7. delta 灯对照检查 point 逆平方、directional 距离不变性、背面、遮挡、逐灯确定性、粗糙介电两侧和水中 Beer；firefly 对照检查 direct/indirect 独立触发、最大 RGB 通道保色相缩放、计数器、Python API 参数覆盖和 clamp 0/0 兼容路径；
+8. water GPU 对照用 clamp 0/0 线性 PFM 检查粗糙反射/透射、两侧介质、Beer、TIR、透明阻断、光滑有界 split，并以等散射阶数（bound depth 2 / unbound depth 3）比较高 spp 均值与三 seed 低 spp MSE；
+9. 技术报告 pytest 逐字核对标记过的源码片段，并检查章节结构、导航、链接和若干关键语义；PhysX host 测试用 typed `PhysicsWorld`/`PhysicsResult`、合成结果和定向 mutation 覆盖协议版本、GPU-only 身份、body 顺序、附件交接与封面 validator，但不假装执行 subprocess worker、真实刚体或像素渲染；
+10. RTX 5090 的维护者 acceptance 构建 Release renderer，运行启用 OptiX validation 的 smoke、受控数学契约和八个静态低分辨率示例预览；可用 PhysX SDK 时，Kinetic Foundry 与封面还会即时求解低分辨率样本并检查契约和像素流程。4K 发布前仍人工检查爆发构图、水池、火/烟/神光代理及同次 sidecar。
 
 唯一保留的像素 golden 是 mesh fixture 的 RTX 5090 基线；积分器对照的临时 PNG 和 stats 会自动清理，不保存哈希。mesh golden 只证明定向输出与已接受结果逐字节相同，不能独立证明物理正确；跨 GPU、编译器或 `--use_fast_math` 的少量浮点差异，也不自动等于数学回归。正式 gallery 与 stats 继续作为作品和一次运行记录保存，但不再是自动测试门禁；默认 acceptance 不设置性能阈值或 profiling 验收。可靠结论仍需要公式审查、定向场景和数值/视觉证据结合。
 
@@ -181,7 +182,7 @@ $$
 5. 普通面积灯 NEE 与命中灯面、环境 NEE 与 BSDF miss 分别用 power heuristic MIS 分权；粗糙 water 的两份有限灯样本和 BSDF-hit 用三技术 balance；point/directional 的 delta NEE 权重为 1；flame 保留互斥体积估计器；
 6. 路径在 miss、emitter、无效散射、轮盘或最大深度处结束；最大深度的最后一个表面事件仍先完整估计有限灯与环境域，粗糙 water 的有限灯域包含两份样本；
 7. 每份完成 throughput、可见性、介质与 MIS 的 RGB 贡献按 direct/indirect 阈值独立钳位；0 表示关闭。多条路径的线性 RGB 平均成为 HDR beauty；
-8. 钳位后、降噪前的线性样本均值可选写 PFM；展示分支可选降噪后，再执行曝光、ACES 风格拟合、sRGB 编码和 8 bit 量化。程序化 flame 的吸收—自发光见第 11 章，解析水面的求交与介电传输见第 12 章。
+8. 钳位后、降噪前的线性样本均值可选写 PFM；展示分支可选降噪后，再执行曝光、ACES 风格拟合、sRGB 编码和 8 bit 量化。程序化 flame 的吸收—自发光见第 10 章，解析水面的求交与介电传输见第 11 章。
 
 渲染器真正的核心正是这条链：**渲染方程给出目标，Monte Carlo 构造估计，几何与材质定义路径，OptiX/GPU 把大量路径高效执行。**
 
@@ -192,4 +193,4 @@ $$
 - Bruce Walter 等，*Microfacet Models for Refraction through Rough Surfaces*（2007）。
 - Matt Pharr、Wenzel Jakob、Greg Humphreys，*Physically Based Rendering*。
 
-[上一章：降噪、色调映射与输出](08-denoising-color-and-output.md) · [返回目录](README.md) · [下一章：PhysX 刚体模拟与即时场景构建](10-physx-rigid-body-scene-baking.md)
+[上一章：PhysX 刚体模拟与即时场景构建](12-physx-rigid-body-scene-baking.md) · [返回目录](README.md)

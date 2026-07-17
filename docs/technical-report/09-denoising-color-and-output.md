@@ -1,4 +1,4 @@
-# 08　降噪、色调映射与输出
+# 09　降噪、色调映射与输出
 
 路径积分器输出的是浮点线性 HDR 辐亮度，而显示器和 PNG 通常使用有限范围的 sRGB 8 bit 数值。从前者到后者必须经过一条明确的颜色管线：
 
@@ -26,8 +26,9 @@ sRGB 图像纹理在 CUDA texture read 中解码后过滤
 物理光贡献可以相加。例如两盏同样的灯照到一点，线性辐亮度应变为两倍。sRGB 像素值为了适应显示和人眼感知，已经做过非线性编码，不能直接相加或平均。
 
 标记为 sRGB 的 8 bit 图像在主机创建 CUDA texture object 时设置
-`td.sRGB = 1`。texture read 会先把 RGB 纹素按下式转到线性值，再对
-线性值做硬件双线性过滤：
+`td.sRGB = 1`。sRGB transfer conversion 由 CUDA texture hardware 在
+filtering **之前**执行：先把参与采样的 RGB 纹素按下式转到线性值，再对
+线性值做硬件双线性过滤，设备端 `sample_texture` 得到的已经是过滤后的线性结果：
 
 $$
 c_{\text{linear}}=
@@ -165,12 +166,17 @@ denoised ──────────────┘                          
 
 PNG 是始终存在的展示输出；`Renderer.render(linear_output=Path("FILE.pfm"))` 可增加测量输出。它直接从 raygen 已按 spp 平均的 `beauty` 下载 RGB，不读取 `final_beauty`，所以即使同时启用 Denoiser，PFM 也仍保存**降噪前**数值。曝光、ACES 风格曲线、sRGB 编码和 8 bit 量化同样不作用于 PFM。
 
-PFM 位于贡献钳位之后：Python 程序若使用非零 `clamp_direct`/`clamp_indirect`，PFM 保存的是这个有偏估计。它能排除 Denoiser 和显示变换，却不能自动恢复被钳位的长尾。均值、方差、MSE 或能量对照必须调用 `render(denoise=False, clamp_direct=0, clamp_indirect=0, linear_output=...)`。
+PFM 位于贡献钳位之后：Python 程序若使用非零 `clamp_direct`/`clamp_indirect`，PFM 保存的是这个有偏估计。它能排除 Denoiser 和显示变换，却不能自动恢复被钳位的长尾。均值、方差、MSE 或能量对照的硬条件是 `clamp_direct=0, clamp_indirect=0`。PFM 总是从积分器 `beauty` 而非 `final_beauty` 下载，因此 `denoise=False` 不影响文件数值；定量运行仍建议关闭降噪，以免执行无关工作并明确实验意图。
 
-PFM 头为 `PF`，负 scale `-1.0` 声明 little-endian float32，像素行按格式要求从底到顶保存。它不携带完整色彩空间元数据、层、压缩或任意通道，因此这里把它当作小型确定性实验接口，而不是 OpenEXR 的替代品。
+PFM 头为 `PF`，负 scale `-1.0` 声明 little-endian float32，像素行按格式要求从底到顶保存。writer 在打开输出文件前逐值检查数据；只要出现 NaN 或无穷就抛出 `samples must be finite`，不会像 PNG 后处理那样把非有限通道替换为 0。它不携带完整色彩空间元数据、层、压缩或任意通道，因此这里把它当作小型确定性实验接口，而不是 OpenEXR 的替代品。
 
-<!-- source-snippet id="output-linear-pfm" path="src/image_io.cpp" anchor="std::ofstream output" -->
+<!-- source-snippet id="output-linear-pfm" path="src/image_io.cpp" anchor="samples must be finite" -->
 ```cpp
+  for (const float value : pixels) {
+    if (!std::isfinite(value))
+      throw std::runtime_error("cannot write PFM: samples must be finite");
+  }
+
   std::ofstream output(path, std::ios::binary);
   if (!output)
     throw std::runtime_error("cannot open PFM for writing: " + path.string());
@@ -237,7 +243,7 @@ c_{\text{sRGB}}=
 \end{cases}
 $$
 
-这不是简单的“gamma 2.2”；暗部是线性段，亮部指数也是 $1/2.4$。输入纹理解码与输出编码使用对应的精确分段函数。
+这不是简单的“gamma 2.2”；暗部是线性段，亮部指数也是 $1/2.4$。输入纹理由 CUDA texture hardware 在过滤前完成对应的 sRGB transfer conversion，输出编码则由这里的显式分段函数完成。
 
 最后四舍五入并钳制：
 
@@ -308,14 +314,14 @@ __global__ void postprocess_kernel(const float4* linear_beauty,
 
 ## 10. 对应实现
 
-- 输入纹理解码：[`sample_texture`、`srgb_channel_to_linear`](../../src/device_programs.cu)
+- 输入纹理的硬件 sRGB 解码与过滤配置：[`make_texture`](../../src/optix_renderer.cpp)
 - spp 平均和首命中 guide：[`__raygen__pathtrace`](../../src/device_programs.cu)
 - 可选 HDR 降噪：[`run_denoiser`](../../src/optix_renderer.cpp)
-- raw/denoised 选择、CUDA 后处理与 D2H：[`render_optix`](../../src/optix_renderer.cpp)
+- 积分器/denoised beauty 选择、CUDA 后处理与 D2H：[`render_optix`](../../src/optix_renderer.cpp)
 - 曝光、拟合曲线、sRGB 和量化：[`src/postprocess.cu`](../../src/postprocess.cu)
 - 主机 PNG 编码：[`write_png_rgba8`](../../src/image_io.cpp)
 - 钳位后、降噪前的线性 PFM：[`write_pfm_rgb32f`](../../src/image_io.cpp)
 
-下一章将把“噪声、偏差、模型限制、性能计时和软件测试”分开，说明怎样判断渲染结果是否可信。
+下一章把表面路径扩展到只吸收并自发光的程序化体积，说明同一条 GPU 路径如何处理 Delta Tracking、体积 NEE 与安全统计；全局限制、性能和验证在第 13 章统一收束。
 
-[上一章：OptiX/GPU 实现](07-optix-gpu-implementation.md) · [返回目录](README.md) · [下一章：边界、性能与验证](09-limitations-performance-and-validation.md)
+[上一章：OptiX/GPU 实现](08-optix-gpu-implementation.md) · [返回目录](README.md) · [下一章：程序化体积火焰](10-procedural-volumetric-flame.md)

@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 580" role="img" aria-labelledby="title desc">
   <title id="title">渲染方程的方向半球与递归光路</title>
-  <desc id="desc">左侧展示表面点、法线、入射与出射方向；右侧展示相机经过两个表面到达光源的递归光路。</desc>
+  <desc id="desc">左侧展示几何法线与有效着色法线重合时的理想反射特例、入射与出射方向；右侧展示相机经过两个表面到达光源的递归光路。</desc>
   <defs>
     <marker id="aC" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0 0L10 4L0 8Z" fill="#22d3ee"/></marker>
     <marker id="aY" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0 0L10 4L0 8Z" fill="#fbbf24"/></marker>
@@ -18,16 +18,16 @@
   <circle cx="286" cy="430" r="8" fill="#fb7185"/>
   <text x="272" y="458" class="t">x</text>
   <path d="M114 430 A172 172 0 0 1 458 430" fill="#143657" stroke="#60a5fa" stroke-width="2" stroke-dasharray="7 7"/>
-  <text x="202" y="214" class="t">反射特例：H²(n)</text>
+  <text x="190" y="214" class="t">反射特例：H²(n_g)</text>
   <line x1="286" y1="430" x2="286" y2="238" stroke="#e2e8f0" stroke-width="3" marker-end="url(#aW)"/>
-  <text x="300" y="252" class="t">n</text>
+  <text x="300" y="252" class="t">n_g = n_s^eff</text>
   <line x1="286" y1="430" x2="164" y2="292" class="wi"/>
   <text x="142" y="278" class="t">ωᵢ</text>
   <line x1="286" y1="430" x2="430" y2="276" class="wo"/>
   <text x="432" y="270" class="t">ωₒ</text>
   <path d="M286 386 A44 44 0 0 0 257 397" fill="none" stroke="#fbbf24" stroke-width="2"/>
   <text x="244" y="378" class="s">θ</text>
-  <text x="174" y="402" class="s">n · ωᵢ = cos θ</text>
+  <text x="150" y="402" class="s">n_g · ωᵢ = cos θ</text>
   <text x="72" y="500" class="s">把半球上所有微小方向 dω 的贡献相加</text>
 
   <text x="590" y="64" class="h">入射光来自下一表面的出射光</text>

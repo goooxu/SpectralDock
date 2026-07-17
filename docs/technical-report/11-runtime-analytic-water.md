@@ -1,4 +1,4 @@
-# 12　运行时解析水面：波面求交、介电传输与 Beer 吸收
+# 11　运行时解析水面：波面求交、介电传输与 Beer 吸收
 
 Moonlit Stepwell 的水不是平面贴图，也不是预先烘焙的网格。Python 程序通过 `Renderer.object(type="water_surface", ...)` 构造一个在运行时求值的有限解析高度场：OptiX 用保守 tile AABB 找出候选区域，自定义 intersection 程序求射线与波面的根，路径积分器再处理粗糙 GGX 介电反射/透射、NEE/MIS、Fresnel/Snell、介质栈和水下吸收。
 
@@ -182,7 +182,7 @@ static __forceinline__ __device__ bool update_medium_after_transmission(
 
 正面透射压栈，背面透射必须弹出同一材质；次序不符就是相交、开放或错误嵌套。SceneBuilder 因此把含水场景的拓扑约束变成硬错误：dielectric sphere 必须在正反面绑定同一个非空 dielectric 且不能使用 alpha；任意两球只能严格分离或严格包含，拒绝相交与内外相切；四层总栈深包含水层，所以最多允许三层同时活跃的嵌套玻璃。sphere 不能与水面的保守高度带相交，多个水面 footprint 必须严格分离，相机的有限 aperture 也必须位于水和所有玻璃之外。Moonlit Stepwell 的不透明池壁和池底进一步保证路径不会从没有边界的侧面“漏出水体”。
 
-有限顶界面本身没有水体侧面。一条已经在水下的路径若从 footprint 边缘绕入，可能在介质栈为空时首先碰到水面的背面；直接按严格弹栈会把这个几何缺口误报成介质错误。实现只对“空栈 + 水材质背面”这一无歧义情形推断基底水层，并在计算该段 Beer 衰减前压入水；只要栈非空，尤其存在嵌套玻璃时，绝不搜索或修补层次，仍按严格 LIFO 报错。这个补偿不是通用 point-in-volume 判定，也是 v0.1 必须使用不透明池壁、从水外启动相机的原因之一。
+有限顶界面本身没有水体侧面。一条已经在水下的路径若从 footprint 边缘绕入，可能在介质栈为空时首先碰到水面的背面；直接按严格弹栈会把这个几何缺口误报成介质错误。实现只对“空栈 + 水材质背面”这一无歧义情形推断基底水层，并在计算该段 Beer 衰减前压入水；只要栈非空，尤其存在嵌套玻璃时，绝不搜索或修补层次，仍按严格 LIFO 报错。这个补偿不是通用 point-in-volume 判定，也是当前主干必须使用不透明池壁、从水外启动相机的原因之一。
 
 ### 水中 dielectric sphere 为什么使用自定义实心边界
 
@@ -246,7 +246,7 @@ static __forceinline__ __device__ float3 medium_segment_transmittance(
 
 ## 6. 粗糙水面的 NEE：只连接当前散射事件
 
-Moonlit Stepwell 将水材质设为 `roughness: 0.12`。宏观波面仍决定交点和 $\mathbf n_g$；这个解析 primitive 没有额外顶点法线，所以 $\mathbf n_s^{\mathrm{eff}}=\mathbf n_g$，GGX 微表面只决定该点的反射/透射方向分布。因为这个 BSDF 是连续分布，有限灯、程序化 flame、HDR 环境和 point/directional delta 灯都能在当前水面顶点执行 NEE。其中有限表面灯使用两份灯样本与一份 BSDF 样本组成三技术 balance，环境 NEE 仍与后来的 BSDF miss 用 power MIS 配对，delta 灯则逐盏连接且权重为 1。
+Moonlit Stepwell 将水材质设为 `roughness=0.12`。宏观波面仍决定交点和 $\mathbf n_g$；这个解析 primitive 没有额外顶点法线，所以 $\mathbf n_s^{\mathrm{eff}}=\mathbf n_g$，GGX 微表面只决定该点的反射/透射方向分布。因为这个 BSDF 是连续分布，有限灯、程序化 flame、HDR 环境和 point/directional delta 灯都能在当前水面顶点执行 NEE。其中有限表面灯使用两份灯样本与一份 BSDF 样本组成三技术 balance，环境 NEE 仍与后来的 BSDF miss 用 power MIS 配对，delta 灯则逐盏连接且权重为 1。
 
 两个水面专用的采样优化直接针对“水面是主角，却最慢收敛”的问题：
 
@@ -254,7 +254,94 @@ Moonlit Stepwell 将水材质设为 `roughness: 0.12`。宏观波面仍决定交
 - 有限灯的全局功率分布记为 $q_G(i)$，均匀索引分布为 $q_U(i)=1/N$。每个粗糙水面顶点**确定性地各取一份** $q_G$ 样本和 $q_U$ 样本；两份使用联合灯索引密度 $q_G(i)+q_U(i)$，不乘 0.5。这同时给强月光与弱水下灯独立的采样机会；介质内的其他顶点仍只用 $q_U$ 取一份样本。
 - 两份水面有限灯样本若各自选中 sphere，球外顶点都在其可见立体角内均匀采方向；球内或近球顶点回退到面积采样。该规则现已推广到所有连续 BSDF 顶点；Moonlit 的月灯是 disk，仍按面积采样，水下 sphere 灯直接受益。
 
-第一项的 BSDF/PDF 推导见[第 3 章第 4.1 节](03-materials-and-bsdf.md#41-粗糙介电反射与透射)，第二项的顶点选灯模式和源码见[第 13 章第 5 节](13-hdr-environment-and-importance-sampling.md#5-有限灯也要选择分布)，第三项的圆锥立体角与 PDF 推导见[第 5 章第 1 节](05-direct-lighting-and-mis.md#1-在灯面上取一个随机点)。
+顶点模式先区分普通全局分布、介质内均匀分布和水面双提议：
+
+<!-- source-snippet id="finite-light-vertex-mode" path="src/device_programs.cu" anchor="finite_light_mode" -->
+```cpp
+enum FiniteLightMode : unsigned int {
+  kFiniteLightPower = 0u,
+  kFiniteLightUniform = 1u,
+  kFiniteLightWaterPowerSample = 2u,
+  kFiniteLightWaterUniformSample = 3u,
+};
+
+static __forceinline__ __device__ bool is_water_finite_light_mode(
+    FiniteLightMode mode) {
+  return mode == kFiniteLightWaterPowerSample ||
+         mode == kFiniteLightWaterUniformSample;
+}
+
+static __forceinline__ __device__ FiniteLightMode finite_light_mode(
+    const MaterialData& material, const MediumState& media) {
+  if (material.type == spectraldock::kMaterialWater &&
+      material.roughness > 0.0f) {
+    return kFiniteLightWaterPowerSample;
+  }
+  return media.depth > 0 ? kFiniteLightUniform : kFiniteLightPower;
+}
+```
+
+两份 water 样本都以联合密度 $q_G+q_U$ 为分母：
+
+<!-- source-snippet id="finite-light-water-balance-density" path="src/device_programs.cu" anchor="combined density qG + qU" -->
+```cpp
+static __forceinline__ __device__ float finite_light_selection_pdf(
+    const LightData& light, FiniteLightMode mode) {
+  if (params.sampled_light_count == 0u) return 0.0f;
+  if (mode == kFiniteLightPower) return light.selection_pdf;
+  const float uniform =
+      1.0f / static_cast<float>(params.sampled_light_count);
+  if (mode == kFiniteLightUniform) return uniform;
+  // Rough water takes one power-CDF sample and one uniform-index sample.
+  // Both light estimators use the combined density qG + qU, with no extra 0.5
+  // scale. A reachable bound emitter adds pB through three-technique balance.
+  return light.selection_pdf + uniform;
+}
+```
+
+raygen 确定性地执行两个组件，而不是用一次 50/50 随机分支选择其中之一：
+
+<!-- source-snippet id="finite-light-water-two-sample" path="src/device_programs.cu" anchor="Deterministic two-component stratification" -->
+```cpp
+      float3 water_uniform_direct = f3(0.0f, 0.0f, 0.0f);
+      if (current_light_mode == kFiniteLightWaterPowerSample) {
+        // Deterministic two-component stratification: take one qG sample and
+        // one qU sample. Their combined light density is qG + qU, so no 0.5
+        // factor belongs here; a bound endpoint completes balance with BSDF.
+        water_uniform_direct = sample_finite_direct_light(
+            hit, material, base_color, wo, next_bsdf_ray_exists,
+            kFiniteLightWaterUniformSample, rng, traced_rays,
+            volume_counters, media, water_counters);
+      }
+```
+
+对两份样本，选灯 PMF 只决定灯索引；选中 sphere 后仍使用第 5 章的条件方向采样，球内或近球时回退到面积域：
+
+<!-- source-snippet id="finite-light-water-sphere-sampling" path="src/device_programs.cu" anchor="sample_sphere_solid_angle" -->
+```cpp
+  float one_minus_cos = 0.0f;
+  float sphere_solid_angle_pdf = 0.0f;
+  const bool sample_sphere_solid_angle =
+      light.type == spectraldock::kLightSphere &&
+      (sphere_solid_angle_pdf = sphere_visible_solid_angle_pdf(
+           light, hit.position, &one_minus_cos)) > 0.0f;
+  if (sample_sphere_solid_angle) {
+    const float u0 = rng.next();
+    const float u1 = rng.next();
+    if (!sample_visible_sphere_direction(
+            light, hit.position, one_minus_cos, u0, u1,
+            wi, light_point, light_normal)) {
+      return f3(0.0f, 0.0f, 0.0f);
+    }
+  } else {
+    // Near or inside a sphere, where its visible cone is not well-defined,
+    // fall back to the area-domain sampler used by other surface lights.
+    sample_light_surface(light, rng.next(), rng.next(),
+                         light_point, light_normal);
+  }
+```
+
+第一项的 BSDF/PDF 推导见[第 3 章第 4.1 节](03-materials-and-bsdf.md#41-粗糙介电反射与透射)，第二项的全局顶点选灯模式见[第 6 章第 5 节](06-hdr-environment-and-importance-sampling.md#5-有限灯也要选择分布)，第三项的圆锥立体角与 PDF 推导见[第 5 章第 1 节](05-direct-lighting-and-mis.md#1-在灯面上取一个随机点)。本章随后给出水面专用的双提议源码。
 
 对灯方向 $\boldsymbol\omega_i$，反射与透射的物理侧由 $\mathbf n_g$ 判定。直接光估计统一写成
 
@@ -276,6 +363,20 @@ $$
 没有 BSDF 端点竞争者时令 $p_B=0$，两份灯样本仍以 $(q_G+q_U)/(q_G+q_U)=1$ 覆盖有限灯积分，因而始终不需要 0.5 补偿。$\mathbf T$ 只表示当前顶点之后、同一介质连接段上的 Beer 衰减。若灯位于透射侧，代码先在介质栈**副本**中执行本次边界切换，再用副本计算该段衰减；相机路径自己的栈不会被一次 NEE 试探修改。
 
 这种三技术构造使用 balance heuristic，而不是把联合灯密度再套入普通双策略 power heuristic。只有绑定表面灯、存在下一条 BSDF 射线且该方向有灯采样支持时才启用；最后深度、未绑定 emitter、单面灯背面、球内无支持命中、flame、delta 前驱与相机直见都删除不存在的竞争密度。HDR 环境继续使用独立的 NEE/BSDF-miss power MIS。
+
+<!-- source-snippet id="water-three-technique-balance" path="src/device_programs.cu" anchor="water_bsdf_competes" -->
+```cpp
+  const bool water_bsdf_competes =
+      is_water_finite_light_mode(light_mode) &&
+      light.geometry_index >= 0 && next_bsdf_ray_exists;
+  const float mis = water_bsdf_competes
+      ? balance_heuristic(light_pdf, evaluation.pdf)
+      : direct_light_mis_weight(
+            light_pdf, evaluation.pdf,
+            !is_water_finite_light_mode(light_mode) &&
+                light.geometry_index >= 0,
+            next_bsdf_ray_exists);
+```
 
 point/directional 不进入上述 $q_G/q_U$ 分布。每盏灯在当前粗糙水面分别评估反射侧或透射侧 GGX BSDF；透射连接同样先在介质栈副本中跨过当前水界面，再对 point 的有限段或 directional 的无限段应用 Beer 与遮挡。连续 BSDF 没有命中理想 delta 灯的竞争路径，所以无需额外 emitter-hit MIS。
 
@@ -368,7 +469,7 @@ static __forceinline__ __device__ float3 offset_ray_origin(
 
 ## 7. 光滑水面的单次有界 Fresnel 分裂
 
-`roughness: 0` 是严格 delta BSDF，普通灯面或环境方向采样命中其唯一反射/折射方向的概率为零，因此它不执行 NEE。为了不让最重要的首个光滑水面事件仍以 $F$ 与 $1-F$ 随机二选一，每个相机样本第一次命中光滑 `water_surface` 时确定性地产生至多两个子路径：
+`roughness=0` 是严格 delta BSDF，普通灯面或环境方向采样命中其唯一反射/折射方向的概率为零，因此它不执行 NEE。为了不让最重要的首个光滑水面事件仍以 $F$ 与 $1-F$ 随机二选一，每个相机样本第一次命中光滑 `water_surface` 时确定性地产生至多两个子路径：
 
 $$
 \boldsymbol\beta_r=\boldsymbol\beta\odot\mathbf c\,F,
@@ -462,4 +563,4 @@ stats 分开记录 height evaluations、tile tests、roots reported、medium seg
 
 Python 调用与约束见 [Python 场景 API](../PYTHON_API.md)，展示构图见 [Moonlit Stepwell](../EXAMPLES.md#moonlit-stepwell)。
 
-[上一章：程序化体积火焰](11-procedural-volumetric-flame.md) · [返回目录](README.md) · [下一章：HDR 环境与重要性采样](13-hdr-environment-and-importance-sampling.md)
+[上一章：程序化体积火焰](10-procedural-volumetric-flame.md) · [返回目录](README.md) · [下一章：PhysX 刚体模拟与即时场景构建](12-physx-rigid-body-scene-baking.md)

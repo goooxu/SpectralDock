@@ -1,4 +1,4 @@
-# 11　程序化体积火焰：吸收、自发光与 Delta Tracking
+# 10　程序化体积火焰：吸收、自发光与 Delta Tracking
 
 Ember Forge 增加的不是透明火焰贴图，也不是藏在炉膛中的面积灯，而是三个相互重叠、具有有限支撑的异质参与介质。它们共同构成单座复合炉火，只吸收和自发光而不散射；因此既能从相机直接看见，也能照亮铁匠、铁砧与工坊设施，并会削弱穿过炉火的其他光线。
 
@@ -140,7 +140,7 @@ $$
 
 ## 5. 从表面连接体积光
 
-对支持 NEE 的表面，先按第 13 章的顶点模式选择显式灯：普通空气顶点取一份全局功率样本，粗糙水面从全局功率与均匀索引各取一份确定性样本，介质内其他顶点取一份均匀样本。若其中一份选中 flame，就在最大半径支撑圆柱中均匀取点，圆柱体积为
+对支持 NEE 的表面，先按第 6 章的顶点模式选择显式灯：普通空气顶点取一份全局 $q_G$ 样本（由 `direct_light_sampling` 的 uniform/importance 模式决定），粗糙水面从 $q_G$ 与均匀索引 $q_U$ 各取一份确定性样本，介质内其他顶点只取一份 $q_U$ 样本。若其中一份选中 flame，就在最大半径支撑圆柱中均匀取点，圆柱体积为
 
 $$
 V=\pi R_{\max}^2h,
@@ -151,12 +151,12 @@ $$
 
 $$
 \widehat{\mathbf L}_{\mathrm{direct}}
-=\frac{f_s\,|\mathbf n\cdot\boldsymbol\omega_i|\,
+=\frac{f_s\,|\mathbf n_s^{\mathrm{eff}}\cdot\boldsymbol\omega_i|\,
 \widehat T\,\mathbf j(\mathbf x)}
 {p_{\mathrm{select}}q_Vr^2}.
 $$
 
-体积点没有表面法线，因此没有面积光公式中的光源侧余弦。圆柱中落在零密度区的样本直接贡献零；实现没有用隐藏暖色面积灯替代火焰照明。
+有效着色法线提供 `evaluation.f_cos` 中的 `AbsDot` 余弦，几何法线 $\mathbf n_g$ 另行判定真实反射/透射侧并决定 shadow-ray 起点。体积点没有表面法线，因此没有面积光公式中的光源侧余弦。圆柱中落在零密度区的样本直接贡献零；实现没有用隐藏暖色面积灯替代火焰照明。
 
 <!-- source-snippet id="volume-nee-estimator" path="src/device_programs.cu" anchor="const float support_volume =" -->
 ```cpp
@@ -182,6 +182,27 @@ $$
                     surface_transmittance),
             support_volume /
                 (selection_pdf * distance2));
+```
+
+其中 `selection_pdf` 是当前估计器使用的选灯分母：普通空气顶点为 $q_G(i)$，介质内普通顶点为 $q_U(i)$，粗糙 water 的 G/U 两份确定性样本则都使用联合密度 $q_G(i)+q_U(i)$。flame 没有可由 BSDF 命中的绑定表面，因此这里直接除以对应密度，不套用表面 emitter 的 power heuristic，也不为水面两份样本额外乘 0.5：
+
+<!-- source-snippet id="finite-flame-selection-pdf" path="src/device_programs.cu" anchor="selection_pdf * distance2" -->
+```cpp
+    const float maximum_radius =
+        fmaxf(light.radius_start, light.radius_end);
+    const float support_volume =
+        kPi * maximum_radius * maximum_radius * light.height;
+    const float3 emission_coefficient =
+        mul(flame_source(light, axial), sigma);
+    const float3 contribution =
+        mul(mul(mul(evaluation.f_cos, emission_coefficient),
+                    surface_transmittance),
+            support_volume /
+                (selection_pdf * distance2));
+    if (count_rough_water && max_component(contribution) > 0.0f) {
+      ++water_counters.rough_nee_contributions;
+    }
+    return contribution;
 ```
 
 连接段还先发出普通 OptiX shadow ray 检查表面遮挡。rectangle/disk/sphere 面积光、HDR 环境以及 point/directional delta 灯的连接也增加同样的体积透射测试，所以火焰能衰减从其他灯到表面的光。面积光与 BSDF 的 MIS 结构保持不变，delta 灯则逐盏求值且 MIS 权重为 1。
@@ -216,4 +237,4 @@ Ember Forge 的正式配置使用 2048 spp、depth 12、direct 64 / indirect 16 
 
 数学上的 null-scattering 形式可进一步参考 Miller、Georgiev 与 Jarosz 的 *A null-scattering path integral formulation of light transport*；工程边界和输入约束见 [Python 场景 API](../PYTHON_API.md)。
 
-[上一章：PhysX 刚体模拟与即时场景构建](10-physx-rigid-body-scene-baking.md) · [返回目录](README.md) · [下一章：运行时解析水面](12-runtime-analytic-water.md)
+[上一章：降噪、色调映射与输出](09-denoising-color-and-output.md) · [返回目录](README.md) · [下一章：运行时解析水面](11-runtime-analytic-water.md)

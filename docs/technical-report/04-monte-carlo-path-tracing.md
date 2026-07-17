@@ -59,11 +59,13 @@ $$
 =\boldsymbol\beta_k\odot
 \frac{
 f_s(\boldsymbol\omega_i,\boldsymbol\omega_o)
-|\mathbf n\cdot\boldsymbol\omega_i|
+|\mathbf n_s^{\mathrm{eff}}\cdot\boldsymbol\omega_i|
 }{p_B(\boldsymbol\omega_i)}.
 $$
 
-对连续的 Lambert/GGX 分支——包括 PBR 的混合瓣和非零粗糙度的 dielectric/water——`sample_bsdf` 返回的 `weight` 正是这个分式。只有 `roughness = 0` 的 dielectric/water 是 delta 离散事件，不能用普通有限 BSDF 除以连续方向 PDF；其等价事件权重由反射/折射分支概率、`base_color` 和透射时的 $(\eta_i/\eta_t)^2$ 构成。$\boldsymbol\beta$ 记录路径到当前位置的整体权重；它不是剩余光子数量，也不是概率，所以经过 PDF 或俄罗斯轮盘补偿后可以大于 1。
+对连续的 Lambert/GGX 分支——包括 PBR 的混合瓣和非零粗糙度的 dielectric/water——`sample_bsdf` 返回的 `weight` 正是这个分式。$\mathbf n_s^{\mathrm{eff}}$ 提供 `AbsDot` 余弦；独立的 $\mathbf n_g$ 先验证方向位于真实反射或透射侧，并负责后续介质转换与 ray-origin offset。
+
+只有 `roughness = 0` 的 dielectric/water 是 delta 离散事件，不能用普通有限 BSDF 除以连续方向 PDF。Fresnel 反射率决定选反射或折射的概率，但采样概率与对应的 Fresnel 系数在事件权重中抵消：返回权重不再含这个分支概率，反射为 `base_color`，透射再乘 $(\eta_i/\eta_t)^2$。$\boldsymbol\beta$ 记录路径到当前位置的整体权重；它不是剩余光子数量，也不是概率，所以经过 PDF 或俄罗斯轮盘补偿后可以大于 1。
 
 下面是公式在路径循环中的落点：`scatter.weight` 对应分式，`throughput` 对应 $\boldsymbol\beta$。非负截断只消除浮点或实现错误产生的负分量；若三通道均为零，路径不可能再产生贡献。局部方向 PDF、是否为 delta 事件以及当前顶点的有限选灯模式则留给下一顶点的 MIS 使用。
 
@@ -113,7 +115,7 @@ $$
 
 ## 3. 一条样本路径如何运行
 
-下面的伪代码省略了 MIS 细节，但与 [`__raygen__pathtrace`](../../src/device_programs.cu) 的控制流一致：
+下面的伪代码展示普通单状态表面路径，并省略三类正交细节：NEE/命中端的 MIS；每段射线上的 flame 体积碰撞、自发光与 water 介质 Beer 衰减；以及第一个光滑 water 界面把反射、透射两条确定性 Fresnel 子路径分别放入当前状态和唯一 pending 状态的有界分裂。除这些显式省略外，它与 [`__raygen__pathtrace`](../../src/device_programs.cu) 的主控制流一致：
 
 ~~~text
 对每个像素样本：
@@ -146,7 +148,7 @@ $$
 像素线性 RGB = 所有样本 L 的平均值
 ~~~
 
-这里的“反弹”是一种路径顶点计数，不意味着代码递归调用。raygen 程序用循环保存 `ray_origin`、`ray_direction`、`throughput`、`radiance` 和上一次 PDF。
+这里的“反弹”是一种路径顶点计数，不意味着代码递归调用。raygen 程序用循环保存 `ray_origin`、`ray_direction`、`throughput`、`radiance` 和上一次 PDF；光滑水面的首次分裂最多再保存一个 pending path state，两条子路径都会标记 split 已使用，因此不会继续指数分叉。
 
 ## 4. 每像素样本数与随机数
 
@@ -260,7 +262,7 @@ $$
 \mathbf C'=\mathbf C\frac{T}{M};
 $$
 
-否则保持 $\mathbf C'=\mathbf C$。三个通道使用同一缩放，因而不会像逐通道截断那样直接改变色相。bounce 0 的背景、发光端点、体积端点和 NEE 使用 direct 阈值，bounce 1 以后使用 indirect 阈值。有限灯的 $q_G/q_U$、环境样本和每盏 delta 灯是独立估计，分别钳位后才累加；已经相加的最终像素允许超过阈值。
+否则保持 $\mathbf C'=\mathbf C$。三个通道使用同一缩放，因而不会像逐通道截断那样直接改变色相。bounce 0 的背景、发光端点、体积端点和 NEE 使用 direct 阈值，bounce 1 以后使用 indirect 阈值。有限灯域中的每份提议、环境样本和每盏 delta 灯都是独立估计，分别钳位后才累加；已经相加的最终像素允许超过阈值。
 
 <!-- source-snippet id="path-firefly-contribution-clamp" path="src/device_programs.cu" anchor="clamp_path_contribution" -->
 ```cpp

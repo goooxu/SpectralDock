@@ -47,12 +47,14 @@ rectangle、disk 和 sphere 灯描述有限表面发出的辐亮度 $L_e$。poin
 $$
 \mathbf C_p=
 \boldsymbol\beta\odot f_s I
-\frac{|\mathbf n\cdot\boldsymbol\omega_i|}{r^2},
+\frac{|\mathbf n_s^{\mathrm{eff}}\cdot\boldsymbol\omega_i|}{r^2},
 \qquad
 \mathbf C_d=
 \boldsymbol\beta\odot f_s E
-|\mathbf n\cdot\boldsymbol\omega_i|.
+|\mathbf n_s^{\mathrm{eff}}\cdot\boldsymbol\omega_i|.
 $$
+
+这里写的是 SpectralDock 连续 BSDF 求值器实际融合的着色余弦；$\mathbf n_s^{\mathrm{eff}}$ 是第 3 章定义的有效着色法线。连接是否位于真实表面的反射或透射侧仍由几何法线 $\mathbf n_g$ 判断，着色法线不会改变介质侧别。
 
 point 和 directional 在方向测度上都是 delta 分布：它们没有可抽样的灯面，也不会被一条连续 BSDF 射线偶然命中。SpectralDock 因而在每个支持 NEE 的连续 BSDF 顶点逐盏连接它们，MIS 权重为 1；阴影由有限距离或无限距离的 shadow ray 决定。`directional.direction` 与 sky 的 `sun_direction` 语义一致，都是**从着色点指向光源**，与真实光传播方向相反。
 
@@ -109,12 +111,15 @@ L_i(\mathbf x,\boldsymbol\omega_i)
 }
 $$
 
-对 Lambert、metal 和 PBR，法线下方的 $f_s$ 为零，公式便退化为第 2 节的上半球积分与 $\max(0,\mathbf n\cdot\boldsymbol\omega_i)$。介电质折射方向位于另一侧，必须保留全球积分和绝对余弦。
+在理想几何表面上，$\mathbf n_s^{\mathrm{eff}}=\mathbf n_g$；Lambert、metal 和 PBR 只有几何反射侧的支撑，公式便退化为第 2 节相对于 $\mathbf n_g$ 的上半球积分。介电质折射方向位于另一侧，必须保留全球积分和绝对几何余弦。
+
+平滑顶点法线或 normal map 会让两根法线不同。当前估计器仍用 $\mathbf n_g$ 判断真实反射/透射侧，但连续 BSDF 把 $|\mathbf n_s^{\mathrm{eff}}\!\cdot\boldsymbol\omega_i|$ 融入 `f_cos`。因此某方向可以位于几何反射侧、却落在有效着色法线的负半球：灯光策略仍能求值该方向，而只在着色正半球取样的 BSDF PDF 为 0。第 3 章会给出这个 `AbsDot` 扩展和有效法线修正规则；它不等于用着色法线改写真实表面的侧别。
 
 | 符号 | 含义 |
 |---|---|
 | $\mathbf x$ | 当前交点 |
 | $\mathbf n_g$ | 朝当前射线一侧的单位几何法线 |
+| $\mathbf n_s^{\mathrm{eff}}$ | 连续 BSDF 使用的有效着色法线 |
 | $L_e$ | 表面自己发出的辐亮度 |
 | $L_i$ | 某方向到达表面的入射辐亮度 |
 | $L_o$ | 沿观察方向离开表面的出射辐亮度 |
@@ -197,60 +202,23 @@ $$
       }
 ```
 
-`radiance` 是当前样本已经累计的 $L_o$ 估计，`throughput` 是此前各次散射权重的乘积 $\boldsymbol\beta$。体积真实碰撞先按第 11 章的互斥策略处理；没有碰撞且射线未命中表面时，方向背景就是路径末端的 $L_i$。若前一事件是非 delta 表面且背景为可显式采样的 HDR 环境，同一路径也可能由环境 NEE 生成，因此再乘 BSDF 一侧的 `miss_weight`；常量、sky、相机直达或 delta 前驱的权重仍为 1。循环代替函数递归，`break` 表示这条光路已经终止。
+`radiance` 是当前样本已经累计的 $L_o$ 估计，`throughput` 是此前各次散射权重的乘积 $\boldsymbol\beta$。体积真实碰撞先按第 10 章的互斥策略处理；没有碰撞且射线未命中表面时，方向背景就是路径末端的 $L_i$。若前一事件是非 delta 表面且背景为可显式采样的 HDR 环境，同一路径也可能由环境 NEE 生成，因此再乘 BSDF 一侧的 `miss_weight`；常量、sky、相机直达或 delta 前驱的权重仍为 1。循环代替函数递归，`break` 表示这条光路已经终止。
 
 ### 5.2 发光面项
 
-<!-- source-snippet id="raygen-emitter-accumulation" path="src/device_programs.cu" anchor="use_water_finite_balance" -->
+<!-- source-snippet id="raygen-emitter-accumulation" path="src/device_programs.cu" anchor="mul(mul(throughput, emitted), weight)" -->
 ```cpp
-        const bool use_water_finite_balance =
-            emitter_is_bound_to_light &&
-            previous_light_mode == kFiniteLightWaterPowerSample &&
-            previous_delta == 0 &&
-            light_pdf > 0.0f;
-        const float weight = use_water_finite_balance
-            ? balance_heuristic(previous_pdf, light_pdf)
-            : emitter_hit_mis_weight(
-                  previous_pdf, light_pdf, previous_delta != 0,
-                  emitter_is_bound_to_light);
         accumulate_path_contribution(
             radiance, mul(mul(throughput, emitted), weight),
             clamp_threshold, clamped_counter);
         break;
 ```
 
-这里的 `emitted` 对应 $L_e$，纹理只调制它的 RGB；`throughput` 仍是 $\boldsymbol\beta$。普通前驱使用 `emitter_hit_mis_weight` 与有限灯 NEE 分权。粗糙 water 的绑定有限灯使用三技术 balance：前一顶点的两份灯样本共享 $p_L=p_G+p_U$，BSDF 命中端点乘 $p_B/(p_L+p_B)$；两份 direct 项各乘 $p_L/(p_L+p_B)$ 后共同补齐同一积分。背面、球内无灯采样支持、未绑定 emitter、delta 前驱和相机直见退化为普通权重。Emitter 是终端材质，累加后立即 `break`。
+这里的 `emitted` 对应 $L_e$，纹理只调制它的 RGB；`throughput` 仍是 $\boldsymbol\beta$。`weight` 根据真正存在的竞争策略决定：普通 NEE/BSDF 命中端的规则见第 5 章，粗糙 water 的专用多提议 balance 见第 11 章。未绑定 emitter、delta 前驱和相机直见保留完整权重。Emitter 是终端材质，累加后立即 `break`。
 
 ### 5.3 直接光与下一次散射
 
-<!-- source-snippet id="raygen-direct-and-scatter" path="src/device_programs.cu" anchor="accumulate_delta_direct_lights" -->
-```cpp
-      } else {
-        const float3 finite_contribution =
-            mul(throughput, finite_direct);
-        const float3 uniform_contribution =
-            mul(throughput, water_uniform_direct);
-        const float3 environment_contribution =
-            mul(throughput, environment_direct);
-        accumulate_path_contribution(
-            radiance, finite_contribution, clamp_threshold,
-            clamped_counter);
-        if (current_light_mode == kFiniteLightWaterPowerSample) {
-          accumulate_path_contribution(
-              radiance, uniform_contribution,
-              clamp_threshold, clamped_counter);
-        }
-        accumulate_path_contribution(
-            radiance, environment_contribution, clamp_threshold,
-            clamped_counter);
-        accumulate_delta_direct_lights(
-            hit, material, base_color, wo, rng, traced_rays,
-            volume_counters, media, water_counters, throughput,
-            clamp_threshold, clamped_counter, radiance);
-      }
-```
-
-有限灯、HDR 环境和 delta 灯是三个独立 NEE 域。普通表面在有限灯域取一个样本；粗糙 water 在该域确定性地各取一个全局功率样本和均匀索引样本，二者的选灯密度相加为 $q_G+q_U$，不乘 0.5。若绑定表面灯还可由下一条 BSDF 射线命中，direct 与 emitter-hit 再用 $p_L+p_B$ 的 balance 权重分配同一路径；否则两份灯样本独自覆盖有限灯域。环境域仍只取一个方向样本并与 BSDF miss 做 power MIS；point/directional 则逐灯求值且权重为 1。因此普通顶点最多尝试“两份随机域连接 + delta 灯数”，粗糙 water 再多一份有限灯连接；PDF、余弦或遮挡检查仍可提前返回。最后一个表面事件仍计算直接光，之后才停止。
+有限灯、HDR 环境和 delta 灯是三个独立 NEE 域。普通表面在前两个域各取一份随机样本，point/directional 则逐灯求值且权重为 1；某些专用顶点可在有限灯域增加一份提议，具体构造留到第 11 章。每份结果乘当前 throughput 后独立加入 `radiance`，PDF、余弦或遮挡检查都可提前返回。最后一个表面事件仍计算直接光，之后才停止。
 
 `wo` 对应 $\boldsymbol\omega_o$；各域结果乘当前 $\boldsymbol\beta$ 后才加入 `radiance`。需要拆分时，每份策略贡献独立进入 `accumulate_path_contribution`；没有 delta 灯且各项都不触发 clamp 时，紧邻这段之前的 `preserve_grouped_add` 分支仍使用旧加法树。实现为平滑网格保留一根有效着色法线 $\mathbf n_s^{\mathrm{eff}}$：Lambert、PBR 与其他 GGX 连续分支的路径权重按 PBRT 风格使用 $f_s|\mathbf n_s^{\mathrm{eff}}\!\cdot\boldsymbol\omega_i|/p_B$。几何法线 $\mathbf n_g$ 仍独立负责真实反射/透射侧、介质栈转换与射线起点偏移。`roughness = 0` 的 dielectric/water 是离散 delta 界面，Fresnel、Snell 方向与侧别全部使用 $\mathbf n_g$，透射权重还包含 $(\eta_i/\eta_t)^2$。无下一跳、无效样本或零吞吐量都会尽早结束路径，避免无贡献追踪。
 
