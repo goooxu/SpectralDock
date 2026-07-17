@@ -7,7 +7,7 @@ Moonlit Stepwell 的水不是平面贴图，也不是预先烘焙的网格。Pyt
 幽蓝。PhysX 只计算空中预碎裂刚体；水面没有粒子、SPH/FLIP、刚体耦合或
 时间演化，仍由 OptiX 自定义求交与 CUDA 介质传输在渲染时求值。
 
-封面穹顶的“冰晶”不进入本章的介质栈。早期 dielectric sphere 在解析水面
+熔岩圣殿专题穹顶的“冰晶”不进入本章的介质栈。早期 dielectric sphere 在解析水面
 存在时，高样本诊断发现了稀有近切线路径的介质栈安全错误；在不修改渲染器
 且坚持正式输出 `medium_errors == 0` 的前提下，最终场景改用非透明冷色粗糙
 metal sphere 作为冰晶外观代理，并以 `opaque_frost_visual_proxy: true`
@@ -575,11 +575,12 @@ stats 分开记录 height evaluations、tile tests、roots reported、medium seg
 - 波浪是确定性静态正弦叠加，不是 CFD、浅水方程或海洋频谱动画；
 - `water_surface` 只是有限顶界面，依赖场景的不透明池壁/底部封闭；
 - SceneBuilder 强制相机 aperture 从水与玻璃外开始；普通 dielectric 只支持同材质双面、无 alpha 的闭合 sphere，水层加嵌套玻璃合计最多四层；
-- 封面不依靠普通 dielectric sphere 表现冰晶；其非透明冷色粗糙 metal 代理是为了在不修改渲染器时保持介质安全门为零错误，不代表真实冰材质；
+- 熔岩圣殿专题不依靠普通 dielectric sphere 表现冰晶；其非透明冷色粗糙 metal 代理是为了在不修改渲染器时保持介质安全门为零错误，不代表真实冰材质；
 - 粗糙界面有单顶点 NEE/MIS，光滑首水面有一次有界 split；两者都不求解光滑多界面焦散或 MNEE；
 - 网格插值着色法线采用 PBRT 风格的 `AbsDot`，但未实现 shading-normal adjoint correction；极端倾斜法线不保证严格互易性或能量守恒；
 - GGX 介电是单次微表面散射，不补偿多次散射能量；RGB Beer 吸收不是波长采样，也没有体散射、悬浮物或泡沫。
 
-Python 调用与约束见 [Python 场景 API](../PYTHON_API.md)，展示构图见 [Moonlit Stepwell](../EXAMPLES.md#moonlit-stepwell)。
+Python 调用与约束见 [Python 场景 API](../PYTHON_API.md)，展示构图见
+[保留的教学程序索引](../EXAMPLES.md#保留的教学程序索引)中的 Moonlit Stepwell。
 
 [上一章：程序化体积火焰](10-procedural-volumetric-flame.md) · [返回目录](README.md) · [下一章：PhysX 刚体模拟与即时场景构建](12-physx-rigid-body-scene-baking.md)

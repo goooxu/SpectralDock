@@ -4,16 +4,17 @@
 
 | 范围 | 许可证 |
 | --- | --- |
-| 代码、脚本、Python 场景程序、C++ worker、文档、SVG、测试 fixture、图像素材清单、Sparky manifest、gallery stats 与物理 sidecar | Apache-2.0 |
-| Capsule Mascot OBJ/MTL/manifest、Sparky OBJ/MTL/albedo、两张 imagegen PNG、程序化 HDR 环境和正式 gallery PNG | CC0-1.0（项目贡献者 dedication） |
+| 代码、脚本、Python 场景程序、C++ worker、文档、SVG、测试 fixture、图像素材清单、Sparky/Showcase Panel manifest、gallery stats 与物理 sidecar | Apache-2.0 |
+| Capsule Mascot OBJ/MTL/manifest、Sparky OBJ/MTL/albedo、两张 imagegen PNG、程序化 HDR 环境、程序化 Showcase Panel 三个运行时资产和 23 张正式 Gallery PNG | CC0-1.0（项目贡献者 dedication） |
 | Spot OBJ 与 albedo 纹理 | CC0-1.0（Keenan Crane 上游 dedication） |
 | third_party/tinyobjloader 下的 vendored 文件 | MIT |
 | third_party/mikktspace 下 vendored 的 `mikktspace.c`/`.h` | zlib-style license |
 
-CC0 只覆盖 assets/examples/models/CC0-1.0.txt 逐项列出的二十一个文件；其中
-十九个由项目贡献者明确 dedication，两个 Spot 文件保留 Keenan Crane 的上游
+CC0 只覆盖 assets/examples/models/CC0-1.0.txt 逐项列出的三十七个文件；其中
+三十五个由项目贡献者明确 dedication，两个 Spot 文件保留 Keenan Crane 的上游
 CC0 dedication。
 tools/generate_mascot.py、tools/generate_hdr_environment.py、
+tools/generate_showcase_panel.py、
 scenes/kinetic-foundry.py、scenes/lava-temple-oracle.py、
 python/spectraldock/physics.py 与 tools/physx_worker.cpp 均为 Apache-2.0，
 不属于 CC0。PhysX 本身是仓库外部依赖，适用其 BSD-3-Clause 许可证。
@@ -29,12 +30,16 @@ vendored 第三方源码，不适用仓库级 Apache-2.0；两个文件顶部保
   [`assets/examples/models/capsule-mascot/manifest.json`](../assets/examples/models/capsule-mascot/manifest.json)
 - AI 生成的 Sparky 模型、材质槽与纹理的完整清单：
   [`assets/examples/models/sparky/manifest.json`](../assets/examples/models/sparky/manifest.json)
+- 程序化 Showcase Panel 的几何、数据贴图与摘要清单：
+  [`assets/examples/models/showcase-panel/manifest.json`](../assets/examples/models/showcase-panel/manifest.json)
 - Spot 模型、纹理、上游许可与建议引用：
   [Keenan Crane 的 CMU Model Repository](https://www.cs.cmu.edu/~kmcrane/Projects/ModelRepository/)
 - 零依赖确定性模型生成器：
   `python3 tools/generate_mascot.py [--output PATH] [--manifest PATH]`
 - 零依赖确定性 HDR 环境生成器：
   `python3 tools/generate_hdr_environment.py [--output PATH]`
+- 零依赖确定性 Showcase Panel 生成器：
+  `python3 tools/generate_showcase_panel.py [--output-dir PATH]`
 - 视觉资产 CC0 范围与官方法典链接：
   [`assets/examples/models/CC0-1.0.txt`](../assets/examples/models/CC0-1.0.txt)
 
@@ -47,6 +52,8 @@ vendored 第三方源码，不适用仓库级 Apache-2.0；两个文件顶部保
 | `models/sparky/sparky_albedo.png` | 1024×1024 RGBA（全不透明） | `e0c5f6b728a53d3cfbc1ef6f29bd55417170d5f02c53305a7a4b1a9f931e22f0` |
 | `models/spot/spot_texture.png` | 1024×1024 RGB（内嵌 sRGB profile） | `cddabbae52a666173e7953e238b88340d285044dc20b36f8ed3f1a41db534fa5` |
 | `environments/radiance-pavilion.hdr` | 2048×1024 Radiance RGBE，modern RLE | `33b6e651abbacbf7458aac0c2610f96705a763251a1699e5548615ca36dbf6d7` |
+| `models/showcase-panel/showcase-panel-normal.png` | 1024×1024 RGB8，linear，无色彩 profile，OpenGL/+Y | `aafd558f3057f2ad25e9fec041603ced9d2ebf743b5e25c1fca3752c3766fe49` |
+| `models/showcase-panel/showcase-panel-metallic-roughness.png` | 1024×1024 RGB8，linear，无色彩 profile，G=roughness、B=metallic | `b9ecec85c490fc0377d4c39260cf175b98da10d5e0c8bdfd8694ea3e57109329` |
 
 上述两张星球 PNG 为本项目通过 AI 图像生成工作流生成，按现状提供，不保证
 唯一性或排他性；仅在贡献者拥有相关权利的范围内作 CC0 dedication。
@@ -57,7 +64,7 @@ vendored 第三方源码，不适用仓库级 Apache-2.0；两个文件顶部保
 `sparky_albedo.png` 是项目所有者贡献的 AI 生成 Sparky 资产组成部分，
 不是上述两张星球 imagegen 输出之一。它与同目录 OBJ、MTL 一起按 CC0-1.0
 提供；其 AI 来源声明、精确字节数和摘要记录在独立 Sparky manifest 中。该
-`manifest.json` 是 Apache-2.0 文档 sidecar，不计入十九项项目贡献者 CC0
+`manifest.json` 是 Apache-2.0 文档 sidecar，不计入三十五项项目贡献者 CC0
 文件。
 
 `spot_texture.png` 是 Spot 上游归档中的未修改位图，不属于项目 imagegen
@@ -71,6 +78,14 @@ vendored 第三方源码，不适用仓库级 Apache-2.0；两个文件顶部保
 文件不含时间戳或机器相关元数据。生成器按 Apache-2.0 提供，明确列出的
 `.hdr` 输出按 CC0-1.0 提供。
 
+两张 Showcase Panel PNG 也不是 AI 生成图；它们由 Python 标准库生成器按
+整数算法确定性构造。normal map 使用渲染器约定的 OpenGL/+Y tangent-space
+法线，metallic-roughness map 是 linear 数据贴图，G 通道表示 roughness、B
+通道表示 metallic，R 通道固定为未使用值。两图均为 1024×1024 RGB8，不带
+色彩 profile，场景必须通过 typed texture API 按 linear 数据读取，不能执行
+sRGB 解码。三个运行时输出按 CC0-1.0 提供；生成器及记录字节数、摘要和几何
+统计的独立 `manifest.json` 按 Apache-2.0 提供。
+
 ## 模型素材
 
 | OBJ | 三角数 | 规格 | 许可 |
@@ -78,6 +93,7 @@ vendored 第三方源码，不适用仓库级 Apache-2.0；两个文件顶部保
 | `capsule-mascot/capsule-mascot.obj` | 5,816 | Y-up、脚底 `y=0`、正面 `+Z`、无 UV/显式 normal、15 个 `usemtl` 槽 | CC0 1.0 Universal |
 | `sparky/sparky.obj` | 7,284 源面 / 6,388 可渲染面 | Y-up、正面 `+Z`、完整 UV、10 个 `usemtl` 槽 | CC0 1.0 Universal |
 | `spot/spot_triangulated.obj` | 5,856 | 2,930 positions、3,225 UV、无显式 normal/smoothing group/MTL、闭合三角网格 | CC0 1.0 Universal（上游） |
+| `showcase-panel/showcase-panel.obj` | 2 | Y-up、正面 `+Z`、4 positions、完整 UV、1 个显式 `+Z` normal | CC0 1.0 Universal |
 
 Capsule Mascot 是为本项目 AI 生成的模块化角色，由圆润躯干、横向面罩、双眼浮雕、非对称天线、短手臂与手套、短腿与靴子及腰带凸缘组成；不使用品牌角色的护目镜、背带裤或其他识别特征。各组件是不相交的闭合网格，并留有小型装配间隙，使纯色与介电材质都能保持清楚轮廓。
 
@@ -111,10 +127,26 @@ CC0-1.0，并说明可用于任何用途。CC0 不要求署名；上游仍建议
 Keenan Crane、Ulrich Pinkall、Peter Schröder，〈Robust fairing via conformal
 curvature flow〉，ACM Transactions on Graphics 32(4)，2013。
 
+Showcase Panel 是项目为 PBR 和 tangent-space normal mapping 展示而设计的
+程序化平面，不属于 Capsule Mascot/Sparky 的 AI 生成资产，也没有第三方上游。
+OBJ 仅由两个三角形组成，每个 face corner 都带完整 UV 和显式 `+Z` normal；
+其 `d907577a7da1ea01eded6ca26cde4cce0553e4f0559e211973f51d3cf5b0e5f1`
+摘要及两张数据贴图的摘要均由同目录 Apache-2.0 manifest 记录。
+
 ## Gallery
 
-docs/gallery 下十张 PNG 按 CC0-1.0 提供；同名 *.stats.json 是正式
-RTX 5090 运行记录，按 Apache-2.0 提供。gallery 图像是渲染器输出。
+`docs/gallery/` 下共二十三张 PNG，均是 SpectralDock 渲染器输出并按
+CC0-1.0 提供，不是 AI 图像生成输出。其中原有十张教学场景图继续保留；
+`showcase/tidal-observatory.png` 是 2560×1440 综合能力展示，
+`comparisons/` 下十二张 1024×1024 图组成六组同场景、同局部的 feature
+OFF/ON 对比：normal mapping、indirect lighting、environment importance
+sampling、OptiX Denoiser、Beer absorption 和 firefly contribution clamping。
+
+原有十张图各自的同名 `*.stats.json` 是正式 RTX 5090 运行记录，按
+Apache-2.0 提供。十三张新的综合展示/对比图不提交临时 stats sidecar，
+也不作为性能 benchmark 或逐像素 golden。用于生成它们的 Python 场景程序
+按 Apache-2.0 提供；图像本身才属于 CC0 清单。
+
 Kinetic Foundry 与 Lava Temple Oracle 还各带有
 同 stem 的 `.physics.json`，用于记录 PhysX 版本、设备、模拟参数和刚体
 结果摘要；这些 sidecar 按

@@ -87,6 +87,16 @@ for scene in "${STATIC_EXAMPLES[@]}"; do
     "${ROOT}/output/acceptance-${scene}.png"
 done
 
+# Gallery production programs own their paired invariants and canonical render
+# settings. Acceptance exercises their explicit preview mode and redirects all
+# outputs into output/, so it never overwrites the curated docs/gallery PNGs.
+for scene in "${GALLERY_PROGRAMS[@]}"; do
+  echo "== Python gallery program preview: ${scene} =="
+  run_python "${ROOT}/scenes/${scene}.py" \
+    --preview \
+    --output-dir "${ROOT}/output/acceptance-gallery/${scene}"
+done
+
 # PhysX scenes expose ordinary constructor functions because their fresh
 # fixed-step simulation must run immediately before the OptiX render. Acceptance imports
 # each file directly and asks for a small diagnostic frame; no scene document

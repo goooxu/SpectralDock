@@ -5,6 +5,16 @@ option(SPECTRALDOCK_ENABLE_GPU "Build the CUDA/OptiX renderer" ON)
 option(SPECTRALDOCK_ENABLE_VALIDATION "Enable OptiX validation by default" OFF)
 option(SPECTRALDOCK_ENABLE_PHYSX_SCENE
   "Build the optional NVIDIA PhysX GPU worker" OFF)
+set(SPECTRALDOCK_OPTIX_MODULE_FORMAT "optixir" CACHE STRING
+  "OptiX device module input format: optixir or ptx")
+set_property(CACHE SPECTRALDOCK_OPTIX_MODULE_FORMAT PROPERTY STRINGS
+  optixir ptx)
+if(NOT SPECTRALDOCK_OPTIX_MODULE_FORMAT STREQUAL "optixir" AND
+   NOT SPECTRALDOCK_OPTIX_MODULE_FORMAT STREQUAL "ptx")
+  message(FATAL_ERROR
+    "SPECTRALDOCK_OPTIX_MODULE_FORMAT must be exactly 'optixir' or 'ptx' "
+    "(got '${SPECTRALDOCK_OPTIX_MODULE_FORMAT}')")
+endif()
 
 if(SPECTRALDOCK_ENABLE_GPU AND SPECTRALDOCK_ENABLE_PHYSX_SCENE)
   message(FATAL_ERROR
@@ -78,26 +88,34 @@ if(SPECTRALDOCK_ENABLE_GPU)
     REQUIRED
     NO_DEFAULT_PATH)
 
-  set(OPTIX_IR "${CMAKE_CURRENT_BINARY_DIR}/device_programs.optixir")
+  if(SPECTRALDOCK_OPTIX_MODULE_FORMAT STREQUAL "optixir")
+    set(OPTIX_MODULE_COMPILE_FLAG --optix-ir)
+    set(OPTIX_MODULE_INPUT
+      "${CMAKE_CURRENT_BINARY_DIR}/device_programs.optixir")
+  else()
+    set(OPTIX_MODULE_COMPILE_FLAG --ptx)
+    set(OPTIX_MODULE_INPUT "${CMAKE_CURRENT_BINARY_DIR}/device_programs.ptx")
+  endif()
   add_custom_command(
-    OUTPUT "${OPTIX_IR}"
+    OUTPUT "${OPTIX_MODULE_INPUT}"
     COMMAND "${CMAKE_CUDA_COMPILER}"
-      --optix-ir --std=c++17 --use_fast_math -lineinfo
+      "${OPTIX_MODULE_COMPILE_FLAG}" --std=c++17 --use_fast_math -lineinfo
       -I"${CMAKE_CURRENT_SOURCE_DIR}/include"
       -I"${OPTIX_INCLUDE_DIR}"
       "${CMAKE_CURRENT_SOURCE_DIR}/src/device_programs.cu"
-      -o "${OPTIX_IR}"
+      -o "${OPTIX_MODULE_INPUT}"
     DEPENDS
       src/device_programs.cu
       include/spectraldock/device_types.h
     VERBATIM)
-  add_custom_target(spectraldock_device_ir DEPENDS "${OPTIX_IR}")
+  add_custom_target(spectraldock_device_module_input
+    DEPENDS "${OPTIX_MODULE_INPUT}")
 
   add_library(spectraldock_postprocess STATIC src/postprocess.cu)
   set_target_properties(spectraldock_postprocess PROPERTIES
     CUDA_STANDARD 17
     CUDA_STANDARD_REQUIRED ON
-    CUDA_ARCHITECTURES "75;86;89;120"
+    CUDA_ARCHITECTURES "75;86;89;100;120"
     POSITION_INDEPENDENT_CODE ON)
 
   target_sources(_native PRIVATE src/optix_renderer.cpp)
@@ -109,9 +127,9 @@ if(SPECTRALDOCK_ENABLE_GPU)
     CUDA::nvtx3
     ${CMAKE_DL_LIBS})
   target_compile_definitions(_native PRIVATE
-    SPECTRALDOCK_OPTIX_IR_PATH="${OPTIX_IR}"
+    SPECTRALDOCK_OPTIX_MODULE_INPUT_PATH="${OPTIX_MODULE_INPUT}"
     SPECTRALDOCK_ENABLE_VALIDATION_DEFAULT=$<BOOL:${SPECTRALDOCK_ENABLE_VALIDATION}>)
-  add_dependencies(_native spectraldock_device_ir)
+  add_dependencies(_native spectraldock_device_module_input)
 endif()
 
 if(BUILD_TESTING)

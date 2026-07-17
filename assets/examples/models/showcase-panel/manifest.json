@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "name": "showcase-panel",
+  "description": "Deterministic UV-mapped panel for SpectralDock PBR and tangent-space normal-map showcase scenes.",
+  "source": "Procedurally generated for SpectralDock",
+  "generator": "spectraldock-showcase-panel-generator/1.0",
+  "source_archives_in_distribution": false,
+  "asset_license": "CC0-1.0",
+  "license_file": "../CC0-1.0.txt",
+  "manifest_license": "Apache-2.0",
+  "manifest_license_file": "../../../../LICENSE",
+  "coordinate_system": {
+    "up": "+Y",
+    "front": "+Z",
+    "units": "scene units"
+  },
+  "geometry": {
+    "positions": 4,
+    "texture_coordinates": 4,
+    "explicit_normals": 1,
+    "triangles": 2,
+    "bounds": {
+      "min": [
+        -1.0,
+        -1.0,
+        0.0
+      ],
+      "max": [
+        1.0,
+        1.0,
+        0.0
+      ]
+    }
+  },
+  "files": [
+    {
+      "path": "showcase-panel.obj",
+      "role": "triangle geometry with complete UVs and explicit +Z normals",
+      "bytes": 405,
+      "sha256": "d907577a7da1ea01eded6ca26cde4cce0553e4f0559e211973f51d3cf5b0e5f1"
+    },
+    {
+      "path": "showcase-panel-normal.png",
+      "role": "OpenGL/+Y tangent-space normal data",
+      "bytes": 100434,
+      "sha256": "aafd558f3057f2ad25e9fec041603ced9d2ebf743b5e25c1fca3752c3766fe49",
+      "width": 1024,
+      "height": 1024,
+      "mode": "RGB8",
+      "scene_color_space": "linear",
+      "embedded_color_profile": false,
+      "convention": "OpenGL/+Y"
+    },
+    {
+      "path": "showcase-panel-metallic-roughness.png",
+      "role": "packed metallic-roughness data",
+      "bytes": 10643,
+      "sha256": "b9ecec85c490fc0377d4c39260cf175b98da10d5e0c8bdfd8694ea3e57109329",
+      "width": 1024,
+      "height": 1024,
+      "mode": "RGB8",
+      "scene_color_space": "linear",
+      "embedded_color_profile": false,
+      "channels": {
+        "R": "unused (constant 1.0)",
+        "G": "roughness",
+        "B": "metallic"
+      }
+    }
+  ]
+}

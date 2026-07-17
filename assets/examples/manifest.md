@@ -10,6 +10,11 @@ environment is an analytical, deterministic output of the Apache-2.0 Python
 generator in `tools/`, not an AI-generated image. The separate
 `models/spot/spot_texture.png` is an unmodified third-party bitmap from Keenan
 Crane's Spot model archive, not a project-authored or AI-generated image.
+The two `models/showcase-panel/` PNG files are deterministic procedural data
+maps produced by the Apache-2.0 generator `tools/generate_showcase_panel.py`;
+they are neither AI-generated images nor third-party assets. Geometry, byte
+sizes and file digests for the complete panel bundle are recorded in
+`models/showcase-panel/manifest.json`, an Apache-2.0 sidecar.
 
 The compact distribution omits PNG generation and seam-repair intermediate
 bitmaps; their dimensions, processing steps, prompts, and SHA-256 digests
@@ -20,10 +25,10 @@ the image model lightly redrew pixels outside the requested center band rather
 than keeping those regions byte-identical. The initial-bitmap digests remain in
 this manifest so this distinction stays auditable.
 
-The four texture PNG files and the HDR environment listed here are distributed
-under CC0-1.0. The Spot texture retains its upstream CC0 dedication; the other
-listed visual assets are dedicated by project contributors. This Markdown
-sidecar is licensed under Apache-2.0.
+The six texture/data-map PNG files and the HDR environment listed here are
+distributed under CC0-1.0. The Spot texture retains its upstream CC0
+dedication; the other listed visual assets are dedicated by project
+contributors. This Markdown sidecar is licensed under Apache-2.0.
 
 ## `environments/radiance-pavilion.hdr`
 
@@ -43,6 +48,46 @@ sidecar is licensed under Apache-2.0.
   metadata.
 - Licensing: the generator is Apache-2.0; the generated `.hdr` file is one of
   the visual assets explicitly dedicated under CC0-1.0.
+
+## `models/showcase-panel/showcase-panel-normal.png`
+
+- Runtime size and encoding: 1024 x 1024, 8-bit RGB PNG without an embedded
+  color profile or sRGB chunk. The scene registers it as linear data through
+  the typed texture API.
+- Convention: tangent-space OpenGL/+Y. The OBJ has complete UVs and explicit
+  `+Z` normals; its two triangles exercise the renderer's generated tangent
+  frame without requiring mesh duplication.
+- Runtime byte size: 100,434 bytes.
+- Runtime SHA-256:
+  `aafd558f3057f2ad25e9fec041603ced9d2ebf743b5e25c1fca3752c3766fe49`.
+- Source and rebuild: deterministic integer construction by
+  `python3 tools/generate_showcase_panel.py`. The generator uses only the
+  Python standard library and is licensed under Apache-2.0.
+- Licensing: the generated runtime PNG is explicitly dedicated under
+  CC0-1.0. It is a procedural data map, not an AI-generated image.
+
+## `models/showcase-panel/showcase-panel-metallic-roughness.png`
+
+- Runtime size and encoding: 1024 x 1024, 8-bit RGB PNG without an embedded
+  color profile or sRGB chunk. The scene registers it as linear data through
+  the typed texture API.
+- Channel layout: R is unused and constant `1.0`; G stores roughness; B stores
+  metallic. No channel is color data and no sRGB decoding applies.
+- Runtime byte size: 10,643 bytes.
+- Runtime SHA-256:
+  `b9ecec85c490fc0377d4c39260cf175b98da10d5e0c8bdfd8694ea3e57109329`.
+- Source and rebuild: deterministic integer construction by the same
+  `tools/generate_showcase_panel.py` generator.
+- Licensing: the generated runtime PNG is explicitly dedicated under
+  CC0-1.0. It is a procedural data map, not an AI-generated image.
+
+The paired geometry is
+`models/showcase-panel/showcase-panel.obj` (405 bytes, 4 positions, 4 UVs,
+1 explicit normal and 2 triangles), SHA-256
+`d907577a7da1ea01eded6ca26cde4cce0553e4f0559e211973f51d3cf5b0e5f1`.
+It is also a deterministic CC0-1.0 runtime output. The independent
+`models/showcase-panel/manifest.json` records all three runtime assets and is
+licensed under Apache-2.0 rather than CC0-1.0.
 
 ## `models/sparky/sparky_albedo.png`
 

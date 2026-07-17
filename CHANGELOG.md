@@ -25,6 +25,11 @@ commit 列表仍以 Git 历史为准。发布新版本时，应把 `Unreleased` 
 - 为 capsule mascot 增加包含 15 个部件槽的 CC0 MTL；确定性生成器现在同时
   重建 OBJ、MTL 与 manifest，并明确记录原始资产的 AI 来源。现有场景继续
   显式选择材质，画面保持不变。
+- 增加新首页与 Gallery 生产程序：2K 级“暮潮观测站”综合展示，
+  以及法线贴图、间接光、环境重要性采样、OptiX Denoiser、Beer 吸收和
+  firefly 贡献钳位六组 1K 级单变量 OFF/ON 对比。
+- 增加可确定重建的 showcase panel OBJ、OpenGL/+Y 法线纹理和
+  metallic-roughness 数据纹理，用于 Gallery 的 PBR 对比与综合场景。
 
 ### 变更
 
@@ -44,8 +49,14 @@ commit 列表仍以 Git 历史为准。发布新版本时，应把 `Unreleased` 
   parabola 使用 `clip_min`/`clip_max`，渲染深度使用 `depth`，曝光属于背景；
   `light()` 改为注册后返回 `None`。
 - 默认 GPU 验收收敛为 Release smoke、OptiX validation、受控数学契约、八个
-  静态示例预览和两个物理预览；可用 `SPECTRALDOCK_BUILD_PHYSX=OFF` 显式
-  跳过 PhysX SDK、worker 与物理预览，host 检查统一由 `scripts/test.sh` 进入。
+  静态示例预览、五个 Gallery 程序预览和两个物理预览；可用
+  `SPECTRALDOCK_BUILD_PHYSX=OFF` 显式跳过 PhysX SDK、worker 与物理预览，host
+  检查统一由 `scripts/test.sh` 进入。
+- CUDA 构建目标增加 `sm_100` 代码；这不改变 RTX 5090 作为完整验证环境和
+  历史性能记录的边界。
+- OptiX 设备 module 默认继续生成 `.optixir`，并增加显式
+  `SPECTRALDOCK_OPTIX_MODULE_FORMAT=ptx` 兼容入口；运行时统一从构建树加载
+  所选 module input。
 
 ### 修复
 

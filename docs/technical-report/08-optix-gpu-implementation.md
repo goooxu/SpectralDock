@@ -8,7 +8,7 @@
 |---|---|---|---|
 | 准备 CUDA 几何数据 | 将 mesh 的 position、normal、UV、MikkTSpace face-corner tangent、index、可选逐三角形材质 ID 和解析 primitive 的构建输入放入设备缓冲区 | 运行期，单帧 | 第 7 章 |
 | 构建 GAS / IAS 加速结构 | 每份 mesh 资源或解析对象构建 GAS；custom GAS 镜像设备 root clip/水面 tile overlap，并对遍历 `OptixAabb` 向外舍入一个 ULP；然后用对象变换、GAS handle 与 `sbtOffset` 构建 IAS；两级都只在紧凑结果更小时压缩 | 运行期，单帧 | 第 7 章 |
-| 编译 RayGen、Miss、Hit 等程序 | NVCC 把设备程序编译成 OptiX IR；运行时从 IR 创建 module 和 program groups | 构建期 + 运行期初始化 | 本章第 3、4 节 |
+| 编译 RayGen、Miss、Hit 等程序 | NVCC 把设备程序编译成 module input：默认是 OptiX IR，也可显式选 PTX；运行时从所选输入创建 module 和 program groups | 构建期 + 运行期初始化 | 本章第 3、4 节 |
 | 创建 Pipeline 和 Shader Binding Table | 先链接 pipeline；GAS/IAS 完成后再为 raygen、miss 和每个对象的两类射线打包 SBT | 运行期，单帧 | 本章第 4、6 节 |
 | 调用 optixLaunch | 上传 `LaunchParams`，以 `width × height × 1` 启动二维工作网格 | 运行期，单帧 | 本章第 7、8 节 |
 | 执行射线遍历、求交和自定义着色 | `optixTrace` 遍历 IAS/GAS；intersection、any-hit、closest-hit 参与命中查询，raygen 完成路径着色循环 | 运行期，设备端 | 本章第 9 节与第 7 章 |
@@ -22,8 +22,8 @@
 
 ~~~mermaid
 flowchart LR
-    A["device_programs.cu"] -->|"nvcc --optix-ir"| B["device_programs.optixir"]
-    B -->|"运行时加载"| C["OptiX module"]
+    A["device_programs.cu"] -->|"nvcc --optix-ir（默认）或 --ptx"| B["device_programs.optixir / .ptx"]
+    B -->|"运行时加载 module input"| C["OptiX module"]
     D["postprocess.cu"] -->|"CUDA 编译"| E["spectraldock_postprocess"]
     E -->|"链接"| F["Python _native 扩展"]
 ~~~
@@ -33,7 +33,7 @@ flowchart LR
 ~~~mermaid
 flowchart TD
     A["Python 只指定 CUDA device ordinal"] --> B["native 选择 device、创建 stream、借用 current CUcontext"]
-    B --> C["创建 OptiX context；加载 IR；module、program groups、pipeline"]
+    B --> C["创建 OptiX context；加载 module input；module、program groups、pipeline"]
     C --> D["纹理、材质、灯与几何上传"]
     D --> E["构建并按收益压缩 GAS，再构建并按收益压缩 IAS"]
     E --> F["SBT、输出缓冲与 LaunchParams"]
@@ -53,29 +53,37 @@ flowchart TD
 
 *图 6：这张结构图说明 IAS/GAS、SBT 与设备程序怎样相连；上面的时间线才表示实际生命周期顺序。*
 
-## 3. 构建期：把设备程序编译为 OptiX IR
+## 3. 构建期：把设备程序编译为 module input
 
-`src/device_programs.cu` 中包含 raygen、miss、hit 和自定义 intersection 入口。它不作为普通 CUDA 对象文件链接，而由 NVCC 的 `--optix-ir` 模式生成 `device_programs.optixir`。相反，`src/postprocess.cu` 编译为普通 CUDA 静态库，稍后以 kernel launch 执行；这两条构建链必须区分。
+`src/device_programs.cu` 中包含 raygen、miss、hit 和自定义 intersection 入口。它不作为普通 CUDA 对象文件链接，而由 NVCC 生成供 `optixModuleCreate` 读取的 module input。cache string `SPECTRALDOCK_OPTIX_MODULE_FORMAT` 只接受 `optixir` 或 `ptx`：默认 `optixir` 走 `--optix-ir` 并生成 `device_programs.optixir`，显式兼容模式 `ptx` 走 `--ptx` 并生成 `device_programs.ptx`。相反，`src/postprocess.cu` 编译为普通 CUDA 静态库，稍后以 kernel launch 执行；这两条构建链必须区分。
 
-<!-- source-snippet id="optix-ir-build-command" path="CMakeLists.txt" anchor="--optix-ir --std=c++17 --use_fast_math -lineinfo" -->
+<!-- source-snippet id="optix-ir-build-command" path="CMakeLists.txt" anchor="set(OPTIX_MODULE_COMPILE_FLAG --optix-ir)" -->
 ```cmake
-  set(OPTIX_IR "${CMAKE_CURRENT_BINARY_DIR}/device_programs.optixir")
+  if(SPECTRALDOCK_OPTIX_MODULE_FORMAT STREQUAL "optixir")
+    set(OPTIX_MODULE_COMPILE_FLAG --optix-ir)
+    set(OPTIX_MODULE_INPUT
+      "${CMAKE_CURRENT_BINARY_DIR}/device_programs.optixir")
+  else()
+    set(OPTIX_MODULE_COMPILE_FLAG --ptx)
+    set(OPTIX_MODULE_INPUT "${CMAKE_CURRENT_BINARY_DIR}/device_programs.ptx")
+  endif()
   add_custom_command(
-    OUTPUT "${OPTIX_IR}"
+    OUTPUT "${OPTIX_MODULE_INPUT}"
     COMMAND "${CMAKE_CUDA_COMPILER}"
-      --optix-ir --std=c++17 --use_fast_math -lineinfo
+      "${OPTIX_MODULE_COMPILE_FLAG}" --std=c++17 --use_fast_math -lineinfo
       -I"${CMAKE_CURRENT_SOURCE_DIR}/include"
       -I"${OPTIX_INCLUDE_DIR}"
       "${CMAKE_CURRENT_SOURCE_DIR}/src/device_programs.cu"
-      -o "${OPTIX_IR}"
+      -o "${OPTIX_MODULE_INPUT}"
     DEPENDS
       src/device_programs.cu
       include/spectraldock/device_types.h
     VERBATIM)
-  add_custom_target(spectraldock_device_ir DEPENDS "${OPTIX_IR}")
+  add_custom_target(spectraldock_device_module_input
+    DEPENDS "${OPTIX_MODULE_INPUT}")
 ```
 
-`--use_fast_math` 可提高吞吐，但部分函数采用近似实现，属于最终数值误差来源。Python 原生扩展通过构建时定义的绝对路径加载 IR，因此原构建树和 IR 必须留在编译时记录的位置；当前主干（Unreleased）的支持范围限定为仓库构建树内运行，不是复制单个扩展即可工作的可重定位安装。
+`--use_fast_math` 可提高吞吐，但部分函数采用近似实现，属于最终数值误差来源。`scripts/configure.sh` 从同名环境变量转发该 cache 选项；未设置时仍是 `optixir`，所以既有 RTX 5090 构建路径不变。Python 原生扩展通过构建时定义的绝对路径加载选中的 module input，因此原构建树和对应的 `.optixir` 或 `.ptx` 文件必须留在编译时记录的位置；当前主干（Unreleased）的支持范围限定为仓库构建树内运行，不是复制单个扩展即可工作的可重定位安装。
 
 ## 4. 运行期初始化：context、module、program groups 与 pipeline
 
@@ -105,7 +113,7 @@ Python binding 只把用户选择的非负 device ordinal 写入 `settings.devic
 
 ### 4.2 module 与 19 个 program groups
 
-`create_pipeline` 读取构建期生成的 IR，创建主 module；普通 sphere 使用 OptiX 内建求交 module，水中 dielectric sphere 则使用主 module 中的自定义实心求交。当前 pipeline 有 19 个 program group：
+`create_pipeline` 读取构建期生成的 module input（默认 OptiX IR，或显式选择的 PTX），创建主 module；普通 sphere 使用 OptiX 内建求交 module，水中 dielectric sphere 则使用主 module 中的自定义实心求交。当前 pipeline 有 19 个 program group：
 
 | 类型 | 数量 | 本项目职责 |
 |---|---:|---|
@@ -362,6 +370,6 @@ struct OptixState {
 
 销毁顺序是 denoiser → pipeline → 逆序 program groups → 内建 sphere module → 主 module → OptiX context。CUDA primary context 由 `cudaSetDevice`/runtime 建立并由本函数借用，代码没有在此调用 `cuCtxDestroy` 或 `cudaDeviceReset`。
 
-这也解释了当前的性能与部署边界：每次 `render_optix` 都重新建立并销毁 OptiX device context、pipeline、GAS/IAS、SBT、纹理与设备缓冲，没有跨帧缓存；同时运行时从构建树中的绝对路径读取 `.optixir`。当前主干（Unreleased）因而面向仓库构建树中的 Python 离线渲染，不提供可重定位 install 布局。
+这也解释了当前的性能与部署边界：每次 `render_optix` 都重新建立并销毁 OptiX device context、pipeline、GAS/IAS、SBT、纹理与设备缓冲，没有跨帧缓存；同时运行时从构建树中的绝对路径读取所选的 `.optixir` 或 `.ptx` module input。当前主干（Unreleased）因而面向仓库构建树中的 Python 离线渲染，不提供可重定位 install 布局。
 
 [上一章：几何、可见性与 BVH](07-geometry-visibility-and-bvh.md) · [返回目录](README.md) · [下一章：降噪、色调映射与输出](09-denoising-color-and-output.md)

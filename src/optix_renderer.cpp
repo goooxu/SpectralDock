@@ -30,8 +30,8 @@
 #include <utility>
 #include <vector>
 
-#ifndef SPECTRALDOCK_OPTIX_IR_PATH
-#define SPECTRALDOCK_OPTIX_IR_PATH "device_programs.optixir"
+#ifndef SPECTRALDOCK_OPTIX_MODULE_INPUT_PATH
+#define SPECTRALDOCK_OPTIX_MODULE_INPUT_PATH "device_programs.optixir"
 #endif
 
 namespace spectraldock {
@@ -837,18 +837,18 @@ struct Programs {
   std::array<std::array<OptixProgramGroup, kRayTypeCount>, 8> hit{};
 };
 
-std::vector<char> load_ir() {
-  std::ifstream input(SPECTRALDOCK_OPTIX_IR_PATH, std::ios::binary);
+std::vector<char> load_module_input() {
+  std::ifstream input(SPECTRALDOCK_OPTIX_MODULE_INPUT_PATH, std::ios::binary);
   if (!input)
-    throw std::runtime_error(
-        std::string("cannot open OptiX IR: ") + SPECTRALDOCK_OPTIX_IR_PATH);
+    throw std::runtime_error(std::string("cannot open OptiX module input: ") +
+                             SPECTRALDOCK_OPTIX_MODULE_INPUT_PATH);
   input.seekg(0, std::ios::end);
   const std::streamoff size = input.tellg();
-  if (size <= 0) throw std::runtime_error("OptiX IR is empty");
+  if (size <= 0) throw std::runtime_error("OptiX module input is empty");
   std::vector<char> bytes(static_cast<std::size_t>(size));
   input.seekg(0, std::ios::beg);
   input.read(bytes.data(), static_cast<std::streamsize>(bytes.size()));
-  if (!input) throw std::runtime_error("failed to read OptiX IR");
+  if (!input) throw std::runtime_error("failed to read OptiX module input");
   return bytes;
 }
 
@@ -867,7 +867,7 @@ OptixProgramGroup make_program(OptixState& state,
 }
 
 Programs create_pipeline(OptixState& state) {
-  const std::vector<char> ir = load_ir();
+  const std::vector<char> module_input = load_module_input();
   OptixModuleCompileOptions module_options{};
   module_options.maxRegisterCount = OPTIX_COMPILE_DEFAULT_MAX_REGISTER_COUNT;
   module_options.optLevel = OPTIX_COMPILE_OPTIMIZATION_DEFAULT;
@@ -891,8 +891,8 @@ Programs create_pipeline(OptixState& state) {
   std::size_t log_size = log.size();
   OptixResult status =
       optixModuleCreate(state.context, &module_options, &pipeline_options,
-                        ir.data(), ir.size(), log.data(), &log_size,
-                        &state.module);
+                        module_input.data(), module_input.size(), log.data(),
+                        &log_size, &state.module);
   check_optix(status, "optixModuleCreate", log.data(), log_size);
 
   OptixBuiltinISOptions sphere_options{};

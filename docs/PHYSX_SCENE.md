@@ -163,9 +163,9 @@ Renderer 也不认识 `PxRigidDynamic`；共享的是受验证的纯数值，而
 相对世界上方向倾斜超过 15°。第 300 步是经过构图选择的撞击瞬间，不是总
 动能的数学最大值，也不是最终稳定堆积。
 
-## 熔岩圣殿封面的物理映射
+## 熔岩圣殿专题的物理映射
 
-封面恰好包含 130 个 dynamic actors：
+该专题场景恰好包含 130 个 dynamic actors：
 
 | 类别 | 数量 | PhysX 表示 | Renderer attachment |
 | --- | ---: | --- | --- |
@@ -187,7 +187,7 @@ Renderer 也不认识 `PxRigidDynamic`；共享的是受验证的纯数值，而
 和冷色神光是吸收—自发光 volume，不是燃烧或流体模拟。场景以不超过 450
 个 Renderer objects 作为教学复杂度预算；实际数量以同次 render stats 为准。
 
-封面 validator 要求 130 个 actor 全部在边界内、至少 120 个仍在运动、至少
+熔岩圣殿 validator 要求 130 个 actor 全部在边界内、至少 120 个仍在运动、至少
 120 个位移不小于 0.08、水平四象限都有碎片、至少 12 个有显著角速度，并且
 没有 actor sleeping。它保护结构与运动语义，但不能代替构图人工审查。
 
@@ -203,7 +203,8 @@ GPU contact generation 与并行求解顺序可能产生微小差异；固定 se
 seed 再试。worker 启动失败、版本错误、CUDA context 错误或协议错误会立即
 失败，不会靠重试掩盖环境问题。
 
-维护者验收应在指定 NVIDIA GPU 测试机完成：先运行低成本物理/渲染预览，
+维护者验收应在指定 NVIDIA GPU 测试机完成：Renderer 部分还会运行
+五个 Gallery 程序的 preview；PhysX 部分先运行低成本物理/渲染预览，
 人工检查穿透、越界、附件方向、火焰、水池和构图；随后用一次显式
 `--target-processes all` memcheck 同时检查 CUDA 13.3 OptiX 根进程与隔离的
 CUDA 12.8 PhysX worker，并检查正式分辨率。PhysX 5.8 内部容量缓冲复制会
@@ -213,10 +214,12 @@ racecheck；GPU-only 身份、双运行 validator 与独立渲染帧是结果契
 
 ## 持久产物与许可
 
-仓库可保存正式 gallery PNG、render `.stats.json` 与同次运行的
-`.physics.json`。不得保存 private `.sdp`，也不存在序列化后的物理场景输入。
-`.physics.json` 的代码/数据结构按 Apache-2.0 提供；gallery
-PNG 属于明确列出的 CC0-1.0 视觉资产。
+仓库保留旧十个教学程序的正式 gallery PNG 与 render `.stats.json`，
+其中两个 PhysX 场景还保留同次运行的 `.physics.json`。新 Gallery 的
+综合展示和 OFF/ON 对比图只提交 PNG，不提交测试机 stats，也不建立
+像素 golden。不得保存 private `.sdp`，也不存在序列化后的物理场景输入。
+`.physics.json` 的代码/数据结构按 Apache-2.0 提供；gallery PNG 属于
+明确列出的 CC0-1.0 视觉资产。
 
 现有 gallery sidecar 是正式图片验收时的历史原始记录，因此保留旧聚合字段；
 当前 Python API 新运行产生的是 `spectraldock.physics/1`、逐 body 状态和

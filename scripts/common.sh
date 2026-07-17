@@ -27,6 +27,13 @@ PHYSX_EXAMPLES=(
   kinetic-foundry
   lava-temple-oracle
 )
+GALLERY_PROGRAMS=(
+  tidal-observatory
+  compare-light-transport
+  compare-hdr-sampling
+  compare-normal-mapping
+  compare-water-absorption
+)
 
 die() {
   echo "error: $*" >&2
