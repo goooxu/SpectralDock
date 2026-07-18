@@ -58,6 +58,22 @@ def make_result(*, bodies, attachments=(), source_attachments=(), **overrides):
         "physx_version": (5 << 24) | (8 << 16),
         "physx_commit": physics._PHYSX_COMMIT,
         "cuda_runtime_version": 12080,
+        "cuda_context_valid": True,
+        "gpu_dynamics": True,
+        "gpu_broad_phase": True,
+        "tgs_solver": True,
+        "pcm": True,
+        "stabilization": True,
+        "cpu_fallback": False,
+        "enhanced_determinism": False,
+        "gpu_statistics": physics._GpuPipelineStatistics(
+            samples=24,
+            heap_bytes=16_384,
+            broad_phase_bytes=1_024,
+            narrow_phase_bytes=2_048,
+            solver_bytes=4_096,
+            simulation_bytes=8_192,
+        ),
         "fixed_dt": 1.0 / 120.0,
         "steps": 24,
         "gravity": (0.0, -9.81, 0.0),
@@ -66,6 +82,10 @@ def make_result(*, bodies, attachments=(), source_attachments=(), **overrides):
         "source_attachments": tuple(source_attachments),
     }
     parameters.update(overrides)
+    if "steps" in overrides and "gpu_statistics" not in overrides:
+        parameters["gpu_statistics"] = replace(
+            parameters["gpu_statistics"], samples=parameters["steps"]
+        )
     return PhysicsResult(**parameters)
 
 
@@ -314,6 +334,14 @@ def test_result_rejects_broken_attachment_and_pose_contracts(mutation, message):
         ("physx_commit", "wrong-revision", "pinned 5.8.0"),
         ("cuda_runtime_version", 13030, "CUDA 12.8"),
         ("device_name", "", "CUDA device"),
+        ("cuda_context_valid", False, "invalid CUDA context"),
+        ("cpu_fallback", True, "CPU fallback"),
+        ("gpu_dynamics", False, "GPU dynamics"),
+        ("gpu_broad_phase", False, "GPU broadphase"),
+        ("tgs_solver", False, "TGS solver"),
+        ("pcm", False, "GPU scene flags"),
+        ("stabilization", False, "GPU scene flags"),
+        ("enhanced_determinism", True, "GPU scene flags"),
     ],
 )
 def test_result_rejects_wrong_gpu_worker_identity(attribute, value, message):
@@ -322,6 +350,66 @@ def test_result_rejects_wrong_gpu_worker_identity(attribute, value, message):
 
     with pytest.raises(PhysicsError, match=message):
         result.validate()
+
+
+@pytest.mark.parametrize(
+    "statistics, message",
+    [
+        (
+            physics._GpuPipelineStatistics(23, 16_384, 1_024, 2_048, 4_096, 8_192),
+            "one GPU statistics sample per step",
+        ),
+        (
+            physics._GpuPipelineStatistics(24, 16_384, 0, 2_048, 4_096, 8_192),
+            "zero GPU pipeline heap",
+        ),
+        (
+            physics._GpuPipelineStatistics(24, 16_384, 32_768, 2_048, 4_096, 8_192),
+            "inconsistent GPU heap",
+        ),
+    ],
+)
+def test_result_rejects_missing_gpu_pipeline_evidence(statistics, message):
+    result, _, _ = typed_attachment_result()
+    result._gpu_statistics = statistics
+
+    with pytest.raises(PhysicsError, match=message):
+        result.validate()
+
+
+def test_metadata_reports_measured_gpu_only_pipeline_and_dispatcher_role():
+    result, _, _ = typed_attachment_result()
+
+    metadata = result.metadata()
+
+    assert metadata["schema_version"] == 2
+    assert metadata["backend"]["mode"] == "gpu"
+    assert metadata["backend"]["cuda_context_valid"] is True
+    assert metadata["backend"]["cpu_fallback"] is False
+    assert metadata["backend"]["cpu_dispatcher_role"] == "host-task-scheduling-only"
+    assert metadata["backend"]["gpu_heap_bytes"] == {
+        "samples": 24,
+        "total": 16_384,
+        "broad_phase": 1_024,
+        "narrow_phase": 2_048,
+        "solver": 4_096,
+        "simulation": 8_192,
+    }
+
+
+def test_request_protocol_scalars_are_explicitly_little_endian():
+    world = make_world(device=0x01020304, seed=0x0102030405060708)
+    contact = contact_material(world)
+    world.rigid_body("body", category="part", position=(0.0, 1.0, 0.0)).sphere(
+        0.25, contact
+    )
+
+    encoded = world._encode(world.seed)
+
+    assert encoded[:8] == b"SDPXRQ2\0"
+    assert encoded[8:12] == b"\x02\x00\x00\x00"
+    assert encoded[12:16] == b"\x04\x03\x02\x01"
+    assert encoded[16:24] == b"\x08\x07\x06\x05\x04\x03\x02\x01"
 
 
 def cover_bodies():

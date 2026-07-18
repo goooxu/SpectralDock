@@ -220,7 +220,7 @@ def create_renderer() -> Renderer:
 
 
 def main() -> None:
-    output = ROOT / "output/examples/moonlit-stepwell.png"
+    output = ROOT / "output/examples/moonlit-stepwell.avif"
     create_renderer().render(
         output=output,
         stats_output=output.with_suffix(".stats.json"),

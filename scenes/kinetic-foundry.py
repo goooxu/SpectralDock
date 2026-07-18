@@ -212,7 +212,7 @@ def create_renderer(physics: PhysicsWorld, *, metadata_output: Path | None = Non
 
 
 def main() -> None:
-    output = ROOT / "output/examples/kinetic-foundry.png"
+    output = ROOT / "output/examples/kinetic-foundry.avif"
     physics = create_physics_world()
     renderer = create_renderer(physics,
                                metadata_output=output.with_suffix(".physics.json"),

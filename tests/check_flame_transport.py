@@ -8,9 +8,13 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from PIL import Image
-
 from spectraldock import Renderer
+
+from avif_test_utils import (
+    FloatRgbImage,
+    assert_avif_dimensions,
+    captured_linear_image,
+)
 
 
 WIDTH = 64
@@ -185,8 +189,8 @@ def render_variant(
     *,
     spp: int,
     depth: int,
-) -> tuple[Image.Image, dict[str, Any]]:
-    output = directory / f"{name}.png"
+) -> tuple[FloatRgbImage, dict[str, Any]]:
+    output = directory / f"{name}.avif"
     stats = renderer.render(
         output=output,
         width=WIDTH,
@@ -195,14 +199,10 @@ def render_variant(
         depth=depth,
         seed=SEED,
         denoise=False,
+        _test_capture_linear=True,
     )
-    with Image.open(output) as decoded:
-        decoded.load()
-        if decoded.size != (WIDTH, HEIGHT) or decoded.mode != "RGBA":
-            raise RuntimeError(
-                f"unexpected flame output: {decoded.size} {decoded.mode}"
-            )
-        pixels = decoded.copy()
+    assert_avif_dimensions(output, WIDTH, HEIGHT)
+    pixels = captured_linear_image(stats, WIDTH, HEIGHT)
     assert_finite(stats)
     return pixels, stats
 
@@ -234,7 +234,7 @@ def metric(tree: Any, name: str) -> Any:
     return None
 
 
-def mean_luminance(image: Image.Image, box: tuple[int, int, int, int]) -> float:
+def mean_luminance(image: FloatRgbImage, box: tuple[int, int, int, int]) -> float:
     values = []
     for red, green, blue, _ in image.crop(box).getdata():
         values.append(0.2126 * red + 0.7152 * green + 0.0722 * blue)
@@ -260,8 +260,8 @@ def run_checks(directory: Path, args: argparse.Namespace) -> None:
         spp=args.spp,
         depth=3,
     )
-    if first.tobytes() != second.tobytes():
-        raise RuntimeError("fixed-seed flame renders are not byte-identical")
+    if first.samples() != second.samples():
+        raise RuntimeError("fixed-seed flame linear captures are not identical")
 
     for name in VOLUME_METRICS[:3]:
         value = metric(first_stats, name)
@@ -284,9 +284,9 @@ def run_checks(directory: Path, args: argparse.Namespace) -> None:
         if metric(off_stats, name) != 0:
             raise RuntimeError(f"{name} must be zero without a flame")
     receiver_box = (2, 10, 25, 55)
-    if mean_luminance(first, receiver_box) <= mean_luminance(
-        off_image, receiver_box
-    ) + 1.0:
+    lit_receiver = mean_luminance(first, receiver_box)
+    unlit_receiver = mean_luminance(off_image, receiver_box)
+    if lit_receiver <= unlit_receiver + max(1.0e-6, 1.0e-3 * unlit_receiver):
         raise RuntimeError("flame NEE did not illuminate the external receiver")
 
     blocked_image, _ = render_variant(

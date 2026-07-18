@@ -571,7 +571,7 @@ def create_renderer(physics: PhysicsWorld, *, metadata_output: Path | None = Non
 
 
 def main() -> None:
-    output = ROOT / "output/examples/lava-temple-oracle.png"
+    output = ROOT / "output/examples/lava-temple-oracle.avif"
     physics = create_physics_world()
     renderer = create_renderer(physics,
                                metadata_output=output.with_suffix(".physics.json"),

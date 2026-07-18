@@ -1,11 +1,10 @@
-import binascii
 import hashlib
 import json
-import struct
 import subprocess
 import sys
-import zlib
 from pathlib import Path
+
+from avif_test_utils import read_avif_rgba
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -15,8 +14,8 @@ ASSET_DIR = (
 )
 ASSET_NAMES = (
     "showcase-panel.obj",
-    "showcase-panel-normal.png",
-    "showcase-panel-metallic-roughness.png",
+    "showcase-panel-normal.avif",
+    "showcase-panel-metallic-roughness.avif",
     "manifest.json",
 )
 
@@ -25,55 +24,13 @@ def sha256(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def decode_rgb8_png(path):
-    data = path.read_bytes()
-    assert data.startswith(b"\x89PNG\r\n\x1a\n")
-
-    offset = 8
-    chunks = []
-    idat = bytearray()
-    ihdr = None
-    while offset < len(data):
-        length = struct.unpack(">I", data[offset : offset + 4])[0]
-        chunk_type = data[offset + 4 : offset + 8]
-        payload = data[offset + 8 : offset + 8 + length]
-        expected_crc = struct.unpack(
-            ">I", data[offset + 8 + length : offset + 12 + length]
-        )[0]
-        actual_crc = binascii.crc32(chunk_type)
-        actual_crc = binascii.crc32(payload, actual_crc) & 0xFFFFFFFF
-        assert actual_crc == expected_crc
-        chunks.append(chunk_type)
-        if chunk_type == b"IHDR":
-            ihdr = struct.unpack(">IIBBBBB", payload)
-        elif chunk_type == b"IDAT":
-            idat.extend(payload)
-        offset += 12 + length
-
-    assert offset == len(data)
-    assert chunks == [b"IHDR", b"IDAT", b"IEND"]
-    assert ihdr is not None
-    width, height, bit_depth, color_type, compression, filtering, interlace = ihdr
-    assert (bit_depth, color_type, compression, filtering, interlace) == (
-        8,
-        2,
-        0,
-        0,
-        0,
+def decode_rgb8_avif(path):
+    width, height, rgba, _ = read_avif_rgba(path)
+    return width, height, bytes(
+        channel
+        for offset in range(0, len(rgba), 4)
+        for channel in rgba[offset : offset + 3]
     )
-
-    packed = zlib.decompress(bytes(idat))
-    row_size = width * 3
-    assert len(packed) == (row_size + 1) * height
-    pixels = bytearray(width * height * 3)
-    for y in range(height):
-        source = y * (row_size + 1)
-        assert packed[source] == 0
-        destination = y * row_size
-        pixels[destination : destination + row_size] = packed[
-            source + 1 : source + 1 + row_size
-        ]
-    return width, height, bytes(pixels)
 
 
 def pixel(pixels, width, x, y):
@@ -93,21 +50,31 @@ def test_showcase_panel_generator_reconstructs_all_tracked_files(tmp_path):
         check=True,
     )
 
-    for name in ASSET_NAMES:
+    for name in ("showcase-panel.obj",):
         expected = (ASSET_DIR / name).read_bytes()
         actual = (tmp_path / name).read_bytes()
         assert actual == expected, (
             "showcase-panel generator output differs for {}: expected {}, "
             "regenerated {}".format(name, sha256(expected), sha256(actual))
         )
+    for name in ASSET_NAMES[1:3]:
+        expected = read_avif_rgba(ASSET_DIR / name)
+        actual = read_avif_rgba(tmp_path / name)
+        assert actual == expected
+
+    manifest = json.loads((tmp_path / "manifest.json").read_text())
+    for record in manifest["files"]:
+        data = (tmp_path / record["path"]).read_bytes()
+        assert record["bytes"] == len(data)
+        assert record["sha256"] == sha256(data)
 
 
-def test_showcase_panel_pngs_are_linear_rgb8_data_maps():
-    normal_width, normal_height, normal = decode_rgb8_png(
-        ASSET_DIR / "showcase-panel-normal.png"
+def test_showcase_panel_avifs_are_linear_rgb8_data_maps():
+    normal_width, normal_height, normal = decode_rgb8_avif(
+        ASSET_DIR / "showcase-panel-normal.avif"
     )
-    mr_width, mr_height, metallic_roughness = decode_rgb8_png(
-        ASSET_DIR / "showcase-panel-metallic-roughness.png"
+    mr_width, mr_height, metallic_roughness = decode_rgb8_avif(
+        ASSET_DIR / "showcase-panel-metallic-roughness.avif"
     )
 
     assert (normal_width, normal_height) == (1024, 1024)

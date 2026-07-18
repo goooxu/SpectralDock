@@ -22,9 +22,9 @@ import tempfile
 from typing import Any, Callable, Iterable, Sequence
 
 
-_REQUEST_MAGIC = b"SDPXRQ1\0"
-_RESULT_MAGIC = b"SDPXRS1\0"
-_PROTOCOL_VERSION = 1
+_REQUEST_MAGIC = b"SDPXRQ2\0"
+_RESULT_MAGIC = b"SDPXRS2\0"
+_PROTOCOL_VERSION = 2
 _MAX_ITEMS = 1_000_000
 _PHYSX_COMMIT = "fc1018a3745664a1db2b95ce03fb5e91eb585f2e"
 
@@ -134,6 +134,12 @@ class _Reader:
 
     def u8(self) -> int:
         return int(self._unpack("<B"))
+
+    def boolean(self, label: str) -> bool:
+        value = self.u8()
+        if value not in (0, 1):
+            raise PhysicsError(f"PhysX result {label} is not a protocol boolean")
+        return bool(value)
 
     def u32(self) -> int:
         return int(self._unpack("<I"))
@@ -402,6 +408,16 @@ class _BakedAttachment:
     values: tuple[float, ...]
 
 
+@dataclass(frozen=True)
+class _GpuPipelineStatistics:
+    samples: int
+    heap_bytes: int
+    broad_phase_bytes: int
+    narrow_phase_bytes: int
+    solver_bytes: int
+    simulation_bytes: int
+
+
 class PhysicsResult:
     """Validated GPU PhysX output that can be applied to one renderer."""
 
@@ -416,6 +432,15 @@ class PhysicsResult:
         physx_version: int,
         physx_commit: str,
         cuda_runtime_version: int,
+        cuda_context_valid: bool,
+        gpu_dynamics: bool,
+        gpu_broad_phase: bool,
+        tgs_solver: bool,
+        pcm: bool,
+        stabilization: bool,
+        cpu_fallback: bool,
+        enhanced_determinism: bool,
+        gpu_statistics: _GpuPipelineStatistics,
         fixed_dt: float,
         steps: int,
         gravity: tuple[float, float, float],
@@ -431,6 +456,15 @@ class PhysicsResult:
         self.physx_version = physx_version
         self.physx_commit = physx_commit
         self.cuda_runtime_version = cuda_runtime_version
+        self.cuda_context_valid = bool(cuda_context_valid)
+        self.gpu_dynamics = bool(gpu_dynamics)
+        self.gpu_broad_phase = bool(gpu_broad_phase)
+        self.tgs_solver = bool(tgs_solver)
+        self.pcm = bool(pcm)
+        self.stabilization = bool(stabilization)
+        self.cpu_fallback = bool(cpu_fallback)
+        self.enhanced_determinism = bool(enhanced_determinism)
+        self._gpu_statistics = gpu_statistics
         self.fixed_dt = fixed_dt
         self.steps = steps
         self.gravity = gravity
@@ -461,8 +495,8 @@ class PhysicsResult:
         """Return the stable, human-readable simulation manifest."""
         self.validate()
         return {
-            "schema_version": 1,
-            "generator": "spectraldock.physics/1",
+            "schema_version": 2,
+            "generator": "spectraldock.physics/2",
             "scene": self.scene_name,
             "backend": {
                 "name": "NVIDIA PhysX",
@@ -472,8 +506,17 @@ class PhysicsResult:
                 "cuda_runtime_version": self.cuda_runtime_version,
                 "device_ordinal": self.device,
                 "device_name": self.device_name,
-                "cuda_context_valid": True,
-                "cpu_fallback": False,
+                "cuda_context_valid": self.cuda_context_valid,
+                "cpu_fallback": self.cpu_fallback,
+                "cpu_dispatcher_role": "host-task-scheduling-only",
+                "gpu_heap_bytes": {
+                    "samples": self._gpu_statistics.samples,
+                    "total": self._gpu_statistics.heap_bytes,
+                    "broad_phase": self._gpu_statistics.broad_phase_bytes,
+                    "narrow_phase": self._gpu_statistics.narrow_phase_bytes,
+                    "solver": self._gpu_statistics.solver_bytes,
+                    "simulation": self._gpu_statistics.simulation_bytes,
+                },
             },
             "simulation": {
                 "seed": self.seed,
@@ -481,13 +524,13 @@ class PhysicsResult:
                 "steps": self.steps,
                 "simulated_seconds": _rounded(self.simulated_seconds),
                 "gravity": [_rounded(value) for value in self.gravity],
-                "broad_phase": "gpu",
-                "solver": "tgs",
+                "broad_phase": "gpu" if self.gpu_broad_phase else "cpu",
+                "solver": "tgs" if self.tgs_solver else "unknown",
                 "flags": {
-                    "gpu_dynamics": True,
-                    "pcm": True,
-                    "stabilization": True,
-                    "enhanced_determinism": False,
+                    "gpu_dynamics": self.gpu_dynamics,
+                    "pcm": self.pcm,
+                    "stabilization": self.stabilization,
+                    "enhanced_determinism": self.enhanced_determinism,
                 },
                 "determinism_limitation":
                     "enhanced_determinism_unsupported_on_gpu",
@@ -519,6 +562,32 @@ class PhysicsResult:
             raise PhysicsError("PhysX worker must use the CUDA 12.8 runtime")
         if not self.device_name:
             raise PhysicsError("PhysX result does not identify its CUDA device")
+        if not self.cuda_context_valid:
+            raise PhysicsError("PhysX result reports an invalid CUDA context")
+        if self.cpu_fallback:
+            raise PhysicsError("PhysX result reports a CPU fallback")
+        if not self.gpu_dynamics:
+            raise PhysicsError("PhysX result did not use GPU dynamics")
+        if not self.gpu_broad_phase:
+            raise PhysicsError("PhysX result did not use GPU broadphase")
+        if not self.tgs_solver:
+            raise PhysicsError("PhysX result did not use the required TGS solver")
+        if not self.pcm or not self.stabilization or self.enhanced_determinism:
+            raise PhysicsError("PhysX result changed the required GPU scene flags")
+        statistics = self._gpu_statistics
+        if statistics.samples != self.steps:
+            raise PhysicsError("PhysX result does not contain one GPU statistics sample per step")
+        heaps = (
+            statistics.heap_bytes,
+            statistics.broad_phase_bytes,
+            statistics.narrow_phase_bytes,
+            statistics.solver_bytes,
+            statistics.simulation_bytes,
+        )
+        if any(not isinstance(value, int) or value <= 0 for value in heaps):
+            raise PhysicsError("PhysX result has zero GPU pipeline heap statistics")
+        if any(value > statistics.heap_bytes for value in heaps[1:]):
+            raise PhysicsError("PhysX result has inconsistent GPU heap statistics")
         if len(self._attachments) != len(self._source_attachments):
             raise PhysicsError("PhysX result attachment count does not match the request")
         seen: set[int] = set()
@@ -798,6 +867,22 @@ class PhysicsWorld:
         scene_name = reader.string()
         backend = reader.string()
         device_name = reader.string()
+        cuda_context_valid = reader.boolean("cuda_context_valid")
+        gpu_dynamics = reader.boolean("gpu_dynamics")
+        gpu_broad_phase = reader.boolean("gpu_broad_phase")
+        tgs_solver = reader.boolean("tgs_solver")
+        pcm = reader.boolean("pcm")
+        stabilization = reader.boolean("stabilization")
+        cpu_fallback = reader.boolean("cpu_fallback")
+        enhanced_determinism = reader.boolean("enhanced_determinism")
+        gpu_statistics = _GpuPipelineStatistics(
+            samples=reader.u32(),
+            heap_bytes=reader.u64(),
+            broad_phase_bytes=reader.u64(),
+            narrow_phase_bytes=reader.u64(),
+            solver_bytes=reader.u64(),
+            simulation_bytes=reader.u64(),
+        )
         if device != self.device or seed != expected_seed or steps != self.steps:
             raise PhysicsError("PhysX worker result does not match its request")
         if scene_name != self.scene_name or not math.isclose(
@@ -843,7 +928,17 @@ class PhysicsWorld:
             scene_name=scene_name, seed=seed, device=device, device_name=device_name,
             backend=backend, physx_version=physx_version,
             physx_commit=physx_commit,
-            cuda_runtime_version=cuda_runtime_version, fixed_dt=fixed_dt, steps=steps,
+            cuda_runtime_version=cuda_runtime_version,
+            cuda_context_valid=cuda_context_valid,
+            gpu_dynamics=gpu_dynamics,
+            gpu_broad_phase=gpu_broad_phase,
+            tgs_solver=tgs_solver,
+            pcm=pcm,
+            stabilization=stabilization,
+            cpu_fallback=cpu_fallback,
+            enhanced_determinism=enhanced_determinism,
+            gpu_statistics=gpu_statistics,
+            fixed_dt=fixed_dt, steps=steps,
             gravity=self.gravity,
             bodies=tuple(bodies), attachments=tuple(attachments),
             source_attachments=self._source_attachments(),

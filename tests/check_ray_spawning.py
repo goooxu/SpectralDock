@@ -3,14 +3,13 @@
 
 import argparse
 import math
-import struct
 import sys
 import tempfile
 from pathlib import Path
 
-from PIL import Image
-
 from spectraldock import Renderer
+
+from avif_test_utils import assert_avif_dimensions, captured_linear_rgb
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -42,21 +41,6 @@ def mul(value, scale):
     return tuple(component * scale for component in value)
 
 
-def read_single_pixel_pfm(path: Path) -> tuple[float, float, float]:
-    with path.open("rb") as stream:
-        if stream.readline() != b"PF\n" or stream.readline() != b"1 1\n":
-            raise RuntimeError(f"{path.name}: expected a 1x1 RGB PFM")
-        if float(stream.readline()) >= 0.0:
-            raise RuntimeError(f"{path.name}: expected little-endian PFM data")
-        payload = stream.read()
-    if len(payload) != 12:
-        raise RuntimeError(f"{path.name}: malformed PFM payload")
-    pixel = struct.unpack("<3f", payload)
-    if any(not math.isfinite(channel) for channel in pixel):
-        raise RuntimeError(f"{path.name}: linear output contains a non-finite value")
-    return pixel
-
-
 def render_probe(
     renderer: Renderer,
     directory: Path,
@@ -65,12 +49,10 @@ def render_probe(
     spp: int,
     depth: int,
 ) -> tuple[tuple[float, float, float], bytes, dict]:
-    png = directory / f"{name}.png"
-    pfm = directory / f"{name}.pfm"
+    avif = directory / f"{name}.avif"
     stats = renderer.render(
-        output=png,
-        stats_output=png.with_suffix(".stats.json"),
-        linear_output=pfm,
+        output=avif,
+        stats_output=avif.with_suffix(".stats.json"),
         width=1,
         height=1,
         spp=spp,
@@ -79,13 +61,10 @@ def render_probe(
         denoise=False,
         clamp_direct=0.0,
         clamp_indirect=0.0,
+        _test_capture_linear=True,
     )
-    with Image.open(png) as image:
-        image.load()
-        if image.size != (1, 1) or image.mode != "RGBA":
-            raise RuntimeError(
-                f"{name}: unexpected PNG output {image.size} {image.mode}"
-            )
+    assert_avif_dimensions(avif, 1, 1)
+    pixels, linear_values = captured_linear_rgb(stats, 1, 1)
     render = stats.get("render", {})
     if (
         render.get("denoised") is not False
@@ -93,7 +72,7 @@ def render_probe(
         or render.get("clamp_indirect") != 0.0
     ):
         raise RuntimeError(f"{name}: ray-spawning contract used biased output")
-    return read_single_pixel_pfm(pfm), pfm.read_bytes(), stats
+    return pixels[0], linear_values, stats
 
 
 def common_renderer(

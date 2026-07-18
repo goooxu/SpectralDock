@@ -10,10 +10,10 @@
 #include <pybind11/stl/filesystem.h>
 
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
-#include <optional>
 #include <stdexcept>
 #include <string>
 #include <tuple>
@@ -98,7 +98,19 @@ py::dict stats_dictionary(const RenderStats& stats) {
   timings["bvh_build"] = stats.bvh_build_ms;
   timings["render"] = stats.render_ms;
   timings["denoise"] = stats.denoise_ms;
+  timings["avif_encode"] = stats.avif_encode_ms;
   timings["total"] = stats.total_ms;
+
+  py::dict hdr_avif;
+  hdr_avif["bit_depth"] = 10;
+  hdr_avif["yuv_format"] = "4:4:4";
+  hdr_avif["full_range"] = true;
+  hdr_avif["cicp"] = py::make_tuple(9, 16, 9);
+  hdr_avif["diffuse_white_nits"] = 203;
+  hdr_avif["peak_nits"] = 1000;
+  hdr_avif["lossless"] = true;
+  hdr_avif["max_cll"] = stats.avif_max_cll;
+  hdr_avif["max_pall"] = stats.avif_max_pall;
 
   py::dict memory;
   memory["peak_device_bytes"] = stats.peak_device_bytes;
@@ -141,10 +153,12 @@ py::dict stats_dictionary(const RenderStats& stats) {
   water["water_delta_splits"] = stats.water_delta_splits;
 
   py::dict result;
+  result["schema_version"] = 2;
   result["hardware"] = std::move(hardware);
   result["versions"] = std::move(versions);
   result["render"] = std::move(render);
   result["timings_ms"] = std::move(timings);
+  result["hdr_avif"] = std::move(hdr_avif);
   result["memory"] = std::move(memory);
   result["geometry"] = std::move(geometry);
   result["performance"] = std::move(performance);
@@ -417,30 +431,64 @@ PYBIND11_MODULE(_native, module) {
       });
 
   module.def(
+      "write_texture_avif",
+      [](const std::filesystem::path& path, std::uint32_t width,
+         std::uint32_t height, const py::bytes& rgba, bool srgb) {
+        const std::string pixels = rgba;
+        const std::vector<std::uint8_t> pixel_bytes(
+            reinterpret_cast<const std::uint8_t*>(pixels.data()),
+            reinterpret_cast<const std::uint8_t*>(pixels.data()) +
+                pixels.size());
+        py::gil_scoped_release release;
+        write_texture_avif_rgba8(path, width, height, pixel_bytes, srgb);
+      },
+      py::arg("path"), py::arg("width"), py::arg("height"),
+      py::arg("rgba_bytes"), py::arg("srgb"));
+
+  module.def(
+      "read_avif",
+      [](const std::filesystem::path& path) {
+        DecodedAvif decoded;
+        {
+          py::gil_scoped_release release;
+          decoded = read_avif_rgba8(path);
+        }
+        py::dict metadata;
+        metadata["bit_depth"] = decoded.info.bit_depth;
+        metadata["yuv_format"] = decoded.info.yuv_format;
+        metadata["full_range"] = decoded.info.full_range;
+        metadata["cicp"] = py::make_tuple(
+            decoded.info.color_primaries,
+            decoded.info.transfer_characteristics,
+            decoded.info.matrix_coefficients);
+        metadata["premultiplied"] = decoded.info.premultiplied;
+        metadata["animated"] = decoded.info.animated;
+        metadata["has_alpha"] = decoded.info.has_alpha;
+        metadata["max_cll"] = decoded.info.max_cll;
+        metadata["max_pall"] = decoded.info.max_pall;
+        return py::make_tuple(
+            decoded.image.width, decoded.image.height,
+            py::bytes(reinterpret_cast<const char*>(decoded.image.pixels.data()),
+                      decoded.image.pixels.size()),
+            std::move(metadata));
+      },
+      py::arg("path"));
+
+  module.def(
       "render_to_files",
       [](const NativeScene& native_scene, const std::string& output,
          int device, std::uint32_t width, std::uint32_t height,
          std::uint32_t spp, std::uint32_t max_depth, std::uint32_t seed,
          float exposure, float clamp_direct, float clamp_indirect,
-         bool denoise, bool validation,
-         const std::optional<std::string>& linear_output) -> py::dict {
+         bool denoise, bool validation, bool test_capture_linear) -> py::dict {
 #if SPECTRALDOCK_ENABLE_GPU
         if (!native_scene.value)
           throw std::runtime_error("native scene handle is empty");
         const std::filesystem::path output_path(output);
-        if (output_path.extension() != ".png")
-          throw std::runtime_error("output must use the .png extension");
-        std::optional<std::filesystem::path> linear_path;
-        if (linear_output.has_value()) {
-          linear_path = std::filesystem::path(*linear_output);
-          if (linear_path->extension() != ".pfm")
-            throw std::runtime_error(
-                "linear_output must use the .pfm extension");
-        }
+        if (output_path.extension() != ".avif")
+          throw std::runtime_error("output must use the lowercase .avif extension");
         if (!output_path.parent_path().empty())
           std::filesystem::create_directories(output_path.parent_path());
-        if (linear_path.has_value() && !linear_path->parent_path().empty())
-          std::filesystem::create_directories(linear_path->parent_path());
 
         RenderSettings settings;
         settings.device = device;
@@ -449,24 +497,34 @@ PYBIND11_MODULE(_native, module) {
         settings.spp = spp;
         settings.max_depth = max_depth;
         settings.seed = seed;
-        settings.exposure = exposure;
         settings.clamp_direct = clamp_direct;
         settings.clamp_indirect = clamp_indirect;
         settings.denoise = denoise;
         settings.validation = validation;
-        settings.capture_linear = linear_path.has_value();
 
         RenderResult result;
         {
           py::gil_scoped_release release;
           result = render_optix(*native_scene.value, settings);
-          write_png_rgba8(output_path, result.width, result.height,
-                          result.rgba);
-          if (linear_path.has_value())
-            write_pfm_rgb32f(*linear_path, result.width, result.height,
-                             result.linear_rgb);
+          const auto encode_begin = std::chrono::steady_clock::now();
+          const HdrAvifInfo info = write_hdr_avif_rgb32f(
+              output_path, result.width, result.height, result.linear_rgb,
+              exposure);
+          result.stats.avif_encode_ms =
+              std::chrono::duration<double, std::milli>(
+                  std::chrono::steady_clock::now() - encode_begin).count();
+          result.stats.total_ms += result.stats.avif_encode_ms;
+          result.stats.avif_max_cll = info.max_cll;
+          result.stats.avif_max_pall = info.max_pall;
         }
-        return stats_dictionary(result.stats);
+        py::dict stats = stats_dictionary(result.stats);
+        if (test_capture_linear) {
+          py::tuple capture(result.linear_rgb.size());
+          for (std::size_t i = 0; i < result.linear_rgb.size(); ++i)
+            capture[i] = result.linear_rgb[i];
+          stats["_test_linear_rgb"] = std::move(capture);
+        }
+        return stats;
 #else
         (void)native_scene;
         (void)output;
@@ -481,7 +539,7 @@ PYBIND11_MODULE(_native, module) {
         (void)clamp_indirect;
         (void)denoise;
         (void)validation;
-        (void)linear_output;
+        (void)test_capture_linear;
         throw std::runtime_error(
             "SpectralDock was built without CUDA/OptiX rendering support");
 #endif
@@ -491,5 +549,5 @@ PYBIND11_MODULE(_native, module) {
       py::arg("max_depth"), py::arg("seed"), py::arg("exposure"),
       py::arg("clamp_direct"), py::arg("clamp_indirect"),
       py::arg("denoise"), py::arg("validation") = false,
-      py::arg("linear_output") = std::nullopt);
+      py::arg("test_capture_linear") = false);
 }

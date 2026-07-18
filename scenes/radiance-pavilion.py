@@ -35,7 +35,7 @@ def create_renderer() -> Renderer:
     sparky_screen_texture = renderer.texture(
         name="sparky_screen_texture",
         type="image",
-        path=ROOT / "assets/examples/models/sparky/sparky_albedo.png",
+        path=ROOT / "assets/examples/models/sparky/sparky_albedo.avif",
         color_space="srgb",
     )
     pavilion_floor = renderer.material(
@@ -266,7 +266,7 @@ def create_renderer() -> Renderer:
 
 
 def main() -> None:
-    output = ROOT / "output/examples/radiance-pavilion.png"
+    output = ROOT / "output/examples/radiance-pavilion.avif"
     create_renderer().render(
         output=output,
         stats_output=output.with_suffix(".stats.json"),

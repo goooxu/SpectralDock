@@ -8,13 +8,13 @@
 |---|---|---|---|
 | 准备 CUDA 几何数据 | 将 mesh 的 position、normal、UV、MikkTSpace face-corner tangent、index、可选逐三角形材质 ID 和解析 primitive 的构建输入放入设备缓冲区 | 运行期，单帧 | 第 7 章 |
 | 构建 GAS / IAS 加速结构 | 每份 mesh 资源或解析对象构建 GAS；custom GAS 镜像设备 root clip/水面 tile overlap，并对遍历 `OptixAabb` 向外舍入一个 ULP；然后用对象变换、GAS handle 与 `sbtOffset` 构建 IAS；两级都只在紧凑结果更小时压缩 | 运行期，单帧 | 第 7 章 |
-| 编译 RayGen、Miss、Hit 等程序 | NVCC 把设备程序编译成 module input：默认是 OptiX IR，也可显式选 PTX；运行时从所选输入创建 module 和 program groups | 构建期 + 运行期初始化 | 本章第 3、4 节 |
+| 编译 RayGen、Miss、Hit 等程序 | CMake 选择 NVCC 报告的最老虚拟架构，NVCC 生成 portable PTX；运行时由驱动和 OptiX 针对实际 GPU 创建 module 和 program groups | 构建期 + 运行期初始化 | 本章第 3、4 节 |
 | 创建 Pipeline 和 Shader Binding Table | 先链接 pipeline；GAS/IAS 完成后再为 raygen、miss 和每个对象的两类射线打包 SBT | 运行期，单帧 | 本章第 4、6 节 |
 | 调用 optixLaunch | 上传 `LaunchParams`，以 `width × height × 1` 启动二维工作网格 | 运行期，单帧 | 本章第 7、8 节 |
 | 执行射线遍历、求交和自定义着色 | `optixTrace` 遍历 IAS/GAS；intersection、any-hit、closest-hit 参与命中查询，raygen 完成路径着色循环 | 运行期，设备端 | 本章第 9 节与第 7 章 |
 | 使用 OptiX Denoiser 降噪 | `denoise=true` 时对线性 HDR beauty 使用 albedo/normal guide 降噪 | 运行期，可选 | 第 9 章 |
 
-七步全部存在，但并非每一步都在同一时刻发生。NVCC 编译只属于构建期；OptiX Denoiser 是可选步骤；第 9 章中的曝光、ACES 风格曲线和 sRGB 编码则是项目自己启动的**纯 CUDA** 后处理，不属于 OptiX ray tracing pipeline。
+七步全部存在，但并非每一步都在同一时刻发生。NVCC 编译只属于构建期；OptiX Denoiser 是可选步骤；第 9 章中的曝光、Rec.2020 转换、亮度肩部、PQ 与 AVIF 编码都在 float beauty 回传后由主机完成，不属于 OptiX ray tracing pipeline，也不是另一个**纯 CUDA** kernel。
 
 ## 2. 两条时间线：构建产物与单帧事务
 
@@ -22,10 +22,8 @@
 
 ~~~mermaid
 flowchart LR
-    A["device_programs.cu"] -->|"nvcc --optix-ir（默认）或 --ptx"| B["device_programs.optixir / .ptx"]
+    A["device_programs.cu"] -->|"nvcc --ptx + 动态最低 virtual arch"| B["device_programs.ptx"]
     B -->|"运行时加载 module input"| C["OptiX module"]
-    D["postprocess.cu"] -->|"CUDA 编译"| E["spectraldock_postprocess"]
-    E -->|"链接"| F["Python _native 扩展"]
 ~~~
 
 运行期与销毁：
@@ -41,9 +39,9 @@ flowchart TD
     G --> H{"denoise?"}
     H -->|"是"| I["OptiX HDR Denoiser"]
     H -->|"否"| J["积分器线性 HDR beauty"]
-    I --> K["纯 CUDA：曝光、ACES、sRGB、RGBA8"]
+    I --> K["float RGB D2H"]
     J --> K
-    K --> L["D2H 下载、统计与 RenderResult"]
+    K --> L["主机：曝光、Rec.2020/PQ、HDR AVIF"]
     L --> M["RAII 逆序销毁资源"]
 ~~~
 
@@ -55,35 +53,25 @@ flowchart TD
 
 ## 3. 构建期：把设备程序编译为 module input
 
-`src/device_programs.cu` 中包含 raygen、miss、hit 和自定义 intersection 入口。它不作为普通 CUDA 对象文件链接，而由 NVCC 生成供 `optixModuleCreate` 读取的 module input。cache string `SPECTRALDOCK_OPTIX_MODULE_FORMAT` 只接受 `optixir` 或 `ptx`：默认 `optixir` 走 `--optix-ir` 并生成 `device_programs.optixir`，显式兼容模式 `ptx` 走 `--ptx` 并生成 `device_programs.ptx`。相反，`src/postprocess.cu` 编译为普通 CUDA 静态库，稍后以 kernel launch 执行；这两条构建链必须区分。
+`src/device_programs.cu` 中包含 raygen、miss、hit 和自定义 intersection 入口。它不作为普通 CUDA 对象文件链接，而由 NVCC 生成供 `optixModuleCreate` 读取的 `device_programs.ptx`。配置时不查询实际 GPU：CMake 执行 `nvcc --list-gpu-arch`，解析并自然排序当前 toolkit 的结果，再选择最老 `compute_XX` 作为虚拟 PTX baseline。这样 module 不包含某个 GPU 的 SASS，不绑定产品名，也不把 RT Core 当作前提；实际机器由当前驱动在运行时 JIT。
 
-<!-- source-snippet id="optix-ir-build-command" path="CMakeLists.txt" anchor="set(OPTIX_MODULE_COMPILE_FLAG --optix-ir)" -->
+<!-- source-snippet id="optix-portable-ptx-build-command" path="CMakeLists.txt" anchor="REGEX MATCHALL" -->
 ```cmake
-  if(SPECTRALDOCK_OPTIX_MODULE_FORMAT STREQUAL "optixir")
-    set(OPTIX_MODULE_COMPILE_FLAG --optix-ir)
-    set(OPTIX_MODULE_INPUT
-      "${CMAKE_CURRENT_BINARY_DIR}/device_programs.optixir")
-  else()
-    set(OPTIX_MODULE_COMPILE_FLAG --ptx)
-    set(OPTIX_MODULE_INPUT "${CMAKE_CURRENT_BINARY_DIR}/device_programs.ptx")
+  string(REGEX MATCHALL "compute_[0-9]+"
+    SPECTRALDOCK_PTX_VIRTUAL_ARCHITECTURES
+    "${SPECTRALDOCK_CUDA_VIRTUAL_ARCHITECTURES}")
+  if(NOT SPECTRALDOCK_PTX_VIRTUAL_ARCHITECTURES)
+    message(FATAL_ERROR
+      "nvcc did not report a supported virtual PTX architecture")
   endif()
-  add_custom_command(
-    OUTPUT "${OPTIX_MODULE_INPUT}"
-    COMMAND "${CMAKE_CUDA_COMPILER}"
-      "${OPTIX_MODULE_COMPILE_FLAG}" --std=c++17 --use_fast_math -lineinfo
-      -I"${CMAKE_CURRENT_SOURCE_DIR}/include"
-      -I"${OPTIX_INCLUDE_DIR}"
-      "${CMAKE_CURRENT_SOURCE_DIR}/src/device_programs.cu"
-      -o "${OPTIX_MODULE_INPUT}"
-    DEPENDS
-      src/device_programs.cu
-      include/spectraldock/device_types.h
-    VERBATIM)
-  add_custom_target(spectraldock_device_module_input
-    DEPENDS "${OPTIX_MODULE_INPUT}")
+  list(REMOVE_DUPLICATES SPECTRALDOCK_PTX_VIRTUAL_ARCHITECTURES)
+  list(SORT SPECTRALDOCK_PTX_VIRTUAL_ARCHITECTURES
+    COMPARE NATURAL ORDER ASCENDING)
+  list(GET SPECTRALDOCK_PTX_VIRTUAL_ARCHITECTURES 0
+    SPECTRALDOCK_PTX_VIRTUAL_ARCH)
 ```
 
-`--use_fast_math` 可提高吞吐，但部分函数采用近似实现，属于最终数值误差来源。`scripts/configure.sh` 从同名环境变量转发该 cache 选项；未设置时仍是 `optixir`，所以既有 RTX 5090 构建路径不变。Python 原生扩展通过构建时定义的绝对路径加载选中的 module input，因此原构建树和对应的 `.optixir` 或 `.ptx` 文件必须留在编译时记录的位置；当前主干（Unreleased）的支持范围限定为仓库构建树内运行，不是复制单个扩展即可工作的可重定位安装。
+最老虚拟架构由当前 NVCC 自己报告，而不是仓库维护的架构表；若列表命令失败或没有 `compute_XX`，配置立即失败。后续命令以 `--ptx --gpu-architecture=${SPECTRALDOCK_PTX_VIRTUAL_ARCH}` 生成 module。`--use_fast_math` 可提高吞吐，但部分函数采用近似实现，属于最终数值误差来源。Python 原生扩展通过构建时定义的绝对路径加载 `.ptx`，因此原构建树和对应文件必须留在编译时记录的位置；当前支持范围限定为仓库构建树内运行。OptiX 初始化或 launch 失败会直接终止。
 
 ## 4. 运行期初始化：context、module、program groups 与 pipeline
 
@@ -113,7 +101,7 @@ Python binding 只把用户选择的非负 device ordinal 写入 `settings.devic
 
 ### 4.2 module 与 19 个 program groups
 
-`create_pipeline` 读取构建期生成的 module input（默认 OptiX IR，或显式选择的 PTX），创建主 module；普通 sphere 使用 OptiX 内建求交 module，水中 dielectric sphere 则使用主 module 中的自定义实心求交。当前 pipeline 有 19 个 program group：
+`create_pipeline` 读取构建期生成的 portable PTX module input，创建主 module；普通 sphere 使用 OptiX 内建求交 module，水中 dielectric sphere 则使用主 module 中的自定义实心求交。当前 pipeline 有 19 个 program group：
 
 | 类型 | 数量 | 本项目职责 |
 |---|---:|---|
@@ -236,7 +224,7 @@ SBT 完成后，主机分配并清零输出与统计缓冲，再填写 `LaunchPa
 
 统计指针也属于 launch ABI，而不是 launch 后临时推算：ray counter 始终按像素分配；没有 flame 或 water 时相应指针为 null；direct/indirect clamp 都为 0 时 firefly counter 为 null。launch 后主机下载并归并这些计数，若 volume majorant violation/tracking overflow 或 water solver overflow/medium error 非零，`render_optix` 会报错而不是返回看似成功的图像。
 
-曝光不属于路径追踪的输入，因此不进入 `LaunchParams`。OptiX launch 和可选降噪完成后，主机才把 `settings.exposure` 直接传给纯 CUDA postprocess kernel；它只影响 HDR beauty 如何映射到显示输出，不影响射线遍历、着色或降噪输入。
+曝光不属于路径追踪的输入，因此不进入 `LaunchParams`。OptiX launch 和可选降噪完成后，主机下载线性 beauty，再由 HDR AVIF 编码阶段应用曝光、Rec.2020 变换和 PQ 映射；它只影响 beauty 的持久化表示，不影响射线遍历、着色或降噪输入。
 
 ## 8. 调用 optixLaunch：二维像素网格
 
@@ -322,26 +310,24 @@ shadow payload 0 初始为 0：若一路未命中，miss 写 1；遇到有效遮
 
 两类 SBT ray type 使用同一 IAS，但由 ray type、SBT stride 和 miss index 选择不同 records；pipeline 因而只需声明两个 32 位 payload values。含水路径不增加第三种 SBT ray type，也不再为一条直接光连接反复发射 radiance 查询。
 
-## 10. OptiX Denoiser 与纯 CUDA 输出边界
+## 10. OptiX Denoiser 与主机 HDR 输出边界
 
 `optixLaunch` 结束时得到线性 HDR beauty，以及首命中 albedo/normal guides：
 
 ~~~text
 OptiX ray tracing pipeline
   → 积分器线性 HDR beauty（可能已经贡献钳位）+ albedo/normal
-  ├→ 可选 D2H + CPU 写积分器线性 RGB PFM
-  └→ 可选 OptiX HDR Denoiser
+  → 可选 OptiX HDR Denoiser
   → 积分器或 denoised final_beauty
-  → 纯 CUDA postprocess kernel
-  → 设备端 RGBA8
-  → D2H + stream synchronize
+  → float RGB D2H + stream synchronize
   → CPU RenderResult
-  → libpng 写 PNG
+  → 主机曝光、Rec.709→Rec.2020、保色相亮度肩部与 PQ
+  → libavif 写 10 bit 4:4:4 full-range HDR AVIF
 ~~~
 
-`denoise=false` 时直接使用积分器 beauty；`denoise=true` 时，`run_denoiser` 创建 HDR denoiser，查询内存、分配并 setup state/scratch，计算 HDR intensity，绑定 beauty/albedo/normal，invoke 后同步。完整 API 顺序与源码片段见[第 9 章第 3 节](09-denoising-color-and-output.md#3-optix-hdr-降噪)。
+`denoise=false` 时直接使用积分器 beauty；`denoise=true` 时，`run_denoiser` 创建 HDR denoiser，查询内存、分配并 setup state/scratch，计算 HDR intensity，绑定 beauty/albedo/normal，invoke 后同步。完整 API 顺序与源码片段见[第 9 章](09-denoising-color-and-output.md)。
 
-降噪之后的 `spectraldockLaunchPostprocess` 是普通 CUDA kernel，不是 RayGen、Miss 或 Hit 程序。它完成 EV 曝光、ACES 风格曲线、sRGB 编码和 RGBA8 量化。若 `Renderer.render(linear_output=...)` 请求线性输出，raygen 的 `beauty` 另行 D2H，不经过 Denoiser 或显示变换；它仍位于贡献钳位之后，只有 clamp 0/0 才是无偏参考。随后 stream 同步形成 GPU 完成边界；`render_optix` 返回 `RenderResult`，pybind 主机边界分别用 libpng 写 PNG、用 PFM writer 写线性 RGB。
+随后 stream 同步形成 GPU 完成边界；`render_optix` 返回 float `RenderResult`，pybind 主机边界只写固定 HDR AVIF。公共 API 不提供未映射线性文件输出。定向数值测试通过显式的进程内测试捕获检查 beauty；该捕获不持久化，也不会进入 stats sidecar。
 
 ## 11. RAII 销毁与部署边界
 
@@ -370,6 +356,6 @@ struct OptixState {
 
 销毁顺序是 denoiser → pipeline → 逆序 program groups → 内建 sphere module → 主 module → OptiX context。CUDA primary context 由 `cudaSetDevice`/runtime 建立并由本函数借用，代码没有在此调用 `cuCtxDestroy` 或 `cudaDeviceReset`。
 
-这也解释了当前的性能与部署边界：每次 `render_optix` 都重新建立并销毁 OptiX device context、pipeline、GAS/IAS、SBT、纹理与设备缓冲，没有跨帧缓存；同时运行时从构建树中的绝对路径读取所选的 `.optixir` 或 `.ptx` module input。当前主干（Unreleased）因而面向仓库构建树中的 Python 离线渲染，不提供可重定位 install 布局。
+这也解释了当前的性能与部署边界：每次 `render_optix` 都重新建立并销毁 OptiX device context、pipeline、GAS/IAS、SBT、纹理与设备缓冲，没有跨帧缓存；同时运行时从构建树中的绝对路径读取 portable `.ptx` module input。当前主干因而面向仓库构建树中的 Python 离线渲染，不提供可重定位 install 布局。
 
 [上一章：几何、可见性与 BVH](07-geometry-visibility-and-bvh.md) · [返回目录](README.md) · [下一章：降噪、色调映射与输出](09-denoising-color-and-output.md)

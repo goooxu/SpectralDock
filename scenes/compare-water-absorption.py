@@ -194,7 +194,7 @@ def create_water_absorption_renderer(
 def _render(
     renderer: Renderer, output_dir: Path, stem: str, *, size: int, spp: int
 ) -> None:
-    output = output_dir / f"{stem}.png"
+    output = output_dir / f"{stem}.avif"
     renderer.render(
         output=output,
         stats_output=output.with_suffix(".stats.json"),
@@ -231,7 +231,7 @@ def render_comparisons(
             spp=spp,
         )
     return tuple(
-        output_dir / f"beer-absorption-{state}.png" for state in ("off", "on")
+        output_dir / f"beer-absorption-{state}.avif" for state in ("off", "on")
     )
 
 

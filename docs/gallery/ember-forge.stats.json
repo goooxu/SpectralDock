@@ -1,14 +1,15 @@
 {
-  "scene": "scenes/ember-forge.json",
-  "output": "docs/gallery/ember-forge.png",
+  "scene": "ember-forge",
+  "output": "/workspace/output/examples/ember-forge.avif",
+  "schema_version": 2,
   "hardware": {
-    "gpu": "NVIDIA GeForce RTX 5090",
-    "compute_capability": "12.0"
+    "gpu": "NVIDIA GB200",
+    "compute_capability": "10.0"
   },
   "versions": {
-    "driver": "615.36",
-    "cuda_driver_api": 13040,
-    "cuda_runtime": 13030,
+    "driver": "595.84.01",
+    "cuda_driver_api": 13020,
+    "cuda_runtime": 13000,
     "optix": 90100
   },
   "render": {
@@ -23,14 +24,30 @@
     "clamp_indirect": 16.0
   },
   "timings_ms": {
-    "bvh_build": 12.264896392822266,
-    "render": 29789.140625,
+    "bvh_build": 300.4161071777344,
+    "render": 207343.0625,
     "denoise": 0.0,
-    "total": 35893.152158
+    "avif_encode": 541.9056,
+    "total": 209994.474648
+  },
+  "hdr_avif": {
+    "bit_depth": 10,
+    "yuv_format": "4:4:4",
+    "full_range": true,
+    "cicp": [
+      9,
+      16,
+      9
+    ],
+    "diffuse_white_nits": 203,
+    "peak_nits": 1000,
+    "lossless": true,
+    "max_cll": 1000,
+    "max_pall": 20
   },
   "memory": {
-    "peak_device_bytes": 1539637248,
-    "peak_tracked_device_bytes": 199863156
+    "peak_device_bytes": 1965031424,
+    "peak_tracked_device_bytes": 192186216
   },
   "geometry": {
     "objects": 87,
@@ -40,17 +57,17 @@
     "gas_count": 87
   },
   "performance": {
-    "traced_rays": 23740617759,
-    "rays_per_second": 796955442.8527594
+    "traced_rays": 23738545382,
+    "rays_per_second": 114489219.4403659
   },
   "firefly": {
-    "direct_clamped_contributions": 276906,
-    "indirect_clamped_contributions": 392120
+    "direct_clamped_contributions": 276921,
+    "indirect_clamped_contributions": 392073
   },
   "volume": {
-    "volume_density_evaluations": 27243478786,
-    "volume_real_collisions": 728682772,
-    "volume_light_samples": 15403178792,
+    "volume_density_evaluations": 27242652431,
+    "volume_real_collisions": 728822874,
+    "volume_light_samples": 15400248077,
     "volume_majorant_violations": 0,
     "volume_tracking_overflows": 0
   },

@@ -203,7 +203,7 @@ def _render(
     clamp_indirect: float,
     seed: int,
 ) -> None:
-    output = output_dir / f"{stem}.png"
+    output = output_dir / f"{stem}.avif"
     renderer.render(
         output=output,
         stats_output=output.with_suffix(".stats.json"),
@@ -221,7 +221,7 @@ def _render(
 def render_comparisons(
     *, device: int = 0, output_dir: Path = DEFAULT_OUTPUT_DIR, preview: bool = False
 ) -> tuple[Path, ...]:
-    """Render both OFF/ON pairs sequentially and return their PNG paths."""
+    """Render both OFF/ON pairs sequentially and return their AVIF paths."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     size = PREVIEW_SIZE if preview else FORMAL_SIZE
@@ -266,7 +266,7 @@ def render_comparisons(
         )
 
     return tuple(
-        output_dir / f"{stem}.png"
+        output_dir / f"{stem}.avif"
         for stem in (
             "environment-importance-off",
             "environment-importance-on",

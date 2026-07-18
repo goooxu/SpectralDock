@@ -33,17 +33,29 @@ commit 列表仍以 Git 历史为准。发布新版本时，应把 `Unreleased` 
   HDR、炉火/烟影代理、冷却池和 alpha 齿轮。两图不附带 stats、physics
   sidecar、像素 golden 或性能基准。
 - 增加可确定重建的 `assembly-hall-noon.hdr` 与
-  `assembly-hall-gear-alpha.png`，分别提供环境太阳热点和 alpha 裁剪标志。
+  `assembly-hall-gear-alpha.avif`，分别提供环境太阳热点和 alpha 裁剪标志。
 - 增加可确定重建的 showcase panel OBJ、OpenGL/+Y 法线纹理和
   metallic-roughness 数据纹理，用于 Gallery 的 PBR 对比与综合场景。
 
 ### 变更
 
+- 所有渲染输出统一为 10 bit Rec.2020/PQ HDR AVIF：CICP `9/16/9`、YUV
+  4:4:4 full range、203 nit diffuse white、1000 nit peak，并在量化后固定使用
+  AOM AV1 lossless。删除公共线性文件输出。
+- 所有普通颜色纹理和材质数据图统一为 8 bit lossless AVIF；数据图采用严格的
+  BT.709/linear/identity/full-range 4:4:4 profile。Radiance RGBE `.hdr` 继续只
+  用于环境贴图。
+- 栅格 I/O 改为固定 libavif 1.4.2 commit 与其 AOM 3.14.1 local backend；构建
+  不再引入旧栅格编解码依赖，AOM 保留运行时 CPU dispatch。
+- 平台契约不绑定 CPU 架构、GPU 型号或 RT Core；Linux x86-64/aarch64 使用
+  原生工具链。GPU 必须能运行 OptiX；物理验收必须同时证明 PhysX GPU
+  dynamics、GPU broadphase 和有效 CUDA context，CPU PhysX fallback 禁止。
+
 - 将 Capsule Mascot 的 OBJ、MTL 与 manifest 归整到独立模型目录，与 Sparky
   和 Spot 的资产包布局保持一致；使用该模型的九个场景只同步仓库内路径。
 - 十个示例改为十个可直接执行的 Python 程序。SpectralDock 不再发现、加载或
   解释所谓“场景文件”，用户自定义渲染程序也不需要注册。
-- 构建与运行改为仓库内宿主流程；CUDA 13.3/OptiX 9.1 renderer 和 CUDA
+- 构建与运行改为仓库内宿主流程；CUDA 13.x/OptiX 9.1 renderer 和 CUDA
   12.8/PhysX 5.8 worker 保持进程隔离。
 - Radiance Pavilion 改为 capsule mascot 与 Sparky 并列的双主角展台，同时
   保持 HDR 环境贴图是唯一光源。
@@ -54,19 +66,14 @@ commit 列表仍以 Git 历史为准。发布新版本时，应把 `Unreleased` 
 - Python API 收敛到单一规范写法：相机使用 `vfov`，mesh 使用平铺变换，
   parabola 使用 `clip_min`/`clip_max`，渲染深度使用 `depth`，曝光属于背景；
   `light()` 改为注册后返回 `None`。
-- 默认 GPU 验收收敛为 Release smoke、OptiX validation、受控数学契约、八个
-  静态示例预览、五个纯 Renderer Gallery 预览、两个 PhysX Gallery 预览和
-  两个原有物理教学预览；可用
-  `SPECTRALDOCK_BUILD_PHYSX=OFF` 显式跳过 PhysX SDK、worker 与物理预览，host
-  检查统一由 `scripts/test.sh` 进入。
-- 非 RTX 5090 测试机可用
-  `SPECTRALDOCK_SKIP_RTX5090_GOLDEN=ON` 只跳过该机型专属的 mesh 像素哈希；
-  fixture 结构、几何统计、图像尺寸和非空像素检查继续执行，默认门禁不变。
-- CUDA 构建目标增加 `sm_100` 代码；这不改变 RTX 5090 作为完整验证环境和
-  历史性能记录的边界。
-- OptiX 设备 module 默认继续生成 `.optixir`，并增加显式
-  `SPECTRALDOCK_OPTIX_MODULE_FORMAT=ptx` 兼容入口；运行时统一从构建树加载
-  所选 module input。
+- 默认 GPU 验收收敛为 Release smoke、OptiX validation、受控数学契约、静态
+  与 Gallery 预览、PhysX GPU-only 探针和四个物理程序；完整 acceptance 不允许
+  跳过 PhysX，host 检查统一由 `scripts/test.sh` 进入。
+- 移除 GPU 型号门禁、型号专属像素哈希和固定 SM 架构列表；fixture 改为验证
+  结构、几何统计、HDR AVIF profile、图像尺寸、非空像素和数值容差。
+- OptiX 设备 module 固定生成 portable PTX；配置时从 `nvcc --list-gpu-arch`
+  选择 toolkit 支持的最老虚拟架构，避免设备型号、SM/SASS 或 RT Core 假设，
+  再由当前驱动在运行时为实际 GPU JIT。
 
 ### 修复
 
@@ -98,7 +105,8 @@ commit 列表仍以 Git 历史为准。发布新版本时，应把 `Unreleased` 
 - 移除 schema v6、全部场景 JSON、C++ JSON loader、`--scene` 主程序及临时
   场景序列化。这是有意的破坏性接口变化；stats、physics 和资产 manifest
   JSON 仍作为非场景运行记录保留。
-- 移除 Dockerfiles、镜像构建脚本和容器运行路径。
+- 移除旧容器运行路径；新增的 `containers/test/Dockerfile` 仅定义可复现的双
+  CUDA 测试环境，并通过多架构基础镜像选择宿主 ISA。
 - 移除 Python API 的 `vertical_fov_degrees`、`mesh_instance`、嵌套
   `transform`、`max_depth`、parabola `clip` 和 render `exposure` 兼容入口，
   以及按名称查询 handle 的 registry、`LightHandle` 与 `gpu_enabled`。
@@ -106,14 +114,14 @@ commit 列表仍以 Git 历史为准。发布新版本时，应把 `Unreleased` 
   `alpha_texture`/`alpha_cutoff`。同时删除独立 sanitizer 矩阵、Moonlit
   time-to-error、Radiance Pavilion 场景级 A/B 和粗糙介电 8192 spp full
   profile 等高成本维护流程。
-- 移除 `koi-mask.png` 与 `circuit-panel.png` 两张生成式示例纹理及其
+- 移除 Koi mask 与 circuit panel 两张生成式示例纹理及其
   来源记录；纹理 smoke 改用测试运行时构造的小型确定性 fixture。
 
 ## [0.1.0] - 2026-07-15
 
 ### 新增
 
-- 建立面向计算机图形学研究与教学的 CUDA 13.3 / OptiX 9.1 单 GPU 离线路径
+- 建立面向计算机图形学研究与教学的 CUDA 13.x / OptiX 9.1 单 GPU 离线路径
   追踪器，覆盖 GAS/IAS、Pipeline、SBT、自定义求交、路径追踪与 OptiX AI
   Denoiser 完整流程。
 - 引入 schema v6 场景格式，支持共享 OBJ mesh、实例变换、alpha any-hit、纹理，
@@ -125,12 +133,13 @@ commit 列表仍以 Git 历史为准。发布新版本时，应把 `Unreleased` 
 - 加入程序化异质体积火焰、吸收与自发光传输、Delta Tracking 和体积 NEE。
 - 加入有限解析波浪水面、粗糙介电反射与折射、Fresnel/Snell、RGB Beer 吸收、
   介质栈和水面 NEE/MIS。
-- 加入 direct/indirect 两级 firefly 贡献钳位、PNG 与可选线性 PFM 输出，以及
-  同名 `*.stats.json` 性能和安全计数记录。
+- 加入 direct/indirect 两级 firefly 贡献钳位、早期展示图输出，以及同名
+  `*.stats.json` 性能和安全计数记录；这些旧输出接口已由 0.2 的固定 HDR AVIF
+  契约取代。
 - 将 PhysX 5.8.0 GPU 作为物理场景的 JIT 构建子系统；每次渲染 Kinetic
   Foundry 或 Lava Temple Oracle 前重新计算刚体姿态，再通过临时 schema v6
   场景交给相邻的 OptiX 进程。
-- 提供八个静态教学场景、两个 PhysX 物理场景和十张正式 gallery PNG；其中
+- 提供八个静态教学场景、两个 PhysX 物理场景和十张正式 gallery 图；其中
   “熔岩圣殿的机械先知”以 3840×2160、2048 spp 发布为项目封面。
 
 ### 改进
@@ -140,9 +149,8 @@ commit 列表仍以 Git 历史为准。发布新版本时，应把 `Unreleased` 
 - 使用 HDR 环境重要性采样、点光/平行光和 firefly 抑制改善常用布光与高光
   噪声控制；Radiance Pavilion 与 Ember Forge 分别作为环境光和纯火焰照明
   的研究场景。
-- 项目定位收敛为 Linux/RTX 图形学研究与教学参考实现；当前完整验证平台为
-  RTX 5090、driver 615.36、CUDA 13.3 和 OptiX 9.1，不将结果外推为跨 GPU
-  golden 或性能承诺。
+- 项目定位收敛为 Linux/NVIDIA GPU 图形学研究与教学参考实现；运行记录不
+  外推为跨 GPU golden 或性能承诺。
 
 ### 修复
 
@@ -161,4 +169,4 @@ commit 列表仍以 Git 历史为准。发布新版本时，应把 `Unreleased` 
 - 增加从渲染方程到 OptiX、PhysX、体积火焰、解析水面、HDR 与重要性采样的
   中文技术报告，并让公式、原理、优化和源码实现相互对照。
 - 增加 Ubuntu 容器工作流、host CTest/pytest、Release/Debug GPU 验收、
-  Compute Sanitizer，以及 RTX 5090 gallery、stats 和 physics sidecar 记录。
+  Compute Sanitizer，以及 gallery、stats 和 physics sidecar 运行记录。

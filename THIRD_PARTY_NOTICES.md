@@ -22,17 +22,6 @@ not replace the licenses identified below.
 - License: public domain / Unlicense
 - Used in: Pcg32::hash in src/device_programs.cu
 
-## ACES-inspired fitted curve
-
-- Author: Krzysztof Narkowicz
-- Source: https://knarkowicz.wordpress.com/2016/01/06/aces-filmic-tone-mapping-curve/
-- Upstream offer: CC0 or MIT; SpectralDock uses it under CC0-1.0.
-- Used in: src/postprocess.cu
-
-This compact per-channel fit is not the complete Academy Color Encoding
-System, and it does not implement ACES color-space transforms, RRT, ODT, or
-display selection.
-
 ## Spot model and texture
 
 - Creator: Keenan Crane
@@ -41,8 +30,10 @@ display selection.
   https://www.cs.cmu.edu/~kmcrane/Projects/ModelRepository/spot.zip
 - License: CC0 1.0 Universal
 - Included files: `assets/examples/models/spot/spot_triangulated.obj` and
-  `assets/examples/models/spot/spot_texture.png`
-- Local changes: none
+  `assets/examples/models/spot/spot_texture.avif`
+- Local changes: geometry is unchanged; the source albedo bitmap is encoded to
+  the canonical 8-bit BT.709/sRGB, identity-matrix, full-range 4:4:4 lossless
+  AVIF texture profile without changing decoded RGBA samples.
 
 The upstream page describes Spot as a spotted animal and permits use for any
 purpose. Attribution is not required by CC0, but the author asks paper authors
@@ -84,14 +75,15 @@ generated tangent records before uploading them to the renderer.
 - Upstream tag: `110.0-omni-and-physx-5.8.0`
 - Pinned commit: `fc1018a3745664a1db2b95ce03fb5e91eb585f2e`
 - License: BSD 3-Clause License
-- Used by: the optional GPU-only PhysX worker used by Kinetic Foundry,
+- Used by: the isolated GPU-only PhysX worker used by Kinetic Foundry,
   Lava Temple Oracle, Atelier, and Assembly Hall
 
 PhysX is obtained and built separately for the host. Its source, headers,
 libraries, and binaries are not included in this source distribution. The four
 Python programs call the isolated worker through private temporary IPC and
 apply returned poses through typed attachments or validated `BodyState`
-instances. Only the two original tutorial scenes keep checked-in
+instances. GPU dynamics and GPU broadphase are both mandatory; CPU PhysX
+fallback is forbidden. Only the two original tutorial scenes keep checked-in
 `.physics.json` sidecars; the two Gallery covers do not.
 SpectralDock is an independent, unofficial project and is not affiliated with,
 sponsored by, or endorsed by NVIDIA Corporation.
@@ -106,8 +98,33 @@ sponsored by, or endorsed by NVIDIA Corporation.
 pybind11 is an external build dependency and is not vendored in this source
 distribution.
 
+## libavif 1.4.2
+
+- Authors: Alliance for Open Media contributors
+- Source: https://github.com/AOMediaCodec/libavif
+- Pinned commit: `c5240fc79fe5c2407e10afd35f5505ef6333ea49`
+- License: BSD 2-Clause License
+- Used by: all texture decoding and texture/HDR output AVIF encoding
+
+CMake obtains this exact revision through `FetchContent`. Optional JPEG,
+legacy raster, libyuv, and libsharpyuv integration is disabled. The renderer
+uses libavif with the local AOM backend and requires a single-frame AVIF profile.
+
+## AOMedia AV1 codec 3.14.1
+
+- Authors: Alliance for Open Media contributors
+- Source: https://aomedia.googlesource.com/aom/
+- Version selected by: libavif 1.4.2 local AOM dependency
+- License: BSD 2-Clause License and Alliance for Open Media Patent License 1.0
+- Used by: lossless AV1 coding for texture and HDR AVIF files
+
+AOM is fetched by libavif's local-codec build. Its runtime CPU dispatch chooses
+an implementation supported by the executing host; SpectralDock does not pin a
+CPU microarchitecture.
+
 ## External build and runtime dependencies
 
-CUDA, OptiX, PhysX, the NVIDIA driver, libpng, Python, and pybind11 are obtained
-separately from their respective distributors. Their SDK or library sources
-are not included in this source distribution, and their own terms apply.
+CUDA, OptiX, PhysX, the NVIDIA driver, Python, and pybind11 are obtained
+separately from their respective distributors. libavif and its local AOM codec
+are obtained automatically at configure time from the pinned revisions above.
+All upstream terms continue to apply.

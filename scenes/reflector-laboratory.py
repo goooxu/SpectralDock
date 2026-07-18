@@ -153,7 +153,7 @@ def create_renderer() -> Renderer:
 
 
 def main() -> None:
-    output = ROOT / "output/examples/reflector-laboratory.png"
+    output = ROOT / "output/examples/reflector-laboratory.avif"
     create_renderer().render(
         output=output,
         stats_output=output.with_suffix(".stats.json"),

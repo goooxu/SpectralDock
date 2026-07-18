@@ -17,7 +17,7 @@ The Capsule Mascot and Sparky bundles are AI-generated project contributions;
 the deterministic Capsule generator records reproducibility, not authorship.
 The Showcase Panel geometry and data maps are deterministic procedural outputs,
 not AI-generated assets; their generator and Apache-2.0 manifest are outside the
-CC0 asset list. The Gallery PNG files are renderer outputs; temporary render
+CC0 asset list. The Gallery AVIF files are renderer outputs; temporary render
 statistics and physics sidecars are not distributed for the fifteen new
 showcase/comparison images.
 third_party/tinyobjloader remains under its upstream MIT license.

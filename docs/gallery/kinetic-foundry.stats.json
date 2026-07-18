@@ -1,14 +1,15 @@
 {
-  "scene": "scenes/generated/kinetic-foundry.json",
-  "output": "docs/gallery/kinetic-foundry.png",
+  "scene": "kinetic-foundry",
+  "output": "/workspace/output/examples/kinetic-foundry.avif",
+  "schema_version": 2,
   "hardware": {
-    "gpu": "NVIDIA GeForce RTX 5090",
-    "compute_capability": "12.0"
+    "gpu": "NVIDIA GB200",
+    "compute_capability": "10.0"
   },
   "versions": {
-    "driver": "615.36",
-    "cuda_driver_api": 13040,
-    "cuda_runtime": 13030,
+    "driver": "595.84.01",
+    "cuda_driver_api": 13020,
+    "cuda_runtime": 13000,
     "optix": 90100
   },
   "render": {
@@ -23,14 +24,30 @@
     "clamp_indirect": 16.0
   },
   "timings_ms": {
-    "bvh_build": 32.006591796875,
-    "render": 1751.00634765625,
-    "denoise": 11.211615562438965,
-    "total": 7992.05534
+    "bvh_build": 60.15177536010742,
+    "render": 7566.37939453125,
+    "denoise": 11.569215774536133,
+    "avif_encode": 697.571451,
+    "total": 21829.024257
+  },
+  "hdr_avif": {
+    "bit_depth": 10,
+    "yuv_format": "4:4:4",
+    "full_range": true,
+    "cicp": [
+      9,
+      16,
+      9
+    ],
+    "diffuse_white_nits": 203,
+    "peak_nits": 1000,
+    "lossless": true,
+    "max_cll": 819,
+    "max_pall": 23
   },
   "memory": {
-    "peak_device_bytes": 1860501504,
-    "peak_tracked_device_bytes": 518721876
+    "peak_device_bytes": 2281701376,
+    "peak_tracked_device_bytes": 508360024
   },
   "geometry": {
     "objects": 220,
@@ -40,12 +57,12 @@
     "gas_count": 197
   },
   "performance": {
-    "traced_rays": 2867770420,
-    "rays_per_second": 1637784137.0127277
+    "traced_rays": 2870024627,
+    "rays_per_second": 379312809.6476852
   },
   "firefly": {
-    "direct_clamped_contributions": 72968,
-    "indirect_clamped_contributions": 86604
+    "direct_clamped_contributions": 73854,
+    "indirect_clamped_contributions": 90590
   },
   "volume": {
     "volume_density_evaluations": 0,

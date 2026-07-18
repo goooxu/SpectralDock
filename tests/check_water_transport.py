@@ -7,9 +7,9 @@ import sys
 import tempfile
 from pathlib import Path
 
-from PIL import Image
-
 from spectraldock import MaterialHandle, Renderer
+
+from avif_test_utils import assert_avif_dimensions, captured_linear_image
 
 
 POSITIVE_METRICS = (
@@ -237,7 +237,7 @@ def direct_renderer(*, lit=True, blocked=False):
 
 
 def render(renderer, directory, name, spp=192, depth=8):
-    image = directory / f"{name}.png"
+    image = directory / f"{name}.avif"
     stats = renderer.render(
         output=image,
         stats_output=image.with_suffix(".stats.json"),
@@ -247,12 +247,10 @@ def render(renderer, directory, name, spp=192, depth=8):
         depth=depth,
         seed=83,
         denoise=False,
+        _test_capture_linear=True,
     )
-    with Image.open(image) as decoded:
-        decoded.load()
-        if decoded.size != (96, 72) or decoded.mode != "RGBA":
-            raise RuntimeError(f"unexpected water output: {decoded.size} {decoded.mode}")
-        pixels = decoded.copy()
+    assert_avif_dimensions(image, 96, 72)
+    pixels = captured_linear_image(stats, 96, 72)
     assert_finite(stats)
     return pixels, stats
 
@@ -318,7 +316,7 @@ def red_centroid(image):
         for x in range(image.width):
             red, green, blue, _ = image.getpixel((x, y))
             weight = max(0.0, red - 2.0 * max(green, blue))
-            if red < 20:
+            if red < 1.0e-6:
                 continue
             weighted_x += x * weight
             weighted_y += y * weight
@@ -336,8 +334,8 @@ def main():
         directory = Path(tmp)
         first, first_stats = render(fixture_renderer(), directory, "water-a")
         second, _ = render(fixture_renderer(), directory, "water-b")
-        if first.tobytes() != second.tobytes():
-            raise RuntimeError("fixed-seed water renders are not byte-identical")
+        if first.samples() != second.samples():
+            raise RuntimeError("fixed-seed water linear captures are not identical")
 
         for name in POSITIVE_METRICS:
             value = metric(first_stats, name)
@@ -355,7 +353,7 @@ def main():
         smooth_repeat, _ = render(
             fixture_renderer(0.0), directory, "water-smooth-repeat", spp=64
         )
-        if smooth_image.tobytes() != smooth_repeat.tobytes():
+        if smooth_image.samples() != smooth_repeat.samples():
             raise RuntimeError("smooth first-water Fresnel split is not deterministic")
         if metric(smooth_stats, "water_delta_splits") in (None, 0):
             raise RuntimeError("smooth water did not exercise the bounded delta split")
@@ -381,7 +379,7 @@ def main():
             fixture_renderer(include_glass=False), directory, "immersed-glass-off"
         )
         glass_box = (40, 28, 76, 62)
-        if mean_absolute_difference(first, no_glass_image, glass_box) <= 0.10:
+        if mean_absolute_difference(first, no_glass_image, glass_box) <= 0.01:
             raise RuntimeError("immersed dielectric was not visible through water")
 
         dark_reflection, _ = render(
@@ -390,7 +388,7 @@ def main():
         water_box = (4, 28, 92, 70)
         if mean_luminance(first, water_box) <= mean_luminance(
             dark_reflection, water_box
-        ) + 0.20:
+        ) + 0.005:
             raise RuntimeError("rough water did not reflect the above-water emitter")
 
         shallow_image, _ = render(
@@ -403,8 +401,8 @@ def main():
         deep_energy = channel_energy(deep_image)
         if sum(deep_energy) >= 0.99 * sum(shallow_energy):
             raise RuntimeError("a deeper water path was not attenuated")
-        shallow_red_blue = shallow_energy[0] / max(shallow_energy[2], 1.0)
-        deep_red_blue = deep_energy[0] / max(deep_energy[2], 1.0)
+        shallow_red_blue = shallow_energy[0] / max(shallow_energy[2], 1.0e-12)
+        deep_red_blue = deep_energy[0] / max(deep_energy[2], 1.0e-12)
         if deep_red_blue >= shallow_red_blue:
             raise RuntimeError("Beer absorption did not attenuate red more than blue")
 
@@ -415,7 +413,7 @@ def main():
         receiver_box = (6, 28, 90, 71)
         if mean_luminance(lit_floor, receiver_box) <= mean_luminance(
             unlit_floor, receiver_box
-        ) + 0.5:
+        ) + 0.005:
             raise RuntimeError(
                 "rough-water BSDF/NEE paths did not restore underwater illumination"
             )

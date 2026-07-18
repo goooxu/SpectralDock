@@ -2,37 +2,17 @@
 """GPU contracts for delta lights and per-contribution firefly control."""
 
 import math
-import struct
 import sys
 import tempfile
 from pathlib import Path
 
-from PIL import Image
-
 from spectraldock import Renderer
+
+from avif_test_utils import assert_avif_dimensions, captured_linear_rgb
 
 
 WIDTH = 24
 HEIGHT = 24
-
-
-def read_pfm(path):
-    with path.open("rb") as stream:
-        if stream.readline() != b"PF\n":
-            raise RuntimeError("expected a three-channel PFM")
-        width, height = map(int, stream.readline().split())
-        if float(stream.readline()) >= 0.0:
-            raise RuntimeError("expected little-endian PFM data")
-        payload = stream.read()
-    expected = width * height * 3 * 4
-    if len(payload) != expected:
-        raise RuntimeError(
-            "PFM payload has {} bytes, expected {}".format(len(payload), expected)
-        )
-    values = struct.unpack("<{}f".format(width * height * 3), payload)
-    if any(not math.isfinite(value) for value in values):
-        raise RuntimeError("linear output contains a non-finite value")
-    return width, height, tuple(zip(values[0::3], values[1::3], values[2::3]))
 
 
 def render(
@@ -46,12 +26,10 @@ def render(
     clamp_direct=None,
     clamp_indirect=None,
 ):
-    png = directory / (name + ".png")
-    pfm = directory / (name + ".pfm")
+    avif = directory / (name + ".avif")
     stats = renderer.render(
-        output=png,
-        stats_output=png.with_suffix(".stats.json"),
-        linear_output=pfm,
+        output=avif,
+        stats_output=avif.with_suffix(".stats.json"),
         width=WIDTH,
         height=HEIGHT,
         spp=spp,
@@ -60,19 +38,11 @@ def render(
         denoise=False,
         clamp_direct=clamp_direct,
         clamp_indirect=clamp_indirect,
+        _test_capture_linear=True,
     )
-    with Image.open(png) as image:
-        image.load()
-        if image.size != (WIDTH, HEIGHT) or image.mode != "RGBA":
-            raise RuntimeError(
-                "unexpected delta-light PNG: {} {}".format(
-                    image.size, image.mode
-                )
-            )
-    width, height, pixels = read_pfm(pfm)
-    if (width, height) != (WIDTH, HEIGHT):
-        raise RuntimeError("unexpected delta-light PFM dimensions")
-    return pixels, stats, pfm.read_bytes()
+    assert_avif_dimensions(avif, WIDTH, HEIGHT)
+    pixels, linear_values = captured_linear_rgb(stats, WIDTH, HEIGHT)
+    return pixels, stats, linear_values
 
 
 def mean_rgb(pixels):
@@ -203,7 +173,7 @@ def directional_contract(directory):
         directional_renderer(), directory, "directional-b"
     )
     if first_bytes != second_bytes:
-        raise RuntimeError("fixed-seed directional PFM is not deterministic")
+        raise RuntimeError("fixed-seed directional linear capture is not deterministic")
 
     translated_pixels, _, _ = render(
         directional_renderer(camera_x=5.0), directory, "directional-translated"
@@ -259,7 +229,7 @@ def point_contract(directory):
         point_renderer(2.0), directory, "point-repeat", spp=8
     )
     if near_bytes != repeat_bytes:
-        raise RuntimeError("fixed-seed point-light PFM is not deterministic")
+        raise RuntimeError("fixed-seed point-light linear capture is not deterministic")
 
 
 def hot_directional_renderer():

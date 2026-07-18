@@ -1,14 +1,15 @@
 {
-  "scene": "scenes/moonlit-stepwell.json",
-  "output": "docs/gallery/moonlit-stepwell.png",
+  "scene": "moonlit-stepwell",
+  "output": "/workspace/output/examples/moonlit-stepwell.avif",
+  "schema_version": 2,
   "hardware": {
-    "gpu": "NVIDIA GeForce RTX 5090",
-    "compute_capability": "12.0"
+    "gpu": "NVIDIA GB200",
+    "compute_capability": "10.0"
   },
   "versions": {
-    "driver": "615.36",
-    "cuda_driver_api": 13040,
-    "cuda_runtime": 13030,
+    "driver": "595.84.01",
+    "cuda_driver_api": 13020,
+    "cuda_runtime": 13000,
     "optix": 90100
   },
   "render": {
@@ -23,14 +24,30 @@
     "clamp_indirect": 16.0
   },
   "timings_ms": {
-    "bvh_build": 6.722047805786133,
-    "render": 6628.83642578125,
-    "denoise": 11.920127868652344,
-    "total": 12742.227432
+    "bvh_build": 10.594016075134277,
+    "render": 47185.24609375,
+    "denoise": 14.232128143310547,
+    "avif_encode": 699.612984,
+    "total": 50184.023684
+  },
+  "hdr_avif": {
+    "bit_depth": 10,
+    "yuv_format": "4:4:4",
+    "full_range": true,
+    "cicp": [
+      9,
+      16,
+      9
+    ],
+    "diffuse_white_nits": 203,
+    "peak_nits": 1000,
+    "lossless": true,
+    "max_cll": 1000,
+    "max_pall": 9
   },
   "memory": {
-    "peak_device_bytes": 1994719232,
-    "peak_tracked_device_bytes": 651116044
+    "peak_device_bytes": 2415919104,
+    "peak_tracked_device_bytes": 640609636
   },
   "geometry": {
     "objects": 36,
@@ -40,12 +57,12 @@
     "gas_count": 36
   },
   "performance": {
-    "traced_rays": 4250011154,
-    "rays_per_second": 641139844.3127384
+    "traced_rays": 4250342018,
+    "rays_per_second": 90077775.78515132
   },
   "firefly": {
     "direct_clamped_contributions": 0,
-    "indirect_clamped_contributions": 28481
+    "indirect_clamped_contributions": 28477
   },
   "volume": {
     "volume_density_evaluations": 0,
@@ -55,14 +72,14 @@
     "volume_tracking_overflows": 0
   },
   "water": {
-    "water_height_evaluations": 13239801692,
-    "water_tile_tests": 1709683496,
-    "water_roots_reported": 277840586,
-    "water_medium_segments": 253017452,
+    "water_height_evaluations": 13521855028,
+    "water_tile_tests": 1528711985,
+    "water_roots_reported": 284234858,
+    "water_medium_segments": 253018432,
     "water_solver_overflows": 0,
     "water_medium_errors": 0,
-    "water_rough_nee_attempts": 398730722,
-    "water_rough_nee_contributions": 233784483,
+    "water_rough_nee_attempts": 398761460,
+    "water_rough_nee_contributions": 233782960,
     "water_delta_splits": 0
   }
 }

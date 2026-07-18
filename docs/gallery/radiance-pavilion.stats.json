@@ -1,14 +1,15 @@
 {
   "scene": "radiance-pavilion",
-  "output": "docs/gallery/radiance-pavilion.png",
+  "output": "/workspace/output/examples/radiance-pavilion.avif",
+  "schema_version": 2,
   "hardware": {
-    "gpu": "NVIDIA GeForce RTX 5090",
-    "compute_capability": "12.0"
+    "gpu": "NVIDIA GB200",
+    "compute_capability": "10.0"
   },
   "versions": {
-    "driver": "615.36",
-    "cuda_driver_api": 13040,
-    "cuda_runtime": 13030,
+    "driver": "595.84.01",
+    "cuda_driver_api": 13020,
+    "cuda_runtime": 13000,
     "optix": 90100
   },
   "render": {
@@ -23,14 +24,30 @@
     "clamp_indirect": 16.0
   },
   "timings_ms": {
-    "bvh_build": 6.020991802215576,
-    "render": 2687.8125,
-    "denoise": 15.302847862243652,
-    "total": 2998.371673
+    "bvh_build": 11.256928443908691,
+    "render": 4063.2880859375,
+    "denoise": 11.671039581298828,
+    "avif_encode": 643.022452,
+    "total": 8042.460662
+  },
+  "hdr_avif": {
+    "bit_depth": 10,
+    "yuv_format": "4:4:4",
+    "full_range": true,
+    "cicp": [
+      9,
+      16,
+      9
+    ],
+    "diffuse_white_nits": 203,
+    "peak_nits": 1000,
+    "lossless": true,
+    "max_cll": 1000,
+    "max_pall": 40
   },
   "memory": {
-    "peak_device_bytes": 1908736000,
-    "peak_tracked_device_bytes": 565733772
+    "peak_device_bytes": 2332033024,
+    "peak_tracked_device_bytes": 555778772
   },
   "geometry": {
     "objects": 38,
@@ -40,12 +57,12 @@
     "gas_count": 38
   },
   "performance": {
-    "traced_rays": 2440153756,
-    "rays_per_second": 907858623.3228694
+    "traced_rays": 2438312129,
+    "rays_per_second": 600083498.2482966
   },
   "firefly": {
-    "direct_clamped_contributions": 3000460,
-    "indirect_clamped_contributions": 1056
+    "direct_clamped_contributions": 3000465,
+    "indirect_clamped_contributions": 1065
   },
   "volume": {
     "volume_density_evaluations": 0,

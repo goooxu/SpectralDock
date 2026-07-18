@@ -297,21 +297,52 @@ struct ImageRgba8 {
   bool empty() const noexcept { return width == 0 || height == 0 || pixels.empty(); }
 };
 
-ImageRgba8 load_png_rgba8(const std::filesystem::path& path);
-void write_png_rgba8(const std::filesystem::path& path,
-                     std::uint32_t width,
-                     std::uint32_t height,
-                     const std::uint8_t* pixels,
-                     std::size_t row_stride = 0);
-void write_png_rgba8(const std::filesystem::path& path,
-                     std::uint32_t width,
-                     std::uint32_t height,
-                     const std::vector<std::uint8_t>& pixels);
-// Writes linear RGB samples as a portable little-endian PFM image. Input rows
-// are top-to-bottom; PFM stores them bottom-to-top.
-void write_pfm_rgb32f(const std::filesystem::path& path,
-                      std::uint32_t width,
-                      std::uint32_t height,
-                      const std::vector<float>& pixels);
+struct AvifImageInfo {
+  std::uint32_t bit_depth = 0;
+  std::string yuv_format;
+  bool full_range = false;
+  std::uint16_t color_primaries = 0;
+  std::uint16_t transfer_characteristics = 0;
+  std::uint16_t matrix_coefficients = 0;
+  bool premultiplied = false;
+  bool animated = false;
+  bool has_alpha = false;
+  std::uint16_t max_cll = 0;
+  std::uint16_t max_pall = 0;
+};
+
+struct DecodedAvif {
+  ImageRgba8 image;
+  AvifImageInfo info;
+};
+
+// AVIF texture pixels use top-to-bottom RGBA byte order. The color-space flag
+// is part of the file contract, not a request to transform sample codes.
+ImageRgba8 load_avif_rgba8(const std::filesystem::path& path, bool srgb);
+DecodedAvif read_avif_rgba8(const std::filesystem::path& path);
+void write_texture_avif_rgba8(const std::filesystem::path& path,
+                              std::uint32_t width,
+                              std::uint32_t height,
+                              const std::uint8_t* pixels,
+                              bool srgb,
+                              std::size_t row_stride = 0);
+void write_texture_avif_rgba8(const std::filesystem::path& path,
+                              std::uint32_t width,
+                              std::uint32_t height,
+                              const std::vector<std::uint8_t>& pixels,
+                              bool srgb);
+
+struct HdrAvifInfo {
+  std::uint16_t max_cll = 0;
+  std::uint16_t max_pall = 0;
+};
+
+// Maps top-to-bottom linear Rec.709 RGB floats to the renderer's fixed
+// 10-bit Rec.2020/PQ, 4:4:4, full-range, lossless AVIF output profile.
+HdrAvifInfo write_hdr_avif_rgb32f(const std::filesystem::path& path,
+                                  std::uint32_t width,
+                                  std::uint32_t height,
+                                  const std::vector<float>& pixels,
+                                  float exposure);
 
 }  // namespace spectraldock

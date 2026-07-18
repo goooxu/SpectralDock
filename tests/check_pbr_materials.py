@@ -3,14 +3,17 @@
 
 import argparse
 import math
-import struct
 import sys
 import tempfile
 from pathlib import Path
 
-from PIL import Image
-
 from spectraldock import Renderer
+
+from avif_test_utils import (
+    assert_avif_dimensions,
+    captured_linear_rgb,
+    write_texture_avif,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,10 +31,11 @@ def nonnegative_integer(value: str) -> int:
     return result
 
 
-def write_rgba(path: Path, size: tuple[int, int], pixels) -> None:
-    image = Image.new("RGBA", size)
-    image.putdata(tuple(pixels))
-    image.save(path)
+def write_rgba(
+    path: Path, size: tuple[int, int], pixels, *, srgb: bool = False
+) -> None:
+    rgba = bytes(channel for pixel in pixels for channel in pixel)
+    write_texture_avif(path, size[0], size[1], rgba, srgb=srgb)
 
 
 def write_constant_uv_quad(path: Path, u: float, v: float = 0.5) -> None:
@@ -59,21 +63,6 @@ def write_constant_uv_quad(path: Path, u: float, v: float = 0.5) -> None:
     )
 
 
-def read_single_pixel_pfm(path: Path) -> tuple[float, float, float]:
-    with path.open("rb") as stream:
-        if stream.readline() != b"PF\n" or stream.readline() != b"1 1\n":
-            raise RuntimeError(f"{path.name}: expected a 1x1 RGB PFM")
-        if float(stream.readline()) >= 0.0:
-            raise RuntimeError(f"{path.name}: expected little-endian PFM data")
-        payload = stream.read()
-    if len(payload) != 12:
-        raise RuntimeError(f"{path.name}: expected 12 data bytes, got {len(payload)}")
-    pixel = struct.unpack("<3f", payload)
-    if any(not math.isfinite(value) for value in pixel):
-        raise RuntimeError(f"{path.name}: linear output contains a non-finite value")
-    return pixel
-
-
 def common_renderer(*, device: int) -> Renderer:
     renderer = Renderer(device=device)
     renderer.integrator(
@@ -92,12 +81,10 @@ def common_renderer(*, device: int) -> Renderer:
 
 
 def render_probe(renderer: Renderer, directory: Path, name: str) -> tuple[float, ...]:
-    png = directory / f"{name}.png"
-    pfm = directory / f"{name}.pfm"
+    avif = directory / f"{name}.avif"
     stats = renderer.render(
-        output=png,
-        stats_output=png.with_suffix(".stats.json"),
-        linear_output=pfm,
+        output=avif,
+        stats_output=avif.with_suffix(".stats.json"),
         width=1,
         height=1,
         spp=1,
@@ -106,13 +93,10 @@ def render_probe(renderer: Renderer, directory: Path, name: str) -> tuple[float,
         denoise=False,
         clamp_direct=0.0,
         clamp_indirect=0.0,
+        _test_capture_linear=True,
     )
-    with Image.open(png) as decoded:
-        decoded.load()
-        if decoded.size != (1, 1) or decoded.mode != "RGBA":
-            raise RuntimeError(
-                f"{name}: unexpected PNG output {decoded.size} {decoded.mode}"
-            )
+    assert_avif_dimensions(avif, 1, 1)
+    pixels, _ = captured_linear_rgb(stats, 1, 1)
     render = stats.get("render", {})
     if (
         render.get("denoised") is not False
@@ -120,7 +104,7 @@ def render_probe(renderer: Renderer, directory: Path, name: str) -> tuple[float,
         or render.get("clamp_indirect") != 0.0
     ):
         raise RuntimeError(f"{name}: PBR contract used biased render settings")
-    return read_single_pixel_pfm(pfm)
+    return pixels[0]
 
 
 def textured_emitter_renderer(
@@ -262,14 +246,12 @@ def sampled_pbr_renderer(*, device: int) -> Renderer:
 
 def render_sampled_probe(
     renderer: Renderer, directory: Path, name: str
-) -> tuple[tuple[float, float, float], bytes]:
-    png = directory / f"{name}.png"
-    pfm = directory / f"{name}.pfm"
+) -> tuple[tuple[float, float, float], tuple[float, ...]]:
+    avif = directory / f"{name}.avif"
     spp = 16
     stats = renderer.render(
-        output=png,
-        stats_output=png.with_suffix(".stats.json"),
-        linear_output=pfm,
+        output=avif,
+        stats_output=avif.with_suffix(".stats.json"),
         width=1,
         height=1,
         spp=spp,
@@ -278,13 +260,10 @@ def render_sampled_probe(
         denoise=False,
         clamp_direct=0.0,
         clamp_indirect=0.0,
+        _test_capture_linear=True,
     )
-    with Image.open(png) as decoded:
-        decoded.load()
-        if decoded.size != (1, 1) or decoded.mode != "RGBA":
-            raise RuntimeError(
-                f"{name}: unexpected PNG output {decoded.size} {decoded.mode}"
-            )
+    assert_avif_dimensions(avif, 1, 1)
+    pixels, linear_values = captured_linear_rgb(stats, 1, 1)
     render = stats.get("render", {})
     if (
         render.get("max_depth") != 2
@@ -295,7 +274,7 @@ def render_sampled_probe(
         raise RuntimeError(f"{name}: sampled PBR probe used biased render settings")
     if stats.get("performance", {}).get("traced_rays", 0) <= spp:
         raise RuntimeError(f"{name}: depth=2 PBR probe traced no secondary rays")
-    return read_single_pixel_pfm(pfm), pfm.read_bytes()
+    return pixels[0], linear_values
 
 
 def assert_close(
@@ -320,15 +299,18 @@ def luminance(pixel: tuple[float, ...]) -> float:
 
 
 def check_srgb_filtering_and_wrap(directory: Path, *, device: int) -> None:
-    midpoint = directory / "black-white.png"
-    write_rgba(midpoint, (2, 1), [(0, 0, 0, 255), (255, 255, 255, 255)])
+    midpoint_srgb = directory / "black-white-srgb.avif"
+    midpoint_linear = directory / "black-white-linear.avif"
+    samples = [(0, 0, 0, 255), (255, 255, 255, 255)]
+    write_rgba(midpoint_srgb, (2, 1), samples, srgb=True)
+    write_rgba(midpoint_linear, (2, 1), samples)
     midpoint_mesh = directory / "uv-midpoint.obj"
     write_constant_uv_quad(midpoint_mesh, 0.5)
 
     srgb = render_probe(
         textured_emitter_renderer(
             device=device,
-            texture_path=midpoint,
+            texture_path=midpoint_srgb,
             mesh_path=midpoint_mesh,
             color_space="srgb",
         ),
@@ -338,7 +320,7 @@ def check_srgb_filtering_and_wrap(directory: Path, *, device: int) -> None:
     linear = render_probe(
         textured_emitter_renderer(
             device=device,
-            texture_path=midpoint,
+            texture_path=midpoint_linear,
             mesh_path=midpoint_mesh,
             color_space="linear",
         ),
@@ -348,7 +330,7 @@ def check_srgb_filtering_and_wrap(directory: Path, *, device: int) -> None:
     assert_close(srgb, (0.5, 0.5, 0.5), "sRGB pre-filter decode", absolute=0.015)
     assert_close(srgb, linear, "sRGB/linear black-white midpoint", absolute=0.015)
 
-    red_blue = directory / "red-blue.png"
+    red_blue = directory / "red-blue.avif"
     write_rgba(red_blue, (2, 1), [(255, 0, 0, 255), (0, 0, 255, 255)])
     outside_mesh = directory / "uv-outside.obj"
     write_constant_uv_quad(outside_mesh, 1.25)
@@ -375,7 +357,7 @@ def check_srgb_filtering_and_wrap(directory: Path, *, device: int) -> None:
     ):
         raise RuntimeError(f"unexpected CUDA wrap samples: {wrapped!r}")
 
-    top_bottom = directory / "top-bottom.png"
+    top_bottom = directory / "top-bottom.avif"
     write_rgba(top_bottom, (1, 2), [(255, 0, 0, 255), (0, 0, 255, 255)])
     inside_v_mesh = directory / "uv-v-inside.obj"
     write_constant_uv_quad(inside_v_mesh, 0.5, 0.25)
@@ -419,7 +401,7 @@ def check_srgb_filtering_and_wrap(directory: Path, *, device: int) -> None:
 
 
 def check_metallic_roughness(directory: Path, *, device: int) -> None:
-    base = directory / "base-color.png"
+    base = directory / "base-color.avif"
     write_rgba(base, (1, 1), [(128, 64, 255, 255)])
     textured_base = render_probe(
         pbr_renderer(
@@ -448,8 +430,8 @@ def check_metallic_roughness(directory: Path, *, device: int) -> None:
         "PBR base-color texture and factor multiplication",
     )
 
-    mr = directory / "mr.png"
-    mr_red_variant = directory / "mr-red-variant.png"
+    mr = directory / "mr.avif"
+    mr_red_variant = directory / "mr-red-variant.avif"
     # R is deliberately unrelated data. G and B are the glTF roughness and
     # metallic channels and must multiply, rather than replace, their factors.
     write_rgba(mr, (1, 1), [(17, 128, 64, 255)])
@@ -504,7 +486,7 @@ def check_metallic_roughness(directory: Path, *, device: int) -> None:
 def check_normal_mapping(directory: Path, *, device: int) -> None:
     # Bilinear lookup at the center produces exactly (0.5, 0.5, 1), avoiding
     # the unavoidable 8-bit bias of a one-texel neutral normal map.
-    flat = directory / "normal-flat-texture.png"
+    flat = directory / "normal-flat-texture.avif"
     write_rgba(
         flat,
         (2, 2),
@@ -515,9 +497,9 @@ def check_normal_mapping(directory: Path, *, device: int) -> None:
             (128, 128, 255, 255),
         ],
     )
-    tilted = directory / "normal-tilted-texture.png"
+    tilted = directory / "normal-tilted-texture.avif"
     write_rgba(tilted, (1, 1), [(185, 128, 241, 255)])
-    tilted_y = directory / "normal-tilted-y-texture.png"
+    tilted_y = directory / "normal-tilted-y-texture.avif"
     write_rgba(tilted_y, (1, 1), [(128, 185, 241, 255)])
 
     control = render_probe(
@@ -640,7 +622,7 @@ def check_normal_mapping(directory: Path, *, device: int) -> None:
     # The tilted texture decodes to roughly (0.451, 0.004, 0.890). Applying
     # inverse-transpose for scale=(2,1,0.5) gives the same world-space normal
     # as the quantized adjusted texture below on an unscaled instance.
-    adjusted = directory / "normal-adjusted.png"
+    adjusted = directory / "normal-adjusted.avif"
     write_rgba(adjusted, (1, 1), [(144, 128, 254, 255)])
     transformed = render_probe(
         pbr_renderer(

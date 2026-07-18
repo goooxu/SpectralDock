@@ -2,14 +2,17 @@
 """GPU checks for finite-light selection and power-weighted sampling."""
 
 import math
-import struct
 import sys
 import tempfile
 from pathlib import Path
 
-from PIL import Image
-
 from spectraldock import Renderer
+
+from avif_test_utils import (
+    assert_avif_dimensions,
+    captured_linear_image,
+    captured_linear_rgb,
+)
 
 
 WIDTH = 48
@@ -152,7 +155,7 @@ def add_representative_lights(renderer):
 
 
 def render(renderer, directory, name, mode, spp, seed, depth=1):
-    output = directory / (name + ".png")
+    output = directory / (name + ".avif")
     stats = renderer.render(
         output=output,
         stats_output=output.with_suffix(".stats.json"),
@@ -162,16 +165,10 @@ def render(renderer, directory, name, mode, spp, seed, depth=1):
         depth=depth,
         seed=seed,
         denoise=False,
+        _test_capture_linear=True,
     )
-    with Image.open(output) as decoded:
-        decoded.load()
-        if decoded.size != (WIDTH, HEIGHT) or decoded.mode != "RGBA":
-            raise RuntimeError(
-                "unexpected finite-light output: {} {}".format(
-                    decoded.size, decoded.mode
-                )
-            )
-        image = decoded.copy()
+    assert_avif_dimensions(output, WIDTH, HEIGHT)
+    image = captured_linear_image(stats, WIDTH, HEIGHT)
     actual_mode = stats.get("render", {}).get("direct_light_sampling")
     if actual_mode != mode:
         raise RuntimeError(
@@ -183,31 +180,21 @@ def render(renderer, directory, name, mode, spp, seed, depth=1):
 
 
 def render_linear_probe(renderer, directory, name, spp, seed):
-    output = directory / (name + ".png")
-    linear = directory / (name + ".pfm")
-    renderer.render(
+    output = directory / (name + ".avif")
+    stats = renderer.render(
         output=output,
         stats_output=output.with_suffix(".stats.json"),
-        linear_output=linear,
         width=1,
         height=1,
         spp=spp,
         depth=2,
         seed=seed,
         denoise=False,
+        _test_capture_linear=True,
     )
-    with linear.open("rb") as stream:
-        if stream.readline() != b"PF\n" or stream.readline() != b"1 1\n":
-            raise RuntimeError("unexpected sphere-boundary PFM header")
-        if float(stream.readline()) >= 0.0:
-            raise RuntimeError("expected little-endian sphere-boundary PFM")
-        payload = stream.read()
-    if len(payload) != 12:
-        raise RuntimeError("unexpected sphere-boundary PFM payload")
-    values = struct.unpack("<3f", payload)
-    if any(not math.isfinite(value) for value in values):
-        raise RuntimeError("non-finite sphere-boundary PFM value")
-    return values
+    assert_avif_dimensions(output, 1, 1)
+    pixels, _ = captured_linear_rgb(stats, 1, 1)
+    return pixels[0]
 
 
 def bound_emitter_mis_renderer(mode):
@@ -381,7 +368,7 @@ def main():
                 64,
                 821 + index,
             )
-            if mean_luminance(image) <= 0.1:
+            if mean_luminance(image) <= 1.0e-6:
                 raise RuntimeError("{} light did not illuminate the receiver".format(kind))
             if is_flame and metric(stats, "volume_light_samples") in (None, 0):
                 raise RuntimeError("flame NEE branch was not sampled")
@@ -408,11 +395,11 @@ def main():
         )
         bound_uniform_mean = mean_luminance(bound_uniform)
         bound_importance_mean = mean_luminance(bound_importance)
-        if min(bound_uniform_mean, bound_importance_mean) <= 1.0:
+        if min(bound_uniform_mean, bound_importance_mean) <= 1.0e-6:
             raise RuntimeError("bound-emitter MIS comparison rendered blank")
         bound_relative_error = abs(
             bound_uniform_mean - bound_importance_mean
-        ) / max(0.5 * (bound_uniform_mean + bound_importance_mean), 1.0)
+        ) / max(0.5 * (bound_uniform_mean + bound_importance_mean), 1.0e-6)
         if bound_relative_error > 0.08:
             raise RuntimeError(
                 "bound-emitter uniform/importance means disagree; emitter-hit "
@@ -437,7 +424,7 @@ def main():
         reference_mean = mean_luminance(reference)
         uniform_mean = mean_luminance(uniform_high)
         relative_mean_error = abs(reference_mean - uniform_mean) / max(
-            reference_mean, 1.0
+            reference_mean, 1.0e-6
         )
         if relative_mean_error > 0.12:
             raise RuntimeError(

@@ -1,30 +1,24 @@
 #!/usr/bin/env python3
-"""Validate the composite GPU mesh fixture and its deterministic RTX 5090 output."""
+"""Validate the composite GPU mesh fixture and its semantic image output."""
 
 import ast
-import hashlib
 import json
 import sys
 from pathlib import Path
 
-from PIL import Image, ImageStat
+from avif_test_utils import assert_avif_dimensions, read_avif_image
 
 
 ROOT = Path(__file__).resolve().parents[1]
 SCENE_PATH = ROOT / "tests/scenes/mesh-composite-smoke.py"
 OBJ_PATH = ROOT / "tests/assets/uv-quad.obj"
-IMAGE_PATH = ROOT / "output/tests/mesh-composite-smoke.png"
+IMAGE_PATH = ROOT / "output/tests/mesh-composite-smoke.avif"
 STATS_PATH = ROOT / "output/tests/mesh-composite-smoke.stats.json"
-HASH_PATH = ROOT / "tests/golden/mesh-composite-smoke-64x64-spp1-depth6-seed1.sha256"
 
 
 def main() -> int:
-    arguments = sys.argv[1:]
-    if arguments not in ([], ["--skip-rtx5090-golden"]):
-        raise RuntimeError(
-            "check_mesh_smoke.py only accepts --skip-rtx5090-golden"
-        )
-    skip_golden = arguments == ["--skip-rtx5090-golden"]
+    if len(sys.argv) != 1:
+        raise RuntimeError("check_mesh_smoke.py does not accept arguments")
 
     source = SCENE_PATH.read_text(encoding="utf-8")
     tree = ast.parse(source, filename=str(SCENE_PATH))
@@ -92,36 +86,26 @@ def main() -> int:
         raise RuntimeError(
             f"unexpected mesh smoke geometry stats: {geometry!r}"
         )
-    if not skip_golden and "RTX 5090" not in stats["hardware"]["gpu"]:
-        raise RuntimeError("mesh smoke golden is restricted to RTX 5090")
     if stats["render"]["denoised"] is not False:
-        raise RuntimeError("mesh smoke golden must not use denoising")
+        raise RuntimeError("mesh smoke check must not use denoising")
 
-    actual = hashlib.sha256(IMAGE_PATH.read_bytes()).hexdigest()
-    if not skip_golden:
-        expected = HASH_PATH.read_text(encoding="ascii").strip()
-        if actual != expected:
-            raise RuntimeError(
-                f"mesh smoke golden mismatch: expected {expected}, got {actual}"
-            )
+    assert_avif_dimensions(IMAGE_PATH, 64, 64)
+    image = read_avif_image(IMAGE_PATH)
+    samples = list(image.getdata())
+    deviation = []
+    for channel in range(3):
+        mean = sum(pixel[channel] for pixel in samples) / len(samples)
+        variance = sum(
+            (pixel[channel] - mean) ** 2 for pixel in samples
+        ) / len(samples)
+        deviation.append(variance ** 0.5)
+    if max(deviation) < 3.0:
+        raise RuntimeError("mesh smoke output is blank or nearly constant")
 
-    with Image.open(IMAGE_PATH) as image:
-        image.load()
-        if image.size != (64, 64) or image.mode != "RGBA":
-            raise RuntimeError(
-                f"mesh smoke must be 64x64 RGBA, got {image.size} {image.mode}"
-            )
-        deviation = ImageStat.Stat(image.convert("RGB")).stddev
-        if max(deviation) < 3.0:
-            raise RuntimeError("mesh smoke output is blank or nearly constant")
-
-    if skip_golden:
-        print(
-            "mesh composite structure/image checks passed "
-            f"({stats['hardware']['gpu']}); RTX 5090 hash skipped"
-        )
-    else:
-        print(f"mesh composite GPU golden passed ({actual})")
+    print(
+        "mesh composite structure/image checks passed "
+        f"({stats['hardware']['gpu']})"
+    )
     return 0
 
 

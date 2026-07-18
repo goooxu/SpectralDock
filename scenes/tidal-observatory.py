@@ -184,7 +184,7 @@ def create_renderer(device: int = 0) -> Renderer:
     spot_albedo = renderer.texture(
         name="spot_srgb_albedo",
         type="image",
-        path=ROOT / "assets/examples/models/spot/spot_texture.png",
+        path=ROOT / "assets/examples/models/spot/spot_texture.avif",
         color_space="srgb",
         wrap_u="repeat",
         wrap_v="repeat",
@@ -192,7 +192,7 @@ def create_renderer(device: int = 0) -> Renderer:
     sparky_screen = renderer.texture(
         name="sparky_srgb_screen_atlas",
         type="image",
-        path=ROOT / "assets/examples/models/sparky/sparky_albedo.png",
+        path=ROOT / "assets/examples/models/sparky/sparky_albedo.avif",
         color_space="srgb",
     )
     panel_normal = renderer.texture(
@@ -200,7 +200,7 @@ def create_renderer(device: int = 0) -> Renderer:
         type="image",
         path=(
             ROOT
-            / "assets/examples/models/showcase-panel/showcase-panel-normal.png"
+            / "assets/examples/models/showcase-panel/showcase-panel-normal.avif"
         ),
         color_space="linear",
         wrap_u="repeat",
@@ -212,7 +212,7 @@ def create_renderer(device: int = 0) -> Renderer:
         path=(
             ROOT
             / "assets/examples/models/showcase-panel/"
-            "showcase-panel-metallic-roughness.png"
+            "showcase-panel-metallic-roughness.avif"
         ),
         color_space="linear",
         wrap_u="repeat",
@@ -661,7 +661,7 @@ def _parse_args() -> argparse.Namespace:
         "--output-dir",
         type=Path,
         default=DEFAULT_OUTPUT_DIR,
-        help="directory for the PNG and temporary stats JSON",
+        help="directory for the HDR AVIF and temporary stats JSON",
     )
     parser.add_argument(
         "--preview",
@@ -674,7 +674,7 @@ def _parse_args() -> argparse.Namespace:
 def main() -> None:
     args = _parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    output = args.output_dir / "tidal-observatory.png"
+    output = args.output_dir / "tidal-observatory.avif"
     if args.preview:
         width, height, spp, depth = (
             PREVIEW_WIDTH,

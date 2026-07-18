@@ -1,14 +1,15 @@
 {
-  "scene": "scenes/benchmark-harbor.json",
-  "output": "docs/gallery/benchmark-harbor.png",
+  "scene": "benchmark-harbor",
+  "output": "/workspace/output/examples/benchmark-harbor.avif",
+  "schema_version": 2,
   "hardware": {
-    "gpu": "NVIDIA GeForce RTX 5090",
-    "compute_capability": "12.0"
+    "gpu": "NVIDIA GB200",
+    "compute_capability": "10.0"
   },
   "versions": {
-    "driver": "615.36",
-    "cuda_driver_api": 13040,
-    "cuda_runtime": 13030,
+    "driver": "595.84.01",
+    "cuda_driver_api": 13020,
+    "cuda_runtime": 13000,
     "optix": 90100
   },
   "render": {
@@ -23,14 +24,30 @@
     "clamp_indirect": 16.0
   },
   "timings_ms": {
-    "bvh_build": 160.85296630859375,
-    "render": 752.1204223632813,
-    "denoise": 11.834688186645508,
-    "total": 7028.148624
+    "bvh_build": 640.4785766601562,
+    "render": 3047.369140625,
+    "denoise": 84.36688232421875,
+    "avif_encode": 491.308309,
+    "total": 5903.474553
+  },
+  "hdr_avif": {
+    "bit_depth": 10,
+    "yuv_format": "4:4:4",
+    "full_range": true,
+    "cicp": [
+      9,
+      16,
+      9
+    ],
+    "diffuse_white_nits": 203,
+    "peak_nits": 1000,
+    "lossless": true,
+    "max_cll": 354,
+    "max_pall": 21
   },
   "memory": {
-    "peak_device_bytes": 1862598656,
-    "peak_tracked_device_bytes": 520302576
+    "peak_device_bytes": 2285895680,
+    "peak_tracked_device_bytes": 510776144
   },
   "geometry": {
     "objects": 1040,
@@ -40,12 +57,12 @@
     "gas_count": 1025
   },
   "performance": {
-    "traced_rays": 1584200149,
-    "rays_per_second": 2106311837.7003946
+    "traced_rays": 1584196474,
+    "rays_per_second": 519857096.6939336
   },
   "firefly": {
-    "direct_clamped_contributions": 9754,
-    "indirect_clamped_contributions": 10673
+    "direct_clamped_contributions": 9756,
+    "indirect_clamped_contributions": 10711
   },
   "volume": {
     "volume_density_evaluations": 0,

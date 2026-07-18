@@ -2,17 +2,16 @@
 """Generate the deterministic showcase panel mesh and linear data textures."""
 
 import argparse
-import binascii
 import hashlib
 import json
 import math
 import os
-import struct
 import sys
 import tempfile
-import zlib
 from array import array
 from pathlib import Path
+
+from spectraldock import _native
 
 
 VERSION = "spectraldock-showcase-panel-generator/1.0"
@@ -23,8 +22,8 @@ DEFAULT_OUTPUT_DIR = (
 )
 
 OBJ_NAME = "showcase-panel.obj"
-NORMAL_NAME = "showcase-panel-normal.png"
-METALLIC_ROUGHNESS_NAME = "showcase-panel-metallic-roughness.png"
+NORMAL_NAME = "showcase-panel-normal.avif"
+METALLIC_ROUGHNESS_NAME = "showcase-panel-metallic-roughness.avif"
 MANIFEST_NAME = "manifest.json"
 
 
@@ -36,43 +35,27 @@ def sha256(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def png_chunk(chunk_type, payload):
-    checksum = binascii.crc32(chunk_type)
-    checksum = binascii.crc32(payload, checksum) & 0xFFFFFFFF
-    return (
-        struct.pack(">I", len(payload))
-        + chunk_type
-        + payload
-        + struct.pack(">I", checksum)
-    )
-
-
-def encode_rgb8_png(width, height, pixels):
-    """Encode top-to-bottom RGB8 rows without color-profile metadata."""
+def write_linear_rgb8_avif(path, width, height, pixels):
+    """Write lossless top-to-bottom RGB8 data as the strict linear AVIF profile."""
     expected_size = width * height * 3
     if len(pixels) != expected_size:
         raise ValueError(
             f"RGB8 payload has {len(pixels)} bytes, expected {expected_size}"
         )
-
-    row_bytes = width * 3
-    scanlines = bytearray((row_bytes + 1) * height)
-    for y in range(height):
-        destination = y * (row_bytes + 1)
-        source = y * row_bytes
-        scanlines[destination] = 0
-        scanlines[destination + 1 : destination + 1 + row_bytes] = pixels[
-            source : source + row_bytes
-        ]
-
-    ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
-    return b"".join(
-        (
-            b"\x89PNG\r\n\x1a\n",
-            png_chunk(b"IHDR", ihdr),
-            png_chunk(b"IDAT", zlib.compress(bytes(scanlines), level=9)),
-            png_chunk(b"IEND", b""),
+    rgba = bytearray(width * height * 4)
+    source = 0
+    destination = 0
+    while source < len(pixels):
+        rgba[destination : destination + 4] = (
+            pixels[source],
+            pixels[source + 1],
+            pixels[source + 2],
+            255,
         )
+        source += 3
+        destination += 4
+    _native.write_texture_avif(
+        os.fspath(path), width, height, bytes(rgba), False
     )
 
 
@@ -237,7 +220,7 @@ def build_normal_pixels(heights):
             left = max(0, x - 1)
             right = min(size - 1, x + 1)
             du = int(heights[center + right]) - int(heights[center + left])
-            # PNG row zero maps to v=1 in the renderer. Therefore -dh/dv,
+            # Image row zero maps to v=1 in the renderer. Therefore -dh/dv,
             # the OpenGL green component, is h(bottom)-h(top).
             minus_dv = int(heights[bottom + x]) - int(heights[top + x])
             nx = -8 * du
@@ -360,8 +343,10 @@ def serialize_manifest(obj_bytes, normal_bytes, metallic_roughness_bytes):
                 width=TEXTURE_SIZE,
                 height=TEXTURE_SIZE,
                 mode="RGB8",
+                format="AVIF",
+                encoding="lossless 8-bit YUV 4:4:4 full-range",
                 scene_color_space="linear",
-                embedded_color_profile=False,
+                cicp=[1, 8, 0],
                 convention="OpenGL/+Y",
             ),
             file_record(
@@ -371,8 +356,10 @@ def serialize_manifest(obj_bytes, normal_bytes, metallic_roughness_bytes):
                 width=TEXTURE_SIZE,
                 height=TEXTURE_SIZE,
                 mode="RGB8",
+                format="AVIF",
+                encoding="lossless 8-bit YUV 4:4:4 full-range",
                 scene_color_space="linear",
-                embedded_color_profile=False,
+                cicp=[1, 8, 0],
                 channels={
                     "R": "unused (constant 1.0)",
                     "G": "roughness",
@@ -425,31 +412,32 @@ def main(argv=None):
         trace_relief = build_trace_relief()
         bolt_relief = build_bolt_relief()
         heights = build_height_field(radius_field, trace_relief, bolt_relief)
-        normal_bytes = encode_rgb8_png(
-            TEXTURE_SIZE,
-            TEXTURE_SIZE,
-            build_normal_pixels(heights),
+        normal_path = args.output_dir / NORMAL_NAME
+        metallic_roughness_path = args.output_dir / METALLIC_ROUGHNESS_NAME
+        write_linear_rgb8_avif(
+            normal_path, TEXTURE_SIZE, TEXTURE_SIZE, build_normal_pixels(heights)
         )
-        metallic_roughness_bytes = encode_rgb8_png(
+        write_linear_rgb8_avif(
+            metallic_roughness_path,
             TEXTURE_SIZE,
             TEXTURE_SIZE,
             build_metallic_roughness_pixels(
                 radius_field, trace_relief, bolt_relief
             ),
         )
+        normal_bytes = normal_path.read_bytes()
+        metallic_roughness_bytes = metallic_roughness_path.read_bytes()
         manifest_bytes = serialize_manifest(
             obj_bytes, normal_bytes, metallic_roughness_bytes
         )
 
         outputs = (
             (OBJ_NAME, obj_bytes),
-            (NORMAL_NAME, normal_bytes),
-            (METALLIC_ROUGHNESS_NAME, metallic_roughness_bytes),
             (MANIFEST_NAME, manifest_bytes),
         )
         for name, data in outputs:
             atomic_write(args.output_dir / name, data)
-    except (OSError, ValueError) as error:
+    except (OSError, RuntimeError, ValueError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 2
 

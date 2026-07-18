@@ -1,18 +1,17 @@
-import binascii
 import hashlib
 import importlib.util
 import math
 from pathlib import Path
-import struct
 import subprocess
 import sys
-import zlib
+
+from avif_test_utils import read_avif_rgba
 
 
 ROOT = Path(__file__).resolve().parents[1]
 GENERATOR = ROOT / "tools" / "generate_assembly_hall_assets.py"
 TRACKED_HDR = ROOT / "assets/examples/environments/assembly-hall-noon.hdr"
-TRACKED_ALPHA = ROOT / "assets/examples/textures/assembly-hall-gear-alpha.png"
+TRACKED_ALPHA = ROOT / "assets/examples/textures/assembly-hall-gear-alpha.avif"
 
 
 def load_generator():
@@ -28,51 +27,13 @@ def load_generator():
 GENERATOR_MODULE = load_generator()
 
 
-def decode_rgba_png(path):
-    data = path.read_bytes()
-    assert data.startswith(b"\x89PNG\r\n\x1a\n")
-    offset = 8
-    chunks = []
-    idat = bytearray()
-    ihdr = None
-    while offset < len(data):
-        length = struct.unpack(">I", data[offset : offset + 4])[0]
-        kind = data[offset + 4 : offset + 8]
-        payload = data[offset + 8 : offset + 8 + length]
-        expected = struct.unpack(
-            ">I", data[offset + 8 + length : offset + 12 + length]
-        )[0]
-        checksum = binascii.crc32(payload, binascii.crc32(kind)) & 0xFFFFFFFF
-        assert checksum == expected
-        chunks.append(kind)
-        if kind == b"IHDR":
-            ihdr = struct.unpack(">IIBBBBB", payload)
-        elif kind == b"IDAT":
-            idat.extend(payload)
-        offset += 12 + length
-    assert chunks == [b"IHDR", b"IDAT", b"IEND"]
-    assert ihdr is not None
-    width, height, depth, color, compression, filtering, interlace = ihdr
-    assert (depth, color, compression, filtering, interlace) == (8, 6, 0, 0, 0)
-    packed = zlib.decompress(bytes(idat))
-    row_bytes = width * 4
-    pixels = bytearray(width * height * 4)
-    for y in range(height):
-        source = y * (row_bytes + 1)
-        assert packed[source] == 0
-        pixels[y * row_bytes : (y + 1) * row_bytes] = packed[
-            source + 1 : source + 1 + row_bytes
-        ]
-    return width, height, bytes(pixels)
-
-
 def alpha_at(pixels, width, x, y):
     return pixels[(y * width + x) * 4 + 3]
 
 
 def test_generator_reconstructs_both_tracked_assets(tmp_path):
     hdr = tmp_path / "assembly-hall-noon.hdr"
-    alpha = tmp_path / "assembly-hall-gear-alpha.png"
+    alpha = tmp_path / "assembly-hall-gear-alpha.avif"
     subprocess.run(
         [
             sys.executable,
@@ -85,7 +46,7 @@ def test_generator_reconstructs_both_tracked_assets(tmp_path):
         cwd=ROOT,
         check=True,
     )
-    for expected, actual in ((TRACKED_HDR, hdr), (TRACKED_ALPHA, alpha)):
+    for expected, actual in ((TRACKED_HDR, hdr),):
         expected_bytes = expected.read_bytes()
         actual_bytes = actual.read_bytes()
         assert actual_bytes == expected_bytes, (
@@ -95,6 +56,7 @@ def test_generator_reconstructs_both_tracked_assets(tmp_path):
                 hashlib.sha256(actual_bytes).hexdigest(),
             )
         )
+    assert read_avif_rgba(alpha) == read_avif_rgba(TRACKED_ALPHA)
     assert b"-Y 1024 +X 2048\n" in hdr.read_bytes()[:512]
 
 
@@ -125,7 +87,7 @@ def test_noon_environment_is_finite_seamless_and_sun_dominated():
 
 
 def test_gear_mask_is_rgba_and_has_teeth_spokes_ring_and_hole():
-    width, height, pixels = decode_rgba_png(TRACKED_ALPHA)
+    width, height, pixels, _ = read_avif_rgba(TRACKED_ALPHA)
     assert (width, height) == (1024, 1024)
     assert set(pixels[0::4]) == {255}
     assert set(pixels[1::4]) == {255}

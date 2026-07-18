@@ -3,9 +3,8 @@
 
 from pathlib import Path
 
-from PIL import Image
-
 from spectraldock import Renderer
+from spectraldock import _native
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -15,10 +14,10 @@ def _write_screen_fixture() -> Path:
     """Create a deterministic dark, saturated sRGB screen pattern."""
     output_dir = ROOT / "output/tests"
     output_dir.mkdir(parents=True, exist_ok=True)
-    path = output_dir / "multi-material-srgb-fixture.png"
+    path = output_dir / "multi-material-srgb-fixture.avif"
 
     size = 16
-    pixels = []
+    pixels = bytearray()
     for y in range(size):
         for x in range(size):
             if x in (2, 7, 13):
@@ -30,10 +29,8 @@ def _write_screen_fixture() -> Path:
             else:
                 shade = 4 + ((5 * x + 3 * y) % 7)
                 color = (shade, shade + 2, shade + 5)
-            pixels.append(color)
-    image = Image.new("RGB", (size, size))
-    image.putdata(pixels)
-    image.save(path)
+            pixels.extend((*color, 255))
+    _native.write_texture_avif(path, size, size, bytes(pixels), True)
     return path
 
 
@@ -110,7 +107,7 @@ def create_renderer() -> Renderer:
 
 
 def main() -> None:
-    output = ROOT / "output/tests/multi-material-mesh-smoke.png"
+    output = ROOT / "output/tests/multi-material-mesh-smoke.avif"
     create_renderer().render(
         output=output,
         stats_output=output.with_suffix(".stats.json"),

@@ -81,7 +81,7 @@ def create_renderer() -> Renderer:
 
 
 def main() -> None:
-    output = ROOT / "output/tests/delta-light-smoke.png"
+    output = ROOT / "output/tests/delta-light-smoke.avif"
     create_renderer().render(
         output=output,
         stats_output=output.with_suffix(".stats.json"),

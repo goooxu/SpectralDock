@@ -31,3 +31,18 @@ target_link_libraries(spectraldock_physx_worker PRIVATE
 target_compile_features(spectraldock_physx_worker PRIVATE cxx_std_17)
 target_compile_options(spectraldock_physx_worker PRIVATE
   -Wall -Wextra -Wpedantic)
+
+# PhysX loads its GPU runtime dynamically. Record only the detected SDK runtime
+# directory; no processor name or GPU model is baked into the executable.
+set(_spectraldock_physx_rpath)
+if(PHYSX_RUNTIME_DIR)
+  list(APPEND _spectraldock_physx_rpath "${PHYSX_RUNTIME_DIR}")
+endif()
+if(CUDAToolkit_LIBRARY_DIR)
+  list(APPEND _spectraldock_physx_rpath "${CUDAToolkit_LIBRARY_DIR}")
+endif()
+if(_spectraldock_physx_rpath)
+  set_target_properties(spectraldock_physx_worker PROPERTIES
+    BUILD_RPATH "${_spectraldock_physx_rpath}"
+    INSTALL_RPATH "${_spectraldock_physx_rpath}")
+endif()

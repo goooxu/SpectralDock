@@ -20,5 +20,5 @@
 third_party/mikktspace/mikktspace.c -whitespace
 third_party/mikktspace/mikktspace.h -whitespace
 
-*.png binary
+*.avif binary
 *.hdr binary

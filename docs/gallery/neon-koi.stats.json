@@ -1,14 +1,15 @@
 {
   "scene": "neon-koi",
-  "output": "docs/gallery/neon-koi.png",
+  "output": "/workspace/output/examples/neon-koi.avif",
+  "schema_version": 2,
   "hardware": {
-    "gpu": "NVIDIA GeForce RTX 5090",
-    "compute_capability": "12.0"
+    "gpu": "NVIDIA GB200",
+    "compute_capability": "10.0"
   },
   "versions": {
-    "driver": "615.36",
-    "cuda_driver_api": 13040,
-    "cuda_runtime": 13030,
+    "driver": "595.84.01",
+    "cuda_driver_api": 13020,
+    "cuda_runtime": 13000,
     "optix": 90100
   },
   "render": {
@@ -23,14 +24,30 @@
     "clamp_indirect": 16.0
   },
   "timings_ms": {
-    "bvh_build": 12.695072174072266,
-    "render": 5353.791015625,
-    "denoise": 16.996063232421875,
-    "total": 5721.00913
+    "bvh_build": 17.405311584472656,
+    "render": 9912.888671875,
+    "denoise": 1131.25146484375,
+    "avif_encode": 624.96084,
+    "total": 28138.998838
+  },
+  "hdr_avif": {
+    "bit_depth": 10,
+    "yuv_format": "4:4:4",
+    "full_range": true,
+    "cicp": [
+      9,
+      16,
+      9
+    ],
+    "diffuse_white_nits": 203,
+    "peak_nits": 1000,
+    "lossless": true,
+    "max_cll": 912,
+    "max_pall": 19
   },
   "memory": {
-    "peak_device_bytes": 1860501504,
-    "peak_tracked_device_bytes": 518472960
+    "peak_device_bytes": 2281701376,
+    "peak_tracked_device_bytes": 507998720
   },
   "geometry": {
     "objects": 75,
@@ -40,12 +57,12 @@
     "gas_count": 75
   },
   "performance": {
-    "traced_rays": 4727050301,
-    "rays_per_second": 882935155.1459775
+    "traced_rays": 4727138704,
+    "rays_per_second": 476867930.2746444
   },
   "firefly": {
-    "direct_clamped_contributions": 199445,
-    "indirect_clamped_contributions": 5769
+    "direct_clamped_contributions": 199441,
+    "indirect_clamped_contributions": 5774
   },
   "volume": {
     "volume_density_evaluations": 0,

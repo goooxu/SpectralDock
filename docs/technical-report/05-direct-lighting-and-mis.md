@@ -335,7 +335,7 @@ $$
 
 ## 8. 对应实现
 
-设备端采样与 RR/MIS 决策都实现在 [`src/device_programs.cu`](../../src/device_programs.cu)。相关 helper 位于该文件的匿名命名空间，与调用点一起编译为 OptiX IR；不存在需要同步维护的 CPU 渲染副本：
+设备端采样与 RR/MIS 决策都实现在 [`src/device_programs.cu`](../../src/device_programs.cu)。相关 helper 位于该文件的匿名命名空间，与调用点一起编译为 portable OptiX PTX；不存在需要同步维护的 CPU 渲染副本：
 
 - `sample_light_surface`、`sample_visible_sphere_direction`：矩形/圆盘面积采样、球内回退与球外可见锥采样；
 - `light_direction_pdf`：面积或球锥 PDF 到统一方向测度的换元；

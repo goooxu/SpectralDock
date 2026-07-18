@@ -35,13 +35,16 @@ def test_physx_gallery_programs_are_a_separate_acceptance_group():
     assert 'for scene in "${PHYSX_GALLERY_PROGRAMS[@]}"' in acceptance
     assert '--preview' in acceptance
     assert '--output-dir "${ROOT}/output/acceptance-gallery/${scene}"' in acceptance
+    assert "check_physx_gpu_only.py" in acceptance
+    assert "SPECTRALDOCK_BUILD_PHYSX=OFF is not allowed" in acceptance
+    assert "check_mesh_smoke.py" in acceptance
 
 
 def test_cover_documentation_keeps_the_canonical_order():
     expected = (
-        "gallery/showcase/tidal-observatory.png",
-        "gallery/showcase/atelier.png",
-        "gallery/showcase/assembly-hall.png",
+        "gallery/showcase/tidal-observatory.avif",
+        "gallery/showcase/atelier.avif",
+        "gallery/showcase/assembly-hall.avif",
     )
     documents = (
         ROOT / "README.md",
@@ -84,9 +87,9 @@ def test_new_cover_assets_are_cc0_without_runtime_sidecars():
     ).read_text(encoding="utf-8")
     for relative in (
         "assets/examples/environments/assembly-hall-noon.hdr",
-        "assets/examples/textures/assembly-hall-gear-alpha.png",
-        "docs/gallery/showcase/atelier.png",
-        "docs/gallery/showcase/assembly-hall.png",
+        "assets/examples/textures/assembly-hall-gear-alpha.avif",
+        "docs/gallery/showcase/atelier.avif",
+        "docs/gallery/showcase/assembly-hall.avif",
     ):
         assert "- " + relative in dedication
 

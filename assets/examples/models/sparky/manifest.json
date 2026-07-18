@@ -30,13 +30,13 @@
   "materials": [
     {"name": "PlasticBlue", "source_triangles": 3144, "renderable_triangles": 2632},
     {"name": "MetalGrey", "source_triangles": 760, "renderable_triangles": 760},
-    {"name": "ScreenFace", "source_triangles": 2, "renderable_triangles": 2, "albedo": "sparky_albedo.png"},
+    {"name": "ScreenFace", "source_triangles": 2, "renderable_triangles": 2, "albedo": "sparky_albedo.avif"},
     {"name": "GlassHead", "source_triangles": 12, "renderable_triangles": 12},
     {"name": "EmitYellow", "source_triangles": 24, "renderable_triangles": 24},
     {"name": "PlasticWhite", "source_triangles": 2520, "renderable_triangles": 2136},
-    {"name": "ScreenChest", "source_triangles": 2, "renderable_triangles": 2, "albedo": "sparky_albedo.png"},
+    {"name": "ScreenChest", "source_triangles": 2, "renderable_triangles": 2, "albedo": "sparky_albedo.avif"},
     {"name": "AccentOrange", "source_triangles": 384, "renderable_triangles": 384},
-    {"name": "ScreenPalm", "source_triangles": 4, "renderable_triangles": 4, "albedo": "sparky_albedo.png"},
+    {"name": "ScreenPalm", "source_triangles": 4, "renderable_triangles": 4, "albedo": "sparky_albedo.avif"},
     {"name": "TreadOrange", "source_triangles": 432, "renderable_triangles": 432}
   ],
   "files": [
@@ -49,20 +49,22 @@
     {
       "path": "sparky.mtl",
       "role": "material-slot names, diffuse colors, and relative albedo references",
-      "bytes": 408,
-      "sha256": "24e7f30ffa16d67c2b2ed092460bb7b1fc62ef2552bafdacf759810f546b4f28"
+      "bytes": 411,
+      "sha256": "8c783f8a9156aba0764d7e8ea548304248195ba6369458458c02210880f235dc"
     },
     {
-      "path": "sparky_albedo.png",
+      "path": "sparky_albedo.avif",
       "role": "sRGB albedo atlas for ScreenFace, ScreenChest, and ScreenPalm",
-      "bytes": 15103,
-      "sha256": "e0c5f6b728a53d3cfbc1ef6f29bd55417170d5f02c53305a7a4b1a9f931e22f0",
+      "bytes": 8604,
+      "sha256": "1ef9ac86df962af208ec37f8401939a9fe195fa0043c9f12fed6638fe720f2be",
       "width": 1024,
       "height": 1024,
-      "mode": "RGBA8",
+      "mode": "RGB8",
+      "format": "AVIF",
+      "encoding": "lossless 8-bit YUV 4:4:4 full-range",
       "scene_color_space": "sRGB",
-      "embedded_color_profile": false,
-      "alpha": "fully opaque"
+      "cicp": [1, 13, 0],
+      "alpha": "not stored; decoder synthesizes opaque alpha"
     }
   ]
 }

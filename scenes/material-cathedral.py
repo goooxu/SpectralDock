@@ -172,7 +172,7 @@ def create_renderer() -> Renderer:
 
 def main() -> None:
     renderer = create_renderer()
-    output = ROOT / "output/examples/material-cathedral.png"
+    output = ROOT / "output/examples/material-cathedral.avif"
     renderer.render(
         output=output,
         stats_output=output.with_suffix(".stats.json"),

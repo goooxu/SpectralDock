@@ -1,9 +1,9 @@
 from pathlib import Path
+import os
 
-from PIL import Image
 import pytest
 
-from spectraldock import Renderer
+from spectraldock import Renderer, _native
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -42,7 +42,7 @@ def image_texture(
     return renderer.texture(
         name=name,
         type="image",
-        path=Path(f"{name}.png"),
+        path=Path(f"{name}.avif"),
         color_space=color_space,
     )
 
@@ -53,22 +53,30 @@ def test_image_texture_forwards_default_and_explicit_wrap_modes():
     renderer.texture(
         name="default",
         type="image",
-        path=Path("default.png"),
+        path=Path("default.avif"),
         color_space="srgb",
     )
     renderer.texture(
         name="tiled",
         type="image",
-        path=Path("tiled.png"),
+        path=Path("tiled.avif"),
         color_space="linear",
         wrap_u="repeat",
         wrap_v="mirrored_repeat",
     )
 
     assert builder.image_texture_calls == [
-        ("default", "default.png", True, "clamp_to_edge", "clamp_to_edge"),
-        ("tiled", "tiled.png", False, "repeat", "mirrored_repeat"),
+        ("default", "default.avif", True, "clamp_to_edge", "clamp_to_edge"),
+        ("tiled", "tiled.avif", False, "repeat", "mirrored_repeat"),
     ]
+
+
+@pytest.mark.parametrize("path", ["legacy.png", "upper.AVIF", "linear.pfm"])
+def test_image_texture_rejects_noncanonical_extensions(path):
+    renderer, builder = recording_renderer()
+    with pytest.raises(ValueError, match="lowercase \\.avif"):
+        renderer.texture(name="invalid", type="image", path=path)
+    assert builder.image_texture_calls == []
 
 
 @pytest.mark.parametrize("axis", ["wrap_u", "wrap_v"])
@@ -80,7 +88,7 @@ def test_image_texture_rejects_unknown_wrap_modes(axis, value):
         renderer.texture(
             name="invalid",
             type="image",
-            path="invalid.png",
+            path="invalid.avif",
             **{axis: value},
         )
 
@@ -238,7 +246,9 @@ def test_normal_scale_must_be_finite(value):
 
 
 def write_linear_normal(path: Path) -> None:
-    Image.new("RGBA", (1, 1), (128, 128, 255, 255)).save(path)
+    _native.write_texture_avif(
+        os.fspath(path), 1, 1, bytes((128, 128, 255, 255)), False
+    )
 
 
 def normal_mapped_material(renderer: Renderer, path: Path):
@@ -254,7 +264,7 @@ def normal_mapped_material(renderer: Renderer, path: Path):
 
 
 def test_normal_map_is_rejected_by_analytic_geometry(tmp_path):
-    path = tmp_path / "normal.png"
+    path = tmp_path / "normal.avif"
     write_linear_normal(path)
     renderer = Renderer()
     material = normal_mapped_material(renderer, path)
@@ -288,7 +298,7 @@ def test_pbr_without_a_normal_map_can_bind_analytic_geometry():
 
 @pytest.mark.parametrize("mesh_path", [NO_UV_QUAD, DEGENERATE_UV_QUAD])
 def test_normal_map_requires_a_valid_mesh_tangent_frame(tmp_path, mesh_path):
-    path = tmp_path / "normal.png"
+    path = tmp_path / "normal.avif"
     write_linear_normal(path)
     renderer = Renderer()
     material = normal_mapped_material(renderer, path)
@@ -313,7 +323,7 @@ def test_degenerate_uvs_remain_valid_without_a_normal_map():
 
 
 def test_valid_normal_mapped_mesh_builds_without_a_gpu(tmp_path):
-    path = tmp_path / "normal.png"
+    path = tmp_path / "normal.avif"
     write_linear_normal(path)
     renderer = Renderer()
     material = normal_mapped_material(renderer, path)

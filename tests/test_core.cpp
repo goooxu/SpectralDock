@@ -107,80 +107,73 @@ void test_vectors() {
 }
 
 void test_image_io() {
-  const auto png = temporary(".png");
+  const auto srgb_avif = temporary("-srgb.avif");
   const std::vector<std::uint8_t> expected = {
       255, 0, 0, 255, 0, 255, 0, 128,
       0, 0, 255, 64, 255, 255, 255, 0};
-  write_png_rgba8(png, 2, 2, expected);
-  const ImageRgba8 actual = load_png_rgba8(png);
-  std::filesystem::remove(png);
-  check(actual.width == 2 && actual.height == 2, "PNG dimensions");
-  check(actual.pixels == expected, "PNG lossless RGBA round trip");
+  write_texture_avif_rgba8(srgb_avif, 2, 2, expected, true);
+  const ImageRgba8 srgb = load_avif_rgba8(srgb_avif, true);
+  check(srgb.width == 2 && srgb.height == 2, "sRGB AVIF dimensions");
+  check(srgb.pixels == expected, "sRGB AVIF lossless RGBA round trip");
+  const DecodedAvif srgb_info = read_avif_rgba8(srgb_avif);
+  check(srgb_info.info.bit_depth == 8 &&
+            srgb_info.info.yuv_format == "4:4:4" &&
+            srgb_info.info.full_range &&
+            srgb_info.info.color_primaries == 1 &&
+            srgb_info.info.transfer_characteristics == 13 &&
+            srgb_info.info.matrix_coefficients == 0 &&
+            !srgb_info.info.premultiplied && !srgb_info.info.animated,
+        "sRGB AVIF canonical profile");
+  std::filesystem::remove(srgb_avif);
 
-  // RGB samples are intentionally far from their sRGB encodings.  The gAMA
-  // chunk declares a linear transfer (1.0), but texture color-space handling
-  // happens later in the renderer; loading must therefore preserve these
-  // exact file sample codes and only synthesize opaque alpha.
-  const auto linear_gamma_png = temporary("-linear-gamma.png");
-  write_binary(
-      linear_gamma_png,
-      {0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00,
-       0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x02,
-       0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00, 0x7b,
-       0x40, 0xe8, 0xdd, 0x00, 0x00, 0x00, 0x04, 0x67, 0x41, 0x4d,
-       0x41, 0x00, 0x01, 0x86, 0xa0, 0x31, 0xe8, 0x96, 0x5f, 0x00,
-       0x00, 0x00, 0x0f, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63,
-       0xe0, 0x51, 0xb2, 0x38, 0x31, 0x2d, 0x05, 0x00, 0x05, 0xc1,
-       0x02, 0x29, 0x05, 0x8e, 0x83, 0xd5, 0x00, 0x00, 0x00, 0x00,
-       0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82});
-  const ImageRgba8 linear_gamma = load_png_rgba8(linear_gamma_png);
-  std::filesystem::remove(linear_gamma_png);
-  check(linear_gamma.width == 2 && linear_gamma.height == 1,
-        "linear-gamma PNG dimensions");
-  check(linear_gamma.pixels ==
-            std::vector<std::uint8_t>{12, 34, 56, 255, 200, 150, 100, 255},
-        "linear-gamma PNG preserves raw RGB sample codes");
+  const auto opaque_avif = temporary("-opaque.avif");
+  write_texture_avif_rgba8(
+      opaque_avif, 1, 1, std::vector<std::uint8_t>{12, 34, 56, 255}, true);
+  check(!read_avif_rgba8(opaque_avif).info.has_alpha,
+        "opaque AVIF texture omits the alpha item");
+  std::filesystem::remove(opaque_avif);
 
-  const auto pfm = temporary(".pfm");
-  const std::vector<float> top_to_bottom = {
-      1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f,
-      7.0f, 8.0f, 9.0f, 10.0f, 11.0f, 12.0f};
-  write_pfm_rgb32f(pfm, 2, 2, top_to_bottom);
-  std::ifstream input(pfm, std::ios::binary);
-  std::string line;
-  std::getline(input, line);
-  check(line == "PF", "PFM RGB magic");
-  std::getline(input, line);
-  check(line == "2 2", "PFM dimensions");
-  std::getline(input, line);
-  check(line == "-1.0", "PFM little-endian scale");
-  const auto read_float = [&] {
-    std::uint32_t bits = 0;
-    input.read(reinterpret_cast<char*>(&bits), sizeof(bits));
-    check(input.gcount() == static_cast<std::streamsize>(sizeof(bits)),
-          "PFM payload length");
-    float value = 0.0f;
-    std::memcpy(&value, &bits, sizeof(value));
-    return value;
-  };
-  for (float value : std::vector<float>{7.0f, 8.0f, 9.0f, 10.0f, 11.0f,
-                                        12.0f, 1.0f, 2.0f, 3.0f, 4.0f,
-                                        5.0f, 6.0f})
-    near(read_float(), value, 0.0f, "PFM bottom-up payload");
-  input.close();
-  std::filesystem::remove(pfm);
+  const auto linear_avif = temporary("-linear.avif");
+  write_texture_avif_rgba8(linear_avif, 2, 2, expected, false);
+  const ImageRgba8 linear = load_avif_rgba8(linear_avif, false);
+  check(linear.pixels == expected, "linear AVIF lossless RGBA round trip");
+  const DecodedAvif linear_info = read_avif_rgba8(linear_avif);
+  check(linear_info.info.transfer_characteristics == 8 &&
+            linear_info.info.matrix_coefficients == 0,
+        "linear AVIF canonical profile");
+  std::filesystem::remove(linear_avif);
 
-  expect_error([&] { write_pfm_rgb32f(pfm, 0, 1, {}); }, "non-zero",
-               "PFM zero dimension rejection");
-  expect_error([&] { write_pfm_rgb32f(pfm, 1, 1, {1.0f, 2.0f}); },
-               "expected 3 RGB floats", "PFM channel count rejection");
+  const auto hdr_avif = temporary("-hdr.avif");
+  const HdrAvifInfo hdr = write_hdr_avif_rgb32f(
+      hdr_avif, 2, 1, {1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f}, 0.0f);
+  const DecodedAvif decoded_hdr = read_avif_rgba8(hdr_avif);
+  check(decoded_hdr.info.bit_depth == 10 &&
+            decoded_hdr.info.yuv_format == "4:4:4" &&
+            decoded_hdr.info.full_range &&
+            decoded_hdr.info.color_primaries == 9 &&
+            decoded_hdr.info.transfer_characteristics == 16 &&
+            decoded_hdr.info.matrix_coefficients == 9,
+        "HDR AVIF fixed profile");
+  check(hdr.max_cll == 187 && hdr.max_pall == 158,
+        "HDR AVIF CLLI uses ceil of per-pixel max-primary light levels");
+  check(decoded_hdr.image.pixels[0] > decoded_hdr.image.pixels[1] + 40 &&
+            decoded_hdr.image.pixels[5] > decoded_hdr.image.pixels[4] + 20,
+        "HDR AVIF colorful vectors retain BT.2020 chroma saturation");
+  std::filesystem::remove(hdr_avif);
+
+  const auto black_hdr_avif = temporary("-black-hdr.avif");
+  const HdrAvifInfo black_hdr = write_hdr_avif_rgb32f(
+      black_hdr_avif, 1, 1, {0.0f, 0.0f, 0.0f}, 0.0f);
+  const DecodedAvif decoded_black_hdr = read_avif_rgba8(black_hdr_avif);
+  check(black_hdr.max_cll == 1 && black_hdr.max_pall == 1 &&
+            decoded_black_hdr.info.max_cll == 1 &&
+            decoded_black_hdr.info.max_pall == 1,
+        "black HDR AVIF keeps explicit known CLLI upper bounds");
+  std::filesystem::remove(black_hdr_avif);
+
   expect_error(
-      [&] {
-        write_pfm_rgb32f(
-            pfm, 1, 1,
-            {1.0f, std::numeric_limits<float>::infinity(), 3.0f});
-      },
-      "samples must be finite", "PFM non-finite rejection");
+      [&] { write_texture_avif_rgba8(temporary(".png"), 1, 1, expected, true); },
+      ".avif extension", "PNG extension rejection");
 }
 
 void test_hdr_and_sampling_distributions() {
@@ -700,9 +693,10 @@ struct Assets {
 };
 
 Assets make_assets(const TemporaryDirectory& directory) {
-  Assets result{directory.path / "texture.png", directory.path / "mesh.obj",
+  Assets result{directory.path / "texture.avif", directory.path / "mesh.obj",
                 directory.path / "studio.hdr"};
-  write_png_rgba8(result.image, 1, 1, {255, 128, 64, 255});
+  write_texture_avif_rgba8(result.image, 1, 1,
+                           {255, 128, 64, 255}, true);
   write_text(result.mesh, R"obj(
 v 0 0 0
 v 1 0 0
@@ -1073,7 +1067,7 @@ void test_scene_builder_configuration_and_resources() {
       "duplicate name", "duplicate texture name");
   expect_error(
       [&] {
-        resources.add_image_texture("missing", directory.path / "none.png",
+        resources.add_image_texture("missing", directory.path / "none.avif",
                                     true);
       },
       "asset not found", "missing image texture");

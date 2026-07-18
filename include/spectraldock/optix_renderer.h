@@ -16,12 +16,10 @@ struct RenderSettings {
   std::uint32_t spp = 256;
   std::uint32_t max_depth = 12;
   std::uint32_t seed = 1;
-  float exposure = 0.0f;
   float clamp_direct = 64.0f;
   float clamp_indirect = 16.0f;
   bool denoise = false;
   bool validation = false;
-  bool capture_linear = false;
 };
 
 struct RenderStats {
@@ -44,7 +42,10 @@ struct RenderStats {
   double bvh_build_ms = 0.0;
   double render_ms = 0.0;
   double denoise_ms = 0.0;
+  double avif_encode_ms = 0.0;
   double total_ms = 0.0;
+  std::uint16_t avif_max_cll = 0;
+  std::uint16_t avif_max_pall = 0;
   std::size_t peak_device_bytes = 0;
   std::size_t peak_tracked_device_bytes = 0;
   std::uint64_t traced_rays = 0;
@@ -75,7 +76,6 @@ struct RenderStats {
 struct RenderResult {
   std::uint32_t width = 0;
   std::uint32_t height = 0;
-  std::vector<std::uint8_t> rgba;
   std::vector<float> linear_rgb;
   RenderStats stats;
 };

@@ -3,9 +3,8 @@
 
 from pathlib import Path
 
-from PIL import Image
-
 from spectraldock import Renderer
+from spectraldock import _native
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -16,9 +15,9 @@ def _write_fixture_textures() -> tuple[Path, Path]:
     output_dir = ROOT / "output/tests"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    srgb_path = output_dir / "mesh-srgb-fixture.png"
+    srgb_path = output_dir / "mesh-srgb-fixture.avif"
     size = 16
-    srgb_pixels = []
+    srgb_pixels = bytearray()
     for y in range(size):
         for x in range(size):
             if x in (3, 12) or y in (4, 11):
@@ -28,13 +27,11 @@ def _write_fixture_textures() -> tuple[Path, Path]:
             else:
                 shade = 5 + ((3 * x + 5 * y) % 8)
                 color = (shade, shade + 2, shade + 4)
-            srgb_pixels.append(color)
-    srgb_image = Image.new("RGB", (size, size))
-    srgb_image.putdata(srgb_pixels)
-    srgb_image.save(srgb_path)
+            srgb_pixels.extend((*color, 255))
+    _native.write_texture_avif(srgb_path, size, size, bytes(srgb_pixels), True)
 
-    alpha_path = output_dir / "mesh-alpha-fixture.png"
-    alpha_pixels = []
+    alpha_path = output_dir / "mesh-alpha-fixture.avif"
+    alpha_pixels = bytearray()
     for y in range(size):
         for x in range(size):
             centered_x = abs(2 * x + 1 - size)
@@ -42,10 +39,8 @@ def _write_fixture_textures() -> tuple[Path, Path]:
             inside_diamond = centered_x + centered_y <= size
             punched_hole = 6 <= x <= 9 and 6 <= y <= 9
             alpha = 255 if inside_diamond and not punched_hole else 0
-            alpha_pixels.append((255, 255, 255, alpha))
-    alpha_image = Image.new("RGBA", (size, size))
-    alpha_image.putdata(alpha_pixels)
-    alpha_image.save(alpha_path)
+            alpha_pixels.extend((255, 255, 255, alpha))
+    _native.write_texture_avif(alpha_path, size, size, bytes(alpha_pixels), False)
 
     return srgb_path, alpha_path
 
@@ -172,7 +167,7 @@ def create_renderer() -> Renderer:
 
 
 def main() -> None:
-    output = ROOT / "output/tests/mesh-composite-smoke.png"
+    output = ROOT / "output/tests/mesh-composite-smoke.avif"
     create_renderer().render(
         output=output,
         stats_output=output.with_suffix(".stats.json"),

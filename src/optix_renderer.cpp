@@ -31,7 +31,7 @@
 #include <vector>
 
 #ifndef SPECTRALDOCK_OPTIX_MODULE_INPUT_PATH
-#define SPECTRALDOCK_OPTIX_MODULE_INPUT_PATH "device_programs.optixir"
+#define SPECTRALDOCK_OPTIX_MODULE_INPUT_PATH "device_programs.ptx"
 #endif
 
 namespace spectraldock {
@@ -350,7 +350,7 @@ TextureHandle make_texture(const Texture& source, TextureData& out,
   float4 constant = make_float4(source.color.x, source.color.y, source.color.z, 1.0f);
   std::vector<std::uint8_t> pixels;
   if (source.type == TextureType::Image) {
-    ImageRgba8 image = load_png_rgba8(source.image_path);
+    ImageRgba8 image = load_avif_rgba8(source.image_path, source.srgb);
     if (image.empty()) throw std::runtime_error("empty texture: " + source.image_path.string());
     w = image.width; height = image.height; pixels = std::move(image.pixels);
     channel = cudaCreateChannelDesc<uchar4>();
@@ -1501,33 +1501,18 @@ RenderResult render_optix(const Scene& scene,
     final_beauty = &denoised;
   }
 
-  DeviceBuffer output(
-      tracker, checked_product(pixel_count, sizeof(uchar4), "output"));
-  {
-    NvtxRange range("ACES and sRGB postprocess");
-    check_cuda(spectraldockLaunchPostprocess(
-                   reinterpret_cast<const float4*>(
-                       final_beauty->pointer()),
-                   reinterpret_cast<uchar4*>(output.pointer()),
-                   settings.width, settings.height,
-                   settings.exposure, stream),
-               "spectraldockLaunchPostprocess");
-  }
-  std::vector<std::uint8_t> rgba(
-      checked_product(pixel_count, 4, "RGBA output"));
-  std::vector<float4> linear_pixels(
-      settings.capture_linear ? pixel_count : 0u);
+  // The fixed HDR transform and AVIF encoding run on the host. Always copy
+  // the actual final beauty buffer (including denoising when requested) so no
+  // device-specific postprocess kernel or baked CUDA architecture is needed.
+  std::vector<float4> linear_pixels(pixel_count);
   std::vector<unsigned long long> ray_counts(pixel_count);
   std::vector<VolumeCounters> volume_counts(
       flame_count == 0u ? 0u : pixel_count);
   std::vector<WaterCounters> water_counts(
       water_surface_count == 0u ? 0u : pixel_count);
   FireflyCounters firefly_counts{};
-  output.download(rgba.data(), rgba.size(), stream);
-  if (!linear_pixels.empty()) {
-    beauty.download(linear_pixels.data(),
-                    linear_pixels.size() * sizeof(float4), stream);
-  }
+  final_beauty->download(linear_pixels.data(),
+                         linear_pixels.size() * sizeof(float4), stream);
   ray_count.download(ray_counts.data(),
                      ray_counts.size() * sizeof(unsigned long long), stream);
   volume_count.download(volume_counts.data(),
@@ -1585,15 +1570,12 @@ RenderResult render_optix(const Scene& scene,
   RenderResult result;
   result.width = settings.width;
   result.height = settings.height;
-  result.rgba = std::move(rgba);
-  if (!linear_pixels.empty()) {
-    result.linear_rgb.resize(
-        checked_product(pixel_count, 3, "linear RGB output"));
-    for (std::size_t i = 0; i < pixel_count; ++i) {
-      result.linear_rgb[i * 3u + 0u] = linear_pixels[i].x;
-      result.linear_rgb[i * 3u + 1u] = linear_pixels[i].y;
-      result.linear_rgb[i * 3u + 2u] = linear_pixels[i].z;
-    }
+  result.linear_rgb.resize(
+      checked_product(pixel_count, 3, "linear RGB output"));
+  for (std::size_t i = 0; i < pixel_count; ++i) {
+    result.linear_rgb[i * 3u + 0u] = linear_pixels[i].x;
+    result.linear_rgb[i * 3u + 1u] = linear_pixels[i].y;
+    result.linear_rgb[i * 3u + 2u] = linear_pixels[i].z;
   }
   result.stats.width = settings.width;
   result.stats.height = settings.height;

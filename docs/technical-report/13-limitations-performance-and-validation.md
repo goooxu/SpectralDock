@@ -42,8 +42,11 @@
 - cylinder 没有端盖；`parabola` 是由 AABB 裁剪的抛物柱面；
 - alpha 是二值 cutoff，不是连续透明或折射；
 - 所有表面 radiance/shadow ray 都按 primitive-aware 的 `SurfaceHit.position_error` 沿 $\mathbf n_g$ 做尺度自适应偏移并向外舍入；解析/custom primitive 在 conservative fallback 上加入可评估曲面的 residual，但尚不保证严格封闭所有近切求交的条件数放大；固定世界空间 `water_solver_epsilon` 只用于水面 endpoint crossing probe 与无法分辨的近切 enter/exit 对，极端缩放的波面参数仍不在当前验收范围内；
-- 色调映射是逐通道 ACES 风格拟合曲线，不是完整 ACES；
-- 8 bit PNG 不保存 HDR 缓冲区；可选 PFM 保存贡献钳位之后、未降噪和未显示映射的线性 RGB 样本均值，没有 OpenEXR 的元数据、任意通道和压缩能力。只有 clamp 0/0 的 PFM 才适合无偏均值验证。
+- 输出固定为 10 bit Rec.2020/PQ HDR AVIF、CICP `9/16/9`、YUV 4:4:4
+  full range；没有调用方可选的 SDR 或持久线性文件分支；
+- max-RGB soft shoulder 统一缩放三个 Rec.2020 通道以保持色相，把线性 `1.0`
+  映射为 203 nit diffuse white 并把高光渐近限制在 1000 nit；AV1 lossless
+  保留量化后的码值，但不能恢复 float 到 10 bit 时丢失的精度；
 - 图像纹理只有 base-level 双线性过滤，没有 mipmap、ray differential 或
   各向异性过滤；PBR normal map 只支持 triangle mesh，不支持解析几何。
 
@@ -100,9 +103,9 @@ class Event {
 
 ### `timings_ms.total`
 
-在 `render_optix()` 完成 settings 与像素数检查后开始，到返回前记录。它包括 CUDA/OptiX 初始化、pipeline、纹理解码与上传、加速结构、SBT/缓冲区、路径追踪、可选降噪、后处理、RGBA/射线计数回传和设备信息查询。
+在 `render_optix()` 完成 settings 与像素数检查后开始，并在返回的原始时间上加上紧随其后的 HDR 映射与 AVIF 编码/原子写盘时间。它包括 CUDA/OptiX 初始化、pipeline、纹理解码与上传、加速结构、SBT/缓冲区、路径追踪、可选降噪、float beauty/计数器回传、设备信息查询和 HDR AVIF 写盘。
 
-它**不包括**调用前的 Python SceneBuilder 构造与 OBJ 解析，也不包括调用后的 PNG、可选 PFM 与 stats JSON 编码/写盘；启用 PFM 时，线性 beauty 的 D2H 和 float4→RGB 缓冲转换仍在 `render_optix()` 内，属于 Total。时间戳还早于函数局部 RAII 资源析构。因此 Total 不是完整 `Renderer.render()` 调用的墙钟时间，也不等于前三个分项简单相加。BVH 与 denoise 分项由同一 CUDA stream 上的 event 包围；区间可能包含主机尚未提交下一项工作时的 stream idle，不应解读成逐 kernel 时间之和。
+它**不包括**调用前的 Python SceneBuilder 构造与 OBJ 解析，也不包括随后的 stats JSON 编码/写盘；线性 beauty 的 D2H 和 float4→RGB 缓冲转换在 `render_optix()` 内，属于 Total。渲染部分的时间戳还早于函数局部 RAII 资源析构。因此 Total 不是完整 `Renderer.render()` 调用的墙钟时间，也不等于各分项简单相加。BVH 与 denoise 分项由同一 CUDA stream 上的 event 包围；区间可能包含主机尚未提交下一项工作时的 stream idle，不应解读成逐 kernel 时间之和。
 
 ## 4. 射线吞吐量怎样理解
 
@@ -163,26 +166,26 @@ $$
 - `peak_tracked_device_bytes`：项目 RAII 分配器直接记账的峰值；
 - `peak_device_bytes`：在 CUDA context 与 stream 已建立后的 baseline 上，通过若干次 `cudaMemGetInfo` 采样观察到的增量峰值。它可包含随后出现的 OptiX 内部分配，可能受同 GPU 其他进程影响，也可能漏掉两个采样点之间的短峰值。
 
-二者回答不同问题，不能把差值直接称为泄漏。正式 RTX 5090 数据见[RTX 5090 运行记录](../BENCHMARK.md)，`docs/gallery/` 根目录中旧十个教学程序的正式 PNG 旁保留对应 stats JSON；新的三张综合展示与十二张 OFF/ON 对比图不提交 stats 或 physics sidecar。
+二者回答不同问题，不能把差值直接称为泄漏。[验证与运行统计](../BENCHMARK.md)说明字段边界；`docs/gallery/` 根目录中旧十个教学程序的正式 AVIF 旁保留对应 stats JSON，只作为产出时的运行溯源。新的三张综合展示与十二张 OFF/ON 对比图不提交 stats 或 physics sidecar。
 
 ## 6. 测试为什么存在
 
 测试不是渲染器的核心功能，而是按层保存其行为证据：
 
-1. Host-only 单元测试检查向量、typed SceneBuilder、OBJ、PNG/HDR/PFM I/O、CDF 分布和输入语义；
+1. Host-only 单元测试检查向量、typed SceneBuilder、OBJ、AVIF/Radiance HDR I/O、固定 HDR output profile、CDF 分布和输入语义；
 2. typed SceneBuilder fixtures 覆盖 primitive、灯、UV、alpha、实例与共享 GAS 的输入组合，但不执行 GPU 着色；
 3. 无 golden 的积分器 GPU 对照覆盖末端 bound/unbound MIS；rectangle、disk、sphere 共位 emitter 在单位坐标与 $10^6$ 平移下还要求 bound/unbound 像素完全一致，定向保护有限灯 endpoint residual/区间收缩；其余对照覆盖 HDR 环境唯一照明、旋转、确定性、零强度黑场，以及 uniform/importance 的高 spp 均值与低 spp MSE；
 4. 多灯对照分别触发 rectangle、disk、sphere、flame，再验证功率选择降低强弱灯场景的低 spp MSE；sphere 对所有连续 BSDF 顶点验证可见锥采样，metal 另验证 VNDF 的均值与低样本误差；
 5. 综合 mesh GPU fixture 定向覆盖共享 GAS、实例变换、UV、平滑法线、alpha 和 custom primitives；另一组极端倾斜顶点法线 fixture 检查几何正面/背面、共享边、metal/PBR half-vector、有限灯零-PDF MIS，以及光滑 dielectric 对顶点法线的像素不变性；scale-aware ray-spawn fixture 再把 directional/point 薄遮挡和 metal/dielectric 次级路径放到 $10^{-3}$、$1$、$10^4$ 尺度及 $10^6$ 平移坐标，检查可见性、非黑传输、尺度一致性与固定 seed 确定性；其中 translated case 保留一枚 custom disk blocker，专门防止 AABB 向内取整造成 BVH 漏交；
 6. PBR host/API 测试检查独立 base-color/MR/normal 槽、linear 数据纹理、范围与 ownership、解析几何限制及无效 tangent 拒绝；GPU 对照检查过滤前 sRGB 解码、U/V wrap、MR 的 G/B 通道路由与 factor、`metallic=1` legacy 端点、`normal_scale`、镜像 UV/Mikk handedness、反向法线、OpenGL `+Y`、几何侧和非均匀变换；depth-2 对照还检查 secondary ray、固定 seed 确定性，并在极端着色法线下分别强制 `metallic=0/1` 的 diffuse-heavy 与纯 specular sampled transport；
 7. delta 灯对照检查 point 逆平方、directional 距离不变性、背面、遮挡、逐灯确定性、粗糙介电两侧和水中 Beer；firefly 对照检查 direct/indirect 独立触发、最大 RGB 通道保色相缩放、计数器、Python API 参数覆盖和 clamp 0/0 兼容路径；
-8. water GPU 对照用 clamp 0/0 线性 PFM 检查粗糙反射/透射、两侧介质、Beer、TIR、透明阻断、光滑有界 split，并以等散射阶数（bound depth 2 / unbound depth 3）比较高 spp 均值与三 seed 低 spp MSE；
+8. water GPU 对照用 clamp 0/0 的进程内线性测试捕获检查粗糙反射/透射、两侧介质、Beer、TIR、透明阻断、光滑有界 split，并以等散射阶数（bound depth 2 / unbound depth 3）比较高 spp 均值与三 seed 低 spp MSE；
 9. 技术报告 pytest 逐字核对标记过的源码片段，并检查章节结构、导航、链接和若干关键语义；PhysX host 测试用 typed `PhysicsWorld`/`PhysicsResult`、合成结果和定向 mutation 覆盖协议版本、GPU-only 身份、body 顺序、附件/`BodyState` 交接，以及四个物理程序的 validator，但不假装执行 subprocess worker、真实刚体或像素渲染；
-10. 维护者 acceptance 在受支持的 NVIDIA GPU 上构建 Release renderer，运行启用 OptiX validation 的 smoke、受控数学契约、八个静态教学程序的低分辨率预览和五个纯 Renderer Gallery preview；可用 PhysX SDK 时，再运行原有两个物理教学预览与 Atelier/Assembly Hall 的 640×360、16 spp、depth 8 preview。正式封面前另以 640×360、256 spp、depth 12 预检，并要求 water/volume 实际路径计数非零、medium/solver/majorant/tracking 安全计数为零；最终仍需人工检查角色、姿态、火/烟影、水面、屏幕和 alpha 标志。
+10. 维护者 acceptance 在满足能力契约的 NVIDIA GPU 上构建 Release renderer，先运行 PhysX GPU-only probe，再执行 OptiX validation smoke、受控数学契约、静态/Gallery 预览和四个 fresh PhysX 程序。GPU-only probe 要求有效 CUDA context、GPU dynamics、GPU broadphase、GPU heap statistics 与 `cpu_fallback=false`；完整验收不允许跳过物理。正式封面前另做高样本预检，并要求 water/volume 实际路径计数非零、medium/solver/majorant/tracking 安全计数为零；最终仍需人工检查角色、姿态、火/烟影、水面、屏幕和 alpha 标志。
 
-唯一保留的像素 golden 是 mesh fixture 的 RTX 5090 基线；积分器对照的临时 PNG 和 stats 会自动清理，不保存哈希。mesh golden 只证明定向输出与已接受结果逐字节相同，不能独立证明物理正确；跨 GPU、编译器或 `--use_fast_math` 的少量浮点差异，也不自动等于数学回归。非 RTX 5090 机器可显式设置 `SPECTRALDOCK_SKIP_RTX5090_GOLDEN=ON`；这只跳过 GPU 型号/哈希比较，fixture 结构、几何统计、尺寸和非空像素检查仍保留。旧十图的正式 PNG 与 stats 继续作为一次历史运行记录保留；新 Gallery PNG 是视觉作品，不提交测试机 stats 或 physics sidecar，也不增加 golden/性能基准。两者都不是自动性能回归门禁；默认 acceptance 不设置性能阈值或 profiling 验收。可靠结论仍需要公式审查、定向场景和数值/视觉证据结合。
+验收不按 GPU 型号建立或跳过像素 golden。积分器对照的临时 AVIF 和 stats 会自动清理；结构、几何统计、HDR AVIF profile、尺寸、非空像素和数值容差在所有设备上执行。跨 GPU、编译器或 `--use_fast_math` 的少量浮点差异不自动等于数学回归，但也不能绕过真实的数学、profile 或安全计数失败。旧十图的正式 AVIF 与 stats 只作为一次历史运行记录；新 Gallery AVIF 是视觉作品，不提交测试机 stats 或 physics sidecar。可靠结论仍需要公式审查、定向场景和数值/视觉证据结合。
 
-需要特别区分：这组 host-only 检查不编译 CUDA/OptiX 渲染器，不执行路径着色，也不输出参考像素。因此它们不是 CPU reference renderer，不能代替上述 GPU 对照或 golden。RR、MIS、delta NEE 与贡献钳位实现只位于设备路径；第 4、5 章负责公式与源码审查，数值性质由 clamp 0/0 的 GPU 对照验证。
+需要特别区分：这组 host-only 检查不编译 CUDA/OptiX 渲染器，不执行路径着色，也不输出参考像素。因此它们不是 CPU reference renderer，不能代替上述 GPU 对照。RR、MIS、delta NEE 与贡献钳位实现只位于设备路径；第 4、5 章负责公式与源码审查，数值性质由 clamp 0/0 的 GPU 对照验证。
 
 ## 7. 从一个像素重新串起全文
 
@@ -193,7 +196,7 @@ $$
 5. 普通面积灯 NEE 与命中灯面、环境 NEE 与 BSDF miss 分别用 power heuristic MIS 分权；粗糙 water 的两份有限灯样本和 BSDF-hit 用三技术 balance；point/directional 的 delta NEE 权重为 1；flame 保留互斥体积估计器；
 6. 路径在 miss、emitter、无效散射、轮盘或最大深度处结束；最大深度的最后一个表面事件仍先完整估计有限灯与环境域，粗糙 water 的有限灯域包含两份样本；
 7. 每份完成 throughput、可见性、介质与 MIS 的 RGB 贡献按 direct/indirect 阈值独立钳位；0 表示关闭。多条路径的线性 RGB 平均成为 HDR beauty；
-8. 钳位后、降噪前的线性样本均值可选写 PFM；展示分支可选降噪后，再执行曝光、ACES 风格拟合、sRGB 编码和 8 bit 量化。程序化 flame 的吸收—自发光见第 10 章，解析水面的求交与介电传输见第 11 章。
+8. beauty 可选经过 OptiX HDR Denoiser，再以 float RGB 回传主机；主机执行曝光、Rec.709→Rec.2020、203/1000 nit 保色相 soft shoulder、ST 2084 PQ、BT.2020 NCL 与 10 bit 4:4:4 full-range 量化，最终用 AV1 lossless 写成 CICP `9/16/9` HDR AVIF。程序化 flame 的吸收—自发光见第 10 章，解析水面的求交与介电传输见第 11 章。
 
 渲染器真正的核心正是这条链：**渲染方程给出目标，Monte Carlo 构造估计，几何与材质定义路径，OptiX/GPU 把大量路径高效执行。**
 

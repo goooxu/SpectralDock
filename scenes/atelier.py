@@ -711,13 +711,13 @@ def create_renderer(
     sparky_screen = renderer.texture(
         name="atelier_sparky_screen_atlas",
         type="image",
-        path=ROOT / "assets/examples/models/sparky/sparky_albedo.png",
+        path=ROOT / "assets/examples/models/sparky/sparky_albedo.avif",
         color_space="srgb",
     )
     spot_albedo = renderer.texture(
         name="atelier_spot_albedo",
         type="image",
-        path=ROOT / "assets/examples/models/spot/spot_texture.png",
+        path=ROOT / "assets/examples/models/spot/spot_texture.avif",
         color_space="srgb",
         wrap_u="repeat",
         wrap_v="repeat",
@@ -829,7 +829,7 @@ def _parse_args() -> argparse.Namespace:
         "--output-dir",
         type=Path,
         default=DEFAULT_OUTPUT_DIR,
-        help="directory for the PNG and temporary validation sidecars",
+        help="directory for the HDR AVIF and temporary validation sidecars",
     )
     parser.add_argument(
         "--preview",
@@ -842,7 +842,7 @@ def _parse_args() -> argparse.Namespace:
 def main() -> None:
     args = _parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    output = args.output_dir / "atelier.png"
+    output = args.output_dir / "atelier.avif"
     if args.preview:
         width, height, spp, depth = PREVIEW_WIDTH, PREVIEW_HEIGHT, PREVIEW_SPP, PREVIEW_DEPTH
     else:

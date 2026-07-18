@@ -15,7 +15,7 @@ from spectraldock.physics import BodyState
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT_DIR = ROOT / "output/gallery"
 ENVIRONMENT = ROOT / "assets/examples/environments/assembly-hall-noon.hdr"
-GEAR_ALPHA = ROOT / "assets/examples/textures/assembly-hall-gear-alpha.png"
+GEAR_ALPHA = ROOT / "assets/examples/textures/assembly-hall-gear-alpha.avif"
 
 FORMAL_WIDTH = 2560
 FORMAL_HEIGHT = 1440
@@ -898,13 +898,13 @@ def create_renderer(
     screen_texture = renderer.texture(
         name="assembly_sparky_screen_atlas",
         type="image",
-        path=ROOT / "assets/examples/models/sparky/sparky_albedo.png",
+        path=ROOT / "assets/examples/models/sparky/sparky_albedo.avif",
         color_space="srgb",
     )
     spot_texture = renderer.texture(
         name="assembly_spot_albedo",
         type="image",
-        path=ROOT / "assets/examples/models/spot/spot_texture.png",
+        path=ROOT / "assets/examples/models/spot/spot_texture.avif",
         color_space="srgb",
         wrap_u="repeat",
         wrap_v="repeat",
@@ -1039,7 +1039,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--output-dir",
         type=Path,
         default=DEFAULT_OUTPUT_DIR,
-        help="directory for the PNG and temporary validation sidecars",
+        help="directory for the HDR AVIF and temporary validation sidecars",
     )
     parser.add_argument(
         "--preview",
@@ -1052,7 +1052,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 def main(argv: Sequence[str] | None = None) -> None:
     args = _parse_args(argv)
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    output = args.output_dir / "assembly-hall.png"
+    output = args.output_dir / "assembly-hall.avif"
     if args.preview:
         width, height, spp, depth = (
             PREVIEW_WIDTH,

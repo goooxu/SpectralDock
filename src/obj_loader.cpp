@@ -597,7 +597,7 @@ TriangleMesh load_obj_mesh_impl(
           obj_fail(path, face.context +
                              " contains a non-finite texture coordinate");
         // OBJ v remains bottom-origin. Device texture sampling performs the
-        // single conversion to PNG's top-origin row convention.
+        // single conversion to the decoded raster's top-origin convention.
         result.texcoords.push_back(uv);
       }
     }

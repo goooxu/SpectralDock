@@ -6,9 +6,9 @@ import sys
 import tempfile
 from pathlib import Path
 
-from PIL import Image
-
 from spectraldock import Renderer
+
+from avif_test_utils import assert_avif_dimensions, captured_linear_rgb
 
 
 WIDTH = 64
@@ -153,17 +153,6 @@ def create_renderer(*, light_shape: str, bound: bool, device: int, offset) -> Re
     return renderer
 
 
-def decoded_rgba(path: Path) -> bytes:
-    with Image.open(path) as image:
-        image.load()
-        if image.size != (WIDTH, HEIGHT) or image.mode != "RGBA":
-            raise RuntimeError(
-                f"{path.name} must be {WIDTH}x{HEIGHT} RGBA, got "
-                f"{image.size} {image.mode}"
-            )
-        return image.tobytes()
-
-
 def render_variant(
     directory: Path,
     name: str,
@@ -173,9 +162,9 @@ def render_variant(
     device: int,
     spp: int,
     offset,
-) -> bytes:
-    output = directory / f"{name}.png"
-    create_renderer(
+) -> tuple[float, ...]:
+    output = directory / f"{name}.avif"
+    stats = create_renderer(
         light_shape=light_shape, bound=bound, device=device, offset=offset
     ).render(
         output=output,
@@ -185,8 +174,11 @@ def render_variant(
         depth=MAX_DEPTH,
         seed=SEED,
         denoise=False,
+        _test_capture_linear=True,
     )
-    return decoded_rgba(output)
+    assert_avif_dimensions(output, WIDTH, HEIGHT)
+    _, values = captured_linear_rgb(stats, WIDTH, HEIGHT)
+    return values
 
 
 def run_check(directory: Path, *, device: int, spp: int) -> None:
@@ -222,13 +214,9 @@ def run_check(directory: Path, *, device: int, spp: int) -> None:
                 )
                 raise RuntimeError(
                     f"{label} terminal-depth bound/unbound render mismatch: "
-                    f"{differences} decoded RGBA bytes differ"
+                    f"{differences} linear samples differ"
                 )
-            if not any(
-                value
-                for index, value in enumerate(bound_pixels)
-                if index % 4 != 3
-            ):
+            if not any(value for value in bound_pixels):
                 raise RuntimeError(
                     f"{label} terminal-depth comparison rendered a blank image"
                 )

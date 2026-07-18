@@ -1,20 +1,19 @@
 #!/usr/bin/env python3
 """GPU checks for rough dielectric NEE/MIS and transparent blockers.
 
-The checks intentionally compare pre-tone-map linear PFM values. PNG is still
-decoded once per render so the public output contract is exercised as well.
+The checks compare the private pre-display linear capture and decode the HDR
+AVIF once per render so the public output contract is exercised as well.
 """
 
 import math
-import struct
 import sys
 import tempfile
 from pathlib import Path
 from typing import NamedTuple
 
-from PIL import Image
-
 from spectraldock import Renderer
+
+from avif_test_utils import assert_avif_dimensions, captured_linear_rgb
 
 
 WIDTH = 96
@@ -42,59 +41,22 @@ class SampleProfile(NamedTuple):
 SAMPLE_PROFILE = SampleProfile(2048, 32, 64, 64, 256, 256, 64, 128, 128)
 
 
-def read_pfm(path):
-    with path.open("rb") as stream:
-        if stream.readline() != b"PF\n":
-            raise RuntimeError(f"{path.name}: expected three-channel PF header")
-        dimensions = stream.readline().split()
-        if len(dimensions) != 2:
-            raise RuntimeError(f"{path.name}: malformed dimensions")
-        width, height = map(int, dimensions)
-        scale = float(stream.readline())
-        if scale >= 0.0:
-            raise RuntimeError(f"{path.name}: expected little-endian negative scale")
-        payload = stream.read()
-    expected = width * height * 3 * 4
-    if len(payload) != expected:
-        raise RuntimeError(
-            f"{path.name}: expected {expected} payload bytes, got {len(payload)}"
-        )
-    bottom_up = struct.unpack(f"<{width * height * 3}f", payload)
-    pixels = []
-    row_values = width * 3
-    for y in range(height - 1, -1, -1):
-        row = bottom_up[y * row_values:(y + 1) * row_values]
-        pixels.extend(zip(row[0::3], row[1::3], row[2::3]))
-    if any(not math.isfinite(channel) for pixel in pixels for channel in pixel):
-        raise RuntimeError(f"{path.name}: non-finite linear sample")
-    return width, height, tuple(pixels)
-
-
 def render(renderer, directory, name, spp, depth, seed):
-    png = directory / f"{name}.png"
-    pfm = directory / f"{name}.pfm"
+    avif = directory / f"{name}.avif"
     stats = renderer.render(
-        output=png,
-        stats_output=png.with_suffix(".stats.json"),
-        linear_output=pfm,
+        output=avif,
+        stats_output=avif.with_suffix(".stats.json"),
         width=WIDTH,
         height=HEIGHT,
         spp=spp,
         depth=depth,
         seed=seed,
         denoise=False,
+        _test_capture_linear=True,
     )
-    with Image.open(png) as image:
-        image.load()
-        if image.size != (WIDTH, HEIGHT) or image.mode != "RGBA":
-            raise RuntimeError(f"unexpected PNG output: {image.size} {image.mode}")
-    width, height, pixels = read_pfm(pfm)
-    if (width, height) != (WIDTH, HEIGHT):
-        raise RuntimeError(f"unexpected PFM dimensions: {width}x{height}")
-    linear_name = stats.get("linear_output")
-    if linear_name is None or Path(linear_name).name != pfm.name:
-        raise RuntimeError("stats do not identify the requested linear output")
-    return pixels, stats, pfm.read_bytes()
+    assert_avif_dimensions(avif, WIDTH, HEIGHT)
+    pixels, linear_values = captured_linear_rgb(stats, WIDTH, HEIGHT)
+    return pixels, stats, linear_values
 
 
 def metric(tree, name):
@@ -571,6 +533,6 @@ def main():
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except (OSError, RuntimeError, struct.error, ValueError) as error:
+    except (OSError, RuntimeError, ValueError) as error:
         print(f"error: {error}", file=sys.stderr)
         raise SystemExit(1)

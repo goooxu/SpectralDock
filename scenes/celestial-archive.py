@@ -37,13 +37,13 @@ def create_renderer() -> Renderer:
     azure_planet = renderer.texture(
         name="azure_planet",
         type="image",
-        path=ROOT / "assets/examples/textures/planet-azure.png",
+        path=ROOT / "assets/examples/textures/planet-azure.avif",
         color_space="srgb",
     )
     ember_planet = renderer.texture(
         name="ember_planet",
         type="image",
-        path=ROOT / "assets/examples/textures/planet-ember.png",
+        path=ROOT / "assets/examples/textures/planet-ember.avif",
         color_space="srgb",
     )
     bronze = renderer.material(
@@ -176,7 +176,7 @@ def create_renderer() -> Renderer:
 
 
 def main() -> None:
-    output = ROOT / "output/examples/celestial-archive.png"
+    output = ROOT / "output/examples/celestial-archive.avif"
     create_renderer().render(
         output=output,
         stats_output=output.with_suffix(".stats.json"),

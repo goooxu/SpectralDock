@@ -12,9 +12,9 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT_DIR = ROOT / "output/gallery/comparisons"
 PANEL_DIR = ROOT / "assets/examples/models/showcase-panel"
 PANEL_OBJ = PANEL_DIR / "showcase-panel.obj"
-PANEL_NORMAL = PANEL_DIR / "showcase-panel-normal.png"
+PANEL_NORMAL = PANEL_DIR / "showcase-panel-normal.avif"
 PANEL_METALLIC_ROUGHNESS = (
-    PANEL_DIR / "showcase-panel-metallic-roughness.png"
+    PANEL_DIR / "showcase-panel-metallic-roughness.avif"
 )
 FORMAL_SIZE = 1024
 PREVIEW_SIZE = 256
@@ -133,7 +133,7 @@ def create_normal_mapping_renderer(
 def _render(
     renderer: Renderer, output_dir: Path, stem: str, *, size: int, spp: int
 ) -> None:
-    output = output_dir / f"{stem}.png"
+    output = output_dir / f"{stem}.avif"
     renderer.render(
         output=output,
         stats_output=output.with_suffix(".stats.json"),
@@ -170,7 +170,7 @@ def render_comparisons(
             spp=spp,
         )
     return tuple(
-        output_dir / f"normal-mapping-{state}.png" for state in ("off", "on")
+        output_dir / f"normal-mapping-{state}.avif" for state in ("off", "on")
     )
 
 

@@ -262,7 +262,7 @@ def create_renderer() -> Renderer:
 
 
 def main() -> None:
-    output = ROOT / "output/examples/ember-forge.png"
+    output = ROOT / "output/examples/ember-forge.avif"
     create_renderer().render(
         output=output,
         stats_output=output.with_suffix(".stats.json"),

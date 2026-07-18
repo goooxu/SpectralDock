@@ -268,6 +268,10 @@ class Renderer:
             identifier = self._builder.add_constant_texture(resource_name, color)
         elif kind == "image":
             path = _path(_take(parameters, "path"), "path")
+            if Path(path).suffix != ".avif":
+                raise ValueError(
+                    "image texture path must use the lowercase .avif extension"
+                )
             color_space = _take(parameters, "color_space", "srgb")
             if color_space not in {"srgb", "linear"}:
                 raise ValueError("color_space must be 'srgb' or 'linear'")
@@ -744,10 +748,10 @@ class Renderer:
         seed: int = 1,
         denoise: bool = False,
         stats_output: str | os.PathLike[str] | None = None,
-        linear_output: str | os.PathLike[str] | None = None,
         clamp_direct: float | None = None,
         clamp_indirect: float | None = None,
         validation: bool | None = None,
+        _test_capture_linear: bool = False,
     ) -> dict[str, Any]:
         width_value = _integer(width, "width", 1, 16384)
         height_value = _integer(height, "height", 1, 16384)
@@ -758,15 +762,12 @@ class Renderer:
             raise TypeError("denoise must be a bool")
         if validation is not None and not isinstance(validation, bool):
             raise TypeError("validation must be a bool or None")
+        if not isinstance(_test_capture_linear, bool):
+            raise TypeError("_test_capture_linear must be a bool")
 
         output_path = Path(_path(output, "output"))
-        linear_path = None if linear_output is None else Path(
-            _path(linear_output, "linear_output")
-        )
-        if output_path.suffix != ".png":
-            raise ValueError("output must use the .png extension")
-        if linear_path is not None and linear_path.suffix != ".pfm":
-            raise ValueError("linear_output must use the .pfm extension")
+        if output_path.suffix != ".avif":
+            raise ValueError("output must use the lowercase .avif extension")
         direct_clamp = self._clamp_direct if clamp_direct is None else _scalar(
             clamp_direct, "clamp_direct"
         )
@@ -791,19 +792,21 @@ class Renderer:
             indirect_clamp,
             denoise,
             bool(_native.validation_default) if validation is None else validation,
-            None if linear_path is None else os.fspath(linear_path),
+            _test_capture_linear,
         )
         stats: dict[str, Any] = {
             "scene": self.scene_name or output_path.stem,
             "output": os.fspath(output_path),
         }
         stats.update(dict(native_stats))
-        if linear_path is not None:
-            stats["linear_output"] = os.fspath(linear_path)
         destination = output_path.with_suffix(".stats.json") if stats_output is None else Path(
             _path(stats_output, "stats_output")
         )
-        _write_json_atomic(destination, stats)
+        _write_json_atomic(
+            destination,
+            {key: value for key, value in stats.items()
+             if not key.startswith("_test_")},
+        )
         return stats
 
 

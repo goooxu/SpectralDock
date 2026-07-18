@@ -1,11 +1,13 @@
 # Locate an installed NVIDIA PhysX SDK built with the SpectralDock GPU preset.
 #
 # Inputs:
-#   PHYSX_ROOT       Installed SDK root (include/ and bin/linux.x86_64/).
-#   PHYSX_BUILD_TYPE debug, checked, profile, or release.
+#   PHYSX_ROOT        Installed SDK root.
+#   PHYSX_BUILD_TYPE  debug, checked, profile, or release.
+#   PHYSX_LIBRARY_DIR Optional directory containing the static SDK libraries.
+#   PHYSX_RUNTIME_DIR Optional directory containing libPhysXGpu_64.so.
 #
 # Result target:
-#   PhysX::SDK       Static CPU SDK libraries plus pthread/dl. The GPU runtime
+#   PhysX::SDK       Static host SDK libraries plus pthread/dl. The GPU runtime
 #                    remains dynamically loaded by PhysX from libPhysXGpu_64.so.
 
 include(FindPackageHandleStandardArgs)
@@ -19,6 +21,10 @@ endif()
 if(NOT PHYSX_BUILD_TYPE)
   set(PHYSX_BUILD_TYPE "checked")
 endif()
+set(PHYSX_LIBRARY_DIR "${PHYSX_LIBRARY_DIR}" CACHE PATH
+  "PhysX static-library directory (optional layout override)")
+set(PHYSX_RUNTIME_DIR "${PHYSX_RUNTIME_DIR}" CACHE PATH
+  "PhysX GPU-runtime directory (optional layout override)")
 
 set(_PhysX_valid_build_types debug checked profile release)
 if(NOT PHYSX_BUILD_TYPE IN_LIST _PhysX_valid_build_types)
@@ -26,8 +32,43 @@ if(NOT PHYSX_BUILD_TYPE IN_LIST _PhysX_valid_build_types)
     "PHYSX_BUILD_TYPE must be one of: debug, checked, profile, release")
 endif()
 
-set(PhysX_LIBRARY_DIR
-  "${PHYSX_ROOT}/bin/linux.x86_64/${PHYSX_BUILD_TYPE}")
+string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" _PhysX_processor)
+if(_PhysX_processor MATCHES "^(x86_64|amd64)$")
+  set(_PhysX_platform "linux.x86_64")
+elseif(_PhysX_processor MATCHES "^(aarch64|arm64)$")
+  set(_PhysX_platform "linux.aarch64")
+else()
+  # Flat SDK layouts remain usable on any processor. For a platform-split SDK,
+  # callers can supply PHYSX_LIBRARY_DIR/PHYSX_RUNTIME_DIR explicitly.
+  set(_PhysX_platform "linux.${_PhysX_processor}")
+endif()
+
+set(_PhysX_library_hints)
+if(PHYSX_LIBRARY_DIR)
+  list(APPEND _PhysX_library_hints "${PHYSX_LIBRARY_DIR}")
+endif()
+list(APPEND _PhysX_library_hints
+  "${PHYSX_ROOT}/lib"
+  "${PHYSX_ROOT}/lib/${_PhysX_platform}/${PHYSX_BUILD_TYPE}"
+  "${PHYSX_ROOT}/lib/${_PhysX_platform}"
+  "${PHYSX_ROOT}/lib/${PHYSX_BUILD_TYPE}"
+  "${PHYSX_ROOT}/bin/${_PhysX_platform}/${PHYSX_BUILD_TYPE}"
+  "${PHYSX_ROOT}/bin/${_PhysX_platform}"
+  "${PHYSX_ROOT}/bin/${PHYSX_BUILD_TYPE}"
+  "${PHYSX_ROOT}/bin")
+list(REMOVE_DUPLICATES _PhysX_library_hints)
+
+set(_PhysX_runtime_hints)
+if(PHYSX_RUNTIME_DIR)
+  list(APPEND _PhysX_runtime_hints "${PHYSX_RUNTIME_DIR}")
+endif()
+list(APPEND _PhysX_runtime_hints
+  "${PHYSX_ROOT}/bin"
+  "${PHYSX_ROOT}/bin/${_PhysX_platform}/${PHYSX_BUILD_TYPE}"
+  "${PHYSX_ROOT}/bin/${_PhysX_platform}"
+  "${PHYSX_ROOT}/bin/${PHYSX_BUILD_TYPE}"
+  ${_PhysX_library_hints})
+list(REMOVE_DUPLICATES _PhysX_runtime_hints)
 
 find_path(PhysX_INCLUDE_DIR
   NAMES PxPhysicsAPI.h
@@ -40,32 +81,45 @@ find_file(PhysX_CONFIG_HEADER
 
 find_library(PhysX_EXTENSIONS_LIBRARY
   NAMES PhysXExtensions_static_64
-  HINTS "${PhysX_LIBRARY_DIR}"
+  HINTS ${_PhysX_library_hints}
   NO_DEFAULT_PATH)
 find_library(PhysX_CORE_LIBRARY
   NAMES PhysX_static_64
-  HINTS "${PhysX_LIBRARY_DIR}"
+  HINTS ${_PhysX_library_hints}
   NO_DEFAULT_PATH)
 find_library(PhysX_PVD_LIBRARY
   NAMES PhysXPvdSDK_static_64
-  HINTS "${PhysX_LIBRARY_DIR}"
+  HINTS ${_PhysX_library_hints}
   NO_DEFAULT_PATH)
 find_library(PhysX_COOKING_LIBRARY
   NAMES PhysXCooking_static_64
-  HINTS "${PhysX_LIBRARY_DIR}"
+  HINTS ${_PhysX_library_hints}
   NO_DEFAULT_PATH)
 find_library(PhysX_COMMON_LIBRARY
   NAMES PhysXCommon_static_64
-  HINTS "${PhysX_LIBRARY_DIR}"
+  HINTS ${_PhysX_library_hints}
   NO_DEFAULT_PATH)
 find_library(PhysX_FOUNDATION_LIBRARY
   NAMES PhysXFoundation_static_64
-  HINTS "${PhysX_LIBRARY_DIR}"
+  HINTS ${_PhysX_library_hints}
   NO_DEFAULT_PATH)
 find_file(PhysX_GPU_LIBRARY
   NAMES libPhysXGpu_64.so
-  HINTS "${PhysX_LIBRARY_DIR}"
+  HINTS ${_PhysX_runtime_hints}
   NO_DEFAULT_PATH)
+
+if(PhysX_CORE_LIBRARY AND NOT PHYSX_LIBRARY_DIR)
+  get_filename_component(_PhysX_detected_library_dir
+    "${PhysX_CORE_LIBRARY}" DIRECTORY)
+  set(PHYSX_LIBRARY_DIR "${_PhysX_detected_library_dir}" CACHE PATH
+    "PhysX static-library directory (optional layout override)" FORCE)
+endif()
+if(PhysX_GPU_LIBRARY AND NOT PHYSX_RUNTIME_DIR)
+  get_filename_component(_PhysX_detected_runtime_dir
+    "${PhysX_GPU_LIBRARY}" DIRECTORY)
+  set(PHYSX_RUNTIME_DIR "${_PhysX_detected_runtime_dir}" CACHE PATH
+    "PhysX GPU-runtime directory (optional layout override)" FORCE)
+endif()
 
 if(PhysX_INCLUDE_DIR AND EXISTS "${PhysX_INCLUDE_DIR}/foundation/PxPhysicsVersion.h")
   file(STRINGS "${PhysX_INCLUDE_DIR}/foundation/PxPhysicsVersion.h"

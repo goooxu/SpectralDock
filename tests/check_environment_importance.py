@@ -7,9 +7,13 @@ import sys
 import tempfile
 from pathlib import Path
 
-from PIL import Image
-
 from spectraldock import Renderer
+
+from avif_test_utils import (
+    FloatRgbImage,
+    assert_avif_dimensions,
+    captured_linear_image,
+)
 
 
 WIDTH = 64
@@ -165,8 +169,8 @@ def render_variant(
     device: int,
     intensity: float = 1.0,
     rotation: float = 0.0,
-) -> Image.Image:
-    output = directory / f"{name}.png"
+) -> FloatRgbImage:
+    output = directory / f"{name}.avif"
     stats = create_renderer(
         hdr,
         mode=mode,
@@ -181,14 +185,10 @@ def render_variant(
         depth=1,
         seed=seed,
         denoise=False,
+        _test_capture_linear=True,
     )
-    with Image.open(output) as decoded:
-        decoded.load()
-        if decoded.size != (WIDTH, HEIGHT) or decoded.mode != "RGBA":
-            raise RuntimeError(
-                f"unexpected environment output: {decoded.size} {decoded.mode}"
-            )
-        image = decoded.copy()
+    assert_avif_dimensions(output, WIDTH, HEIGHT)
+    image = captured_linear_image(stats, WIDTH, HEIGHT)
 
     actual_mode = stats.get("render", {}).get("direct_light_sampling")
     if actual_mode != mode:
@@ -200,11 +200,11 @@ def render_variant(
     return image
 
 
-def rgb_values(image: Image.Image) -> list[tuple[int, int, int]]:
+def rgb_values(image: FloatRgbImage) -> list[tuple[float, float, float]]:
     return [pixel[:3] for pixel in image.crop(ROI).getdata()]
 
 
-def mean_luminance(image: Image.Image) -> float:
+def mean_luminance(image: FloatRgbImage) -> float:
     values = rgb_values(image)
     return sum(
         0.2126 * red + 0.7152 * green + 0.0722 * blue
@@ -212,7 +212,7 @@ def mean_luminance(image: Image.Image) -> float:
     ) / len(values)
 
 
-def mse(image: Image.Image, reference: Image.Image) -> float:
+def mse(image: FloatRgbImage, reference: FloatRgbImage) -> float:
     left = rgb_values(image)
     right = rgb_values(reference)
     return sum(
@@ -222,7 +222,7 @@ def mse(image: Image.Image, reference: Image.Image) -> float:
     ) / (3.0 * len(left))
 
 
-def rgb_is_black(image: Image.Image) -> bool:
+def rgb_is_black(image: FloatRgbImage) -> bool:
     return all(
         red == 0 and green == 0 and blue == 0
         for red, green, blue, _ in image.getdata()
@@ -251,9 +251,9 @@ def run_checks(directory: Path, args: argparse.Namespace) -> None:
         109,
         device=args.device,
     )
-    if first.tobytes() != second.tobytes():
+    if first.samples() != second.samples():
         raise RuntimeError("fixed-seed environment renders are not identical")
-    if mean_luminance(first) <= 0.5:
+    if mean_luminance(first) <= 1.0e-6:
         raise RuntimeError("depth-1 environment NEE produced a blank receiver")
 
     dark = render_variant(
@@ -289,7 +289,10 @@ def run_checks(directory: Path, args: argparse.Namespace) -> None:
         device=args.device,
         rotation=180.0,
     )
-    if abs(mean_luminance(unrotated) - mean_luminance(rotated)) < 1.0:
+    rotation_scale = max(
+        mean_luminance(unrotated), mean_luminance(rotated), 1.0e-6
+    )
+    if abs(mean_luminance(unrotated) - mean_luminance(rotated)) < 0.01 * rotation_scale:
         raise RuntimeError("180-degree environment rotation had no visible response")
 
     reference = render_variant(
@@ -313,7 +316,7 @@ def run_checks(directory: Path, args: argparse.Namespace) -> None:
     reference_mean = mean_luminance(reference)
     uniform_mean = mean_luminance(uniform_high)
     relative_mean_error = abs(reference_mean - uniform_mean) / max(
-        reference_mean, 1.0
+        reference_mean, 1.0e-6
     )
     if relative_mean_error > 0.12:
         raise RuntimeError(

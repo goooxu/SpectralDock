@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -19,6 +20,7 @@
 #include <stdexcept>
 #include <string>
 #include <system_error>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -27,15 +29,18 @@ namespace {
 using namespace physx;
 
 constexpr std::array<char, 8> kRequestMagic = {
-    'S', 'D', 'P', 'X', 'R', 'Q', '1', '\0'};
+    'S', 'D', 'P', 'X', 'R', 'Q', '2', '\0'};
 constexpr std::array<char, 8> kResultMagic = {
-    'S', 'D', 'P', 'X', 'R', 'S', '1', '\0'};
-constexpr std::uint32_t kProtocolVersion = 1;
+    'S', 'D', 'P', 'X', 'R', 'S', '2', '\0'};
+constexpr std::uint32_t kProtocolVersion = 2;
 constexpr std::uint32_t kMaximumItems = 1'000'000;
 constexpr std::uint32_t kMaximumStringBytes = 1'048'576;
 constexpr const char* kPhysxCommit =
     "fc1018a3745664a1db2b95ce03fb5e91eb585f2e";
 constexpr float kPi = 3.14159265358979323846f;
+static_assert(sizeof(float) == sizeof(std::uint32_t) &&
+                  std::numeric_limits<float>::is_iec559,
+              "the PhysX IPC requires IEEE-754 binary32 floats");
 
 [[noreturn]] void fail(const std::string& message) {
   throw std::runtime_error(message);
@@ -98,13 +103,29 @@ class Reader {
     return result;
   }
 
-  std::uint8_t u8() { return scalar<std::uint8_t>(); }
-  std::uint32_t u32() { return scalar<std::uint32_t>(); }
-  std::int32_t i32() { return scalar<std::int32_t>(); }
-  std::uint64_t u64() { return scalar<std::uint64_t>(); }
+  std::uint8_t u8() {
+    std::uint8_t result = 0;
+    read_bytes(&result, sizeof(result));
+    return result;
+  }
+
+  std::uint32_t u32() { return unsigned_le<std::uint32_t>(); }
+
+  std::int32_t i32() {
+    const std::uint32_t bits = u32();
+    std::int32_t result = 0;
+    static_assert(sizeof(result) == sizeof(bits));
+    std::memcpy(&result, &bits, sizeof(result));
+    return result;
+  }
+
+  std::uint64_t u64() { return unsigned_le<std::uint64_t>(); }
 
   float f32(const char* label = "float") {
-    const float value = scalar<float>();
+    const std::uint32_t bits = u32();
+    float value = 0.0f;
+    static_assert(sizeof(value) == sizeof(bits));
+    std::memcpy(&value, &bits, sizeof(value));
     require_finite(value, label);
     return value;
   }
@@ -163,10 +184,15 @@ class Reader {
   }
 
  private:
-  template <typename T>
-  T scalar() {
-    T result{};
-    read_bytes(&result, sizeof(result));
+  template <typename UInt>
+  UInt unsigned_le() {
+    static_assert(std::is_unsigned<UInt>::value,
+                  "little-endian protocol scalars must be unsigned");
+    std::array<std::uint8_t, sizeof(UInt)> bytes{};
+    read_bytes(bytes.data(), bytes.size());
+    UInt result = 0;
+    for (std::size_t index = 0; index < bytes.size(); ++index)
+      result |= static_cast<UInt>(bytes[index]) << (index * 8U);
     return result;
   }
 
@@ -187,14 +213,22 @@ class Writer {
     bytes(value.data(), value.size());
   }
 
-  void u8(std::uint8_t value) { scalar(value); }
-  void u32(std::uint32_t value) { scalar(value); }
-  void i32(std::int32_t value) { scalar(value); }
-  void u64(std::uint64_t value) { scalar(value); }
+  void u8(std::uint8_t value) { bytes(&value, sizeof(value)); }
+  void u32(std::uint32_t value) { unsigned_le(value); }
+  void i32(std::int32_t value) {
+    std::uint32_t bits = 0;
+    static_assert(sizeof(value) == sizeof(bits));
+    std::memcpy(&bits, &value, sizeof(bits));
+    u32(bits);
+  }
+  void u64(std::uint64_t value) { unsigned_le(value); }
 
   void f32(float value) {
     require_finite(value, "result float");
-    scalar(value);
+    std::uint32_t bits = 0;
+    static_assert(sizeof(value) == sizeof(bits));
+    std::memcpy(&bits, &value, sizeof(bits));
+    u32(bits);
   }
 
   void vec3(const PxVec3& value) {
@@ -224,9 +258,12 @@ class Writer {
   const std::vector<std::uint8_t>& data() const { return data_; }
 
  private:
-  template <typename T>
-  void scalar(const T& value) {
-    bytes(&value, sizeof(value));
+  template <typename UInt>
+  void unsigned_le(UInt value) {
+    static_assert(std::is_unsigned<UInt>::value,
+                  "little-endian protocol scalars must be unsigned");
+    for (std::size_t index = 0; index < sizeof(value); ++index)
+      data_.push_back(static_cast<std::uint8_t>(value >> (index * 8U)));
   }
 
   void bytes(const void* value, std::size_t size) {
@@ -462,6 +499,26 @@ class ErrorCallback final : public PxErrorCallback {
     std::cerr << "PhysX[" << static_cast<int>(code) << "] "
               << (message ? message : "unknown error") << " ("
               << (file ? file : "unknown") << ':' << line << ")\n";
+    if (message) {
+      std::string text(message);
+      std::transform(text.begin(), text.end(), text.begin(), [](unsigned char value) {
+        return static_cast<char>(std::tolower(value));
+      });
+      const auto contains = [&text](const char* token) {
+        return text.find(token) != std::string::npos;
+      };
+      const bool fallback = contains("fallback") || contains("fall back");
+      const bool gpu_subsystem =
+          contains("gpu dynamics") || contains("gpu broadphase") ||
+          contains("gpu broad phase") || contains("gpu simulation") ||
+          contains("cuda context");
+      const bool unavailable =
+          contains("failed") || contains("failure") || contains("invalid") ||
+          contains("unavailable") || contains("disabled") ||
+          contains("not supported");
+      if (fallback || (gpu_subsystem && unavailable))
+        gpu_contract_violation.store(true, std::memory_order_relaxed);
+    }
     if (code == PxErrorCode::eINVALID_PARAMETER ||
         code == PxErrorCode::eINVALID_OPERATION ||
         code == PxErrorCode::eOUT_OF_MEMORY ||
@@ -470,6 +527,39 @@ class ErrorCallback final : public PxErrorCallback {
   }
 
   std::atomic_bool fatal{false};
+  std::atomic_bool gpu_contract_violation{false};
+};
+
+struct GpuPipelineStatistics {
+  std::uint32_t samples = 0;
+  std::uint64_t heap_bytes = 0;
+  std::uint64_t broad_phase_bytes = 0;
+  std::uint64_t narrow_phase_bytes = 0;
+  std::uint64_t solver_bytes = 0;
+  std::uint64_t simulation_bytes = 0;
+
+  void observe(const PxSimulationStatistics& value) {
+    ++samples;
+    heap_bytes = std::max(heap_bytes,
+                          static_cast<std::uint64_t>(value.gpuMemHeap));
+    broad_phase_bytes = std::max(
+        broad_phase_bytes,
+        static_cast<std::uint64_t>(value.gpuMemHeapBroadPhase));
+    narrow_phase_bytes = std::max(
+        narrow_phase_bytes,
+        static_cast<std::uint64_t>(value.gpuMemHeapNarrowPhase));
+    solver_bytes = std::max(
+        solver_bytes, static_cast<std::uint64_t>(value.gpuMemHeapSolver));
+    simulation_bytes = std::max(
+        simulation_bytes,
+        static_cast<std::uint64_t>(value.gpuMemHeapSimulation));
+  }
+
+  bool proves_gpu_pipeline() const {
+    return samples > 0 && heap_bytes > 0 && broad_phase_bytes > 0 &&
+           narrow_phase_bytes > 0 && solver_bytes > 0 &&
+           simulation_bytes > 0;
+  }
 };
 
 void check_cuda(cudaError_t status, const char* operation) {
@@ -504,6 +594,8 @@ class Runtime {
     cuda_manager_ = PxCreateCudaContextManager(*foundation_, cuda_description);
     if (!cuda_manager_ || !cuda_manager_->contextIsValid())
       fail("PhysX CUDA context manager is unavailable or invalid");
+    // PhysX requires a host task dispatcher even for GPU rigid bodies. This
+    // thread schedules tasks only; dynamics and broadphase remain GPU-only.
     dispatcher_ = PxDefaultCpuDispatcherCreate(1);
     if (!dispatcher_) fail("PxDefaultCpuDispatcherCreate failed");
 
@@ -521,15 +613,7 @@ class Runtime {
     if (!description.isValid()) fail("GPU PxSceneDesc is invalid");
     scene_ = physics_->createScene(description);
     if (!scene_) fail("GPU PhysX scene creation failed; CPU fallback is forbidden");
-
-    const PxSceneFlags flags = scene_->getFlags();
-    if (!flags.isSet(PxSceneFlag::eENABLE_GPU_DYNAMICS) ||
-        !flags.isSet(PxSceneFlag::eENABLE_PCM) ||
-        !flags.isSet(PxSceneFlag::eENABLE_STABILIZATION) ||
-        flags.isSet(PxSceneFlag::eENABLE_ENHANCED_DETERMINISM) ||
-        scene_->getBroadPhaseType() != PxBroadPhaseType::eGPU ||
-        !cuda_manager_->contextIsValid())
-      fail("created scene does not satisfy the PhysX GPU-only contract");
+    verify_gpu_contract("after scene creation");
 
     materials_.reserve(request.materials.size());
     for (const MaterialRequest& input : request.materials) {
@@ -560,6 +644,63 @@ class Runtime {
   PxScene& scene() { return *scene_; }
   PxMaterial& material(std::uint32_t index) { return *materials_.at(index); }
   ErrorCallback& errors() { return errors_; }
+  const GpuPipelineStatistics& gpu_statistics() const { return gpu_statistics_; }
+  bool cuda_context_valid() const {
+    return cuda_manager_ && cuda_manager_->contextIsValid();
+  }
+  bool gpu_dynamics_enabled() const {
+    return scene_->getFlags().isSet(PxSceneFlag::eENABLE_GPU_DYNAMICS);
+  }
+  bool gpu_broad_phase_enabled() const {
+    return scene_->getBroadPhaseType() == PxBroadPhaseType::eGPU;
+  }
+  bool tgs_solver_enabled() const {
+    return scene_->getSolverType() == PxSolverType::eTGS;
+  }
+  bool pcm_enabled() const {
+    return scene_->getFlags().isSet(PxSceneFlag::eENABLE_PCM);
+  }
+  bool stabilization_enabled() const {
+    return scene_->getFlags().isSet(PxSceneFlag::eENABLE_STABILIZATION);
+  }
+  bool cpu_fallback_observed() const {
+    return errors_.gpu_contract_violation.load(std::memory_order_relaxed);
+  }
+  bool enhanced_determinism_enabled() const {
+    return scene_->getFlags().isSet(PxSceneFlag::eENABLE_ENHANCED_DETERMINISM);
+  }
+
+  void verify_gpu_contract(const char* stage) const {
+    if (!scene_ || !cuda_manager_ || !cuda_manager_->contextIsValid() ||
+        scene_->getCudaContextManager() != cuda_manager_ ||
+        scene_->getCpuDispatcher() != dispatcher_ ||
+        scene_->getBroadPhaseType() != PxBroadPhaseType::eGPU ||
+        scene_->getSolverType() != PxSolverType::eTGS) {
+      fail(std::string("PhysX GPU-only contract failed ") + stage);
+    }
+    const PxSceneFlags flags = scene_->getFlags();
+    if (!flags.isSet(PxSceneFlag::eENABLE_GPU_DYNAMICS) ||
+        !flags.isSet(PxSceneFlag::eENABLE_PCM) ||
+        !flags.isSet(PxSceneFlag::eENABLE_STABILIZATION) ||
+        flags.isSet(PxSceneFlag::eENABLE_ENHANCED_DETERMINISM) ||
+        errors_.fatal.load(std::memory_order_relaxed) ||
+        errors_.gpu_contract_violation.load(std::memory_order_relaxed)) {
+      fail(std::string("PhysX rejected the GPU-only scene contract ") + stage +
+           "; CPU fallback is forbidden");
+    }
+  }
+
+  void observe_gpu_statistics() {
+    PxSimulationStatistics value;
+    scene_->getSimulationStatistics(value);
+    gpu_statistics_.observe(value);
+  }
+
+  void require_gpu_statistics() const {
+    if (!gpu_statistics_.proves_gpu_pipeline())
+      fail("PhysX did not report non-zero GPU broadphase, narrowphase, solver, "
+           "and simulation heap usage; CPU fallback is forbidden");
+  }
 
   void add(PxRigidActor* actor) {
     if (!actor) fail("PhysX actor creation failed");
@@ -580,6 +721,7 @@ class Runtime {
   PxScene* scene_ = nullptr;
   std::vector<PxMaterial*> materials_;
   std::vector<PxRigidActor*> actors_;
+  GpuPipelineStatistics gpu_statistics_;
   bool extensions_initialized_ = false;
 };
 
@@ -680,7 +822,11 @@ void simulate(Runtime& runtime, const Request& request) {
       fail("PxScene::fetchResults failed at step " + std::to_string(step));
     if (runtime.errors().fatal.load(std::memory_order_relaxed))
       fail("PhysX reported a fatal error during GPU simulation");
+    runtime.verify_gpu_contract("after simulation step");
+    runtime.observe_gpu_statistics();
   }
+  runtime.verify_gpu_contract("after simulation");
+  runtime.require_gpu_statistics();
 }
 
 std::array<float, 3> euler_degrees(PxQuat quaternion) {
@@ -764,6 +910,25 @@ Writer build_result(const Request& request, const Runtime& runtime,
   writer.string(request.scene_name);
   writer.string("physx-gpu");
   writer.string(runtime.device_name);
+
+  // Explicit contract evidence. Python validates every field instead of
+  // inferring GPU execution from a backend label or device name.
+  writer.u8(runtime.cuda_context_valid() ? 1 : 0);
+  writer.u8(runtime.gpu_dynamics_enabled() ? 1 : 0);
+  writer.u8(runtime.gpu_broad_phase_enabled() ? 1 : 0);
+  writer.u8(runtime.tgs_solver_enabled() ? 1 : 0);
+  writer.u8(runtime.pcm_enabled() ? 1 : 0);
+  writer.u8(runtime.stabilization_enabled() ? 1 : 0);
+  writer.u8(runtime.cpu_fallback_observed() ? 1 : 0);
+  writer.u8(runtime.enhanced_determinism_enabled() ? 1 : 0);
+
+  const GpuPipelineStatistics& gpu = runtime.gpu_statistics();
+  writer.u32(gpu.samples);
+  writer.u64(gpu.heap_bytes);
+  writer.u64(gpu.broad_phase_bytes);
+  writer.u64(gpu.narrow_phase_bytes);
+  writer.u64(gpu.solver_bytes);
+  writer.u64(gpu.simulation_bytes);
 
   writer.u32(static_cast<std::uint32_t>(request.bodies.size()));
   for (std::size_t index = 0; index < request.bodies.size(); ++index) {

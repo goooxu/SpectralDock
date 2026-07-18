@@ -8,16 +8,18 @@ require_optix_root
 require_cuda_root
 [[ -d "${ROOT}/assets/examples" ]] ||
   die "local asset directory is missing: assets/examples"
-
-if [[ "${SPECTRALDOCK_BUILD_PHYSX:-ON}" == ON ]]; then
-  require_physx_roots
-else
-  echo "== PhysX disabled: skipping SDK checks, worker build, and PhysX previews =="
-fi
+[[ "${SPECTRALDOCK_BUILD_PHYSX:-ON}" == ON ]] ||
+  die "acceptance requires GPU PhysX; SPECTRALDOCK_BUILD_PHYSX=OFF is not allowed"
+require_physx_roots
 
 "$(dirname "$0")/configure.sh" Release
 "$(dirname "$0")/build.sh" Release
 source "$(dirname "$0")/activate.sh" Release
+
+echo "== GPU-only PhysX contract check =="
+run_python "${ROOT}/tests/check_physx_gpu_only.py" \
+  --worker "${SPECTRALDOCK_PHYSX_WORKER}" \
+  --device "${SPECTRALDOCK_PHYSX_DEVICE:-0}"
 
 smoke_scenes=(
   tests/scenes/smoke.py
@@ -33,13 +35,7 @@ for scene in "${smoke_scenes[@]}"; do
   echo "== Python smoke scene: ${scene} =="
   run_python "${ROOT}/${scene}"
   if [[ "${scene}" == tests/scenes/mesh-composite-smoke.py ]]; then
-    if [[ "${SPECTRALDOCK_SKIP_RTX5090_GOLDEN:-OFF}" == ON ]]; then
-      echo "== RTX 5090 mesh hash explicitly skipped; structural/image checks remain =="
-      run_python "${ROOT}/tests/check_mesh_smoke.py" \
-        --skip-rtx5090-golden
-    else
-      run_python "${ROOT}/tests/check_mesh_smoke.py"
-    fi
+    run_python "${ROOT}/tests/check_mesh_smoke.py"
   elif [[ "${scene}" == tests/scenes/multi-material-mesh-smoke.py ]]; then
     run_python "${ROOT}/tests/check_multi_material_mesh_smoke.py"
   fi
@@ -90,12 +86,12 @@ for scene in "${STATIC_EXAMPLES[@]}"; do
   echo "== Python static example preview: ${scene} =="
   run_python -c "${STATIC_PREVIEW_CODE}" \
     "${ROOT}/scenes/${scene}.py" \
-    "${ROOT}/output/acceptance-${scene}.png"
+    "${ROOT}/output/acceptance-${scene}.avif"
 done
 
 # Gallery production programs own their paired invariants and canonical render
 # settings. Acceptance exercises their explicit preview mode and redirects all
-# outputs into output/, so it never overwrites the curated docs/gallery PNGs.
+# outputs into output/, so it never overwrites the curated HDR AVIF Gallery.
 for scene in "${GALLERY_PROGRAMS[@]}"; do
   echo "== Python gallery program preview: ${scene} =="
   run_python "${ROOT}/scenes/${scene}.py" \
@@ -106,17 +102,13 @@ done
 # The two PhysX Gallery covers deliberately remain separate from the original
 # tutorial batch. Their own preview entry points run the fresh simulation,
 # scene validator, and a 640x360 diagnostic render without touching the
-# curated docs/gallery/showcase PNGs.
-if [[ "${SPECTRALDOCK_BUILD_PHYSX:-ON}" == ON ]]; then
-  for scene in "${PHYSX_GALLERY_PROGRAMS[@]}"; do
-    echo "== Python PhysX gallery program preview: ${scene} =="
-    run_python "${ROOT}/scenes/${scene}.py" \
-      --preview \
-      --output-dir "${ROOT}/output/acceptance-gallery/${scene}"
-  done
-else
-  echo "== PhysX disabled: two PhysX Gallery previews were not run =="
-fi
+# curated docs/gallery/showcase AVIFs.
+for scene in "${PHYSX_GALLERY_PROGRAMS[@]}"; do
+  echo "== Python PhysX gallery program preview: ${scene} =="
+  run_python "${ROOT}/scenes/${scene}.py" \
+    --preview \
+    --output-dir "${ROOT}/output/acceptance-gallery/${scene}"
+done
 
 # The original PhysX tutorial scenes expose ordinary constructor functions
 # because their fresh fixed-step simulation must run immediately before the
@@ -143,21 +135,13 @@ renderer.render(
     seed=int(module["SEED"]),
     denoise=False,
 )'
-if [[ "${SPECTRALDOCK_BUILD_PHYSX:-ON}" == ON ]]; then
-  for scene in "${PHYSX_EXAMPLES[@]}"; do
-    echo "== Python PhysX smoke scene: ${scene} =="
-    run_python -c "${PHYSX_SMOKE_CODE}" \
-      "${ROOT}/scenes/${scene}.py" \
-      "${ROOT}/output/acceptance-${scene}.png"
-  done
-else
-  echo "== PhysX disabled: two PhysX tutorial previews were not run =="
-fi
+for scene in "${PHYSX_EXAMPLES[@]}"; do
+  echo "== Python PhysX smoke scene: ${scene} =="
+  run_python -c "${PHYSX_SMOKE_CODE}" \
+    "${ROOT}/scenes/${scene}.py" \
+    "${ROOT}/output/acceptance-${scene}.avif"
+done
 
 "$(dirname "$0")/test.sh"
 
-if [[ "${SPECTRALDOCK_BUILD_PHYSX:-ON}" == ON ]]; then
-  echo "GPU renderer and PhysX scene acceptance completed"
-else
-  echo "GPU renderer acceptance completed without PhysX"
-fi
+echo "GPU renderer and GPU-only PhysX scene acceptance completed"

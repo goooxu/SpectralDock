@@ -300,8 +300,4 @@ struct LaunchParams {
   FireflyCounters* firefly_counters = nullptr;
 };
 
-extern "C" cudaError_t spectraldockLaunchPostprocess(
-    const float4* linear_beauty, uchar4* output, std::uint32_t width,
-    std::uint32_t height, float exposure, cudaStream_t stream);
-
 }  // namespace spectraldock

@@ -112,7 +112,13 @@ def test_light_is_a_terminal_registration_operation():
     ) is None
 
 
-@pytest.mark.parametrize("keyword", ["max_depth", "exposure"])
+@pytest.mark.parametrize("keyword", ["max_depth", "exposure", "linear_output"])
 def test_render_rejects_removed_keyword_aliases(tmp_path, keyword):
     with pytest.raises(TypeError, match=keyword):
-        Renderer().render(output=tmp_path / "unused.png", **{keyword: 1})
+        Renderer().render(output=tmp_path / "unused.avif", **{keyword: 1})
+
+
+@pytest.mark.parametrize("name", ["unused.png", "unused.AVIF", "unused.pfm"])
+def test_render_rejects_every_noncanonical_output_extension(tmp_path, name):
+    with pytest.raises(ValueError, match="lowercase \\.avif"):
+        Renderer().render(output=tmp_path / name)

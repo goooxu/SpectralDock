@@ -3,14 +3,13 @@
 
 import argparse
 import math
-import struct
 import sys
 import tempfile
 from pathlib import Path
 
-from PIL import Image
-
 from spectraldock import Renderer
+
+from avif_test_utils import assert_avif_dimensions, captured_linear_rgb
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -38,36 +37,6 @@ def nonnegative_integer(value: str) -> int:
     if result < 0:
         raise argparse.ArgumentTypeError("must be a non-negative integer")
     return result
-
-
-def read_pfm(
-    path: Path,
-) -> tuple[int, int, tuple[tuple[float, float, float], ...]]:
-    with path.open("rb") as stream:
-        if stream.readline() != b"PF\n":
-            raise RuntimeError(f"{path.name}: expected a three-channel PFM")
-        dimensions = stream.readline().split()
-        if len(dimensions) != 2:
-            raise RuntimeError(f"{path.name}: malformed PFM dimensions")
-        width, height = map(int, dimensions)
-        if float(stream.readline()) >= 0.0:
-            raise RuntimeError(f"{path.name}: expected little-endian PFM data")
-        payload = stream.read()
-    expected = width * height * 3 * 4
-    if len(payload) != expected:
-        raise RuntimeError(
-            f"{path.name}: expected {expected} PFM bytes, got {len(payload)}"
-        )
-    values = struct.unpack(f"<{width * height * 3}f", payload)
-    if any(not math.isfinite(value) for value in values):
-        raise RuntimeError(f"{path.name}: linear output contains a non-finite value")
-
-    pixels = []
-    row_values = width * 3
-    for y in range(height - 1, -1, -1):
-        row = values[y * row_values:(y + 1) * row_values]
-        pixels.extend(zip(row[0::3], row[1::3], row[2::3]))
-    return width, height, tuple(pixels)
 
 
 def common_renderer(*, device: int, camera=CAMERA) -> Renderer:
@@ -222,12 +191,10 @@ def render_linear(
     spp: int = SPP,
     depth: int = 1,
 ) -> tuple[tuple[tuple[float, float, float], ...], bytes]:
-    png = directory / f"{name}.png"
-    pfm = directory / f"{name}.pfm"
+    avif = directory / f"{name}.avif"
     stats = renderer.render(
-        output=png,
-        stats_output=png.with_suffix(".stats.json"),
-        linear_output=pfm,
+        output=avif,
+        stats_output=avif.with_suffix(".stats.json"),
         width=WIDTH,
         height=HEIGHT,
         spp=spp,
@@ -236,16 +203,10 @@ def render_linear(
         denoise=False,
         clamp_direct=0.0,
         clamp_indirect=0.0,
+        _test_capture_linear=True,
     )
-    with Image.open(png) as image:
-        image.load()
-        if image.size != (WIDTH, HEIGHT) or image.mode != "RGBA":
-            raise RuntimeError(
-                f"{name}: unexpected PNG output {image.size} {image.mode}"
-            )
-    width, height, pixels = read_pfm(pfm)
-    if (width, height) != (WIDTH, HEIGHT):
-        raise RuntimeError(f"{name}: unexpected PFM dimensions {width}x{height}")
+    assert_avif_dimensions(avif, WIDTH, HEIGHT)
+    pixels, linear_values = captured_linear_rgb(stats, WIDTH, HEIGHT)
     render_stats = stats["render"]
     if (
         render_stats["denoised"] is not False
@@ -256,7 +217,7 @@ def render_linear(
     geometry = stats["geometry"]
     if geometry["unique_meshes"] != 1 or geometry["mesh_triangles"] != 2:
         raise RuntimeError(f"{name}: adversarial double-triangle mesh was not rendered")
-    return pixels, pfm.read_bytes()
+    return pixels, linear_values
 
 
 def luminance(pixel: tuple[float, float, float]) -> float:

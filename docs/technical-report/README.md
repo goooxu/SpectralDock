@@ -4,16 +4,16 @@
 
 报告不要求计算机图形学先修。正文会从直觉解释所需的向量、微积分和概率概念，再把关键公式与当前源码中的真实代码片段并排说明。
 
-![SpectralDock 的“暮潮观测站”综合能力展示](../gallery/showcase/tidal-observatory.png)
+![SpectralDock 的“暮潮观测站”综合能力展示](../gallery/showcase/tidal-observatory.avif)
 
 > 上图由 SpectralDock 路径追踪器直接输出。“暮潮观测站”是固定姿态的纯 Renderer 场景，不创建 `PhysicsWorld`、不启动 PhysX worker；它把 HDR 环境、PBR/法线贴图、光泽金属与低粗糙度 PBR 光学外壳、解析水面与 Beer 吸收、程序化火焰和有限灯光组合在一帧中。
 
-<img alt="Atelier 工坊" src="../gallery/showcase/atelier.png">
+<img alt="Atelier 工坊" src="../gallery/showcase/atelier.avif">
 
 Atelier 在 `480 × 1/120 s` 的 PhysX 求解后展示落定的 14 个刚体，以 flame
 壁炉、解析水盆和有限面积灯组合现有体积、水面与软阴影路径。
 
-<img alt="Assembly Hall 装配大厅" src="../gallery/showcase/assembly-hall.png">
+<img alt="Assembly Hall 装配大厅" src="../gallery/showcase/assembly-hall.avif">
 
 Assembly Hall 在 `36 × 1/120 s` 后展示 12 个仍在倾泻的 Spot，并组合天窗
 HDR/有限面光、吸收性烟影代理、炉火、alpha 标志和冷却池。报告中的封面顺序固定为
@@ -33,8 +33,8 @@ flowchart LR
     E --> K["可选 direct / indirect 贡献钳位"]
     K --> G["多条样本路径取平均"]
     G --> H["可选降噪"]
-    H --> I["曝光、色调映射、sRGB 编码"]
-    I --> J["8 bit PNG 像素"]
+    H --> I["曝光、Rec.2020 转换与保色相亮度肩部"]
+    I --> J["PQ、10 bit 4:4:4、HDR AVIF"]
 ~~~
 
 路径追踪从相机端反向寻找可能到达相机的光路。这只是求解方向；物理世界中的光仍然从光源传播到相机。
@@ -48,8 +48,8 @@ flowchart LR
 5. [直接光照、NEE 与 MIS](05-direct-lighting-and-mis.md)：解释面积灯、球锥、point/directional delta NEE，以及普通双策略 MIS 和竞争策略真实存在的条件。
 6. [HDR 环境与重要性采样](06-hdr-environment-and-importance-sampling.md)：从 RGBE 解码、纬经映射和 texel 立体角出发，推导环境二维 CDF、全局有限灯功率分布、三个 NEE 域及环境 MIS。
 7. [几何、可见性与 BVH](07-geometry-visibility-and-bvh.md)：追踪 CPU 几何到 CUDA 缓冲区、`OptixBuildInput`、GAS/IAS，再说明最近交点和阴影遮挡。
-8. [OptiX/GPU 实现](08-optix-gpu-implementation.md)：以 `render_optix` 为总入口，连起构建期 OptiX IR、context/pipeline/SBT、launch、traversal/callback 和资源销毁。
-9. [降噪、色调映射与输出](09-denoising-color-and-output.md)：展开可选 Denoiser 的完整生命周期，并划清纯 CUDA 后处理、D2H 和 CPU PNG/PFM 编码的边界。
+8. [OptiX/GPU 实现](08-optix-gpu-implementation.md)：以 `render_optix` 为总入口，连起动态最低虚拟架构的 portable PTX、context/pipeline/SBT、launch、traversal/callback 和资源销毁。
+9. [降噪、HDR 映射与 AVIF 输出](09-denoising-color-and-output.md)：展开可选 Denoiser 的完整生命周期，并说明 float D2H、Rec.2020/PQ、203/1000 nit 保色相映射与固定 10 bit HDR AVIF profile。
 10. [程序化体积火焰](10-procedural-volumetric-flame.md)：从吸收—自发光传输方程出发，解释程序密度、Delta Tracking、体积 NEE、安全统计，以及 Atelier/Assembly Hall 的炉火与吸收性烟影代理。
 11. [运行时解析水面](11-runtime-analytic-water.md)：从正弦高度场与解析法线出发，解释自定义求交、粗糙介电 GGX、Fresnel/Snell、介质栈、Beer 吸收、$q_G+q_U$ 双提议与 G/U/B balance，以及两个新封面怎样组合有限封闭水池。
 12. [PhysX 刚体模拟与 Python 场景即时构建](12-physx-rigid-body-scene-baking.md)：从 Newton–Euler、冲量、接触约束、复合刚体和碰撞代理出发，解释四个 PhysX 程序的 GPU 刚体姿态怎样经 private IPC 与 `BodyState`/typed attachments 进入 SceneBuilder。
@@ -82,7 +82,7 @@ flowchart LR
 | $\boldsymbol\beta$ | 一条随机路径当前的 RGB 吞吐量 | 无量纲权重 |
 | $\odot$ | RGB 逐分量相乘 | 例如 $(a_r b_r,a_g b_g,a_b b_b)$ |
 
-报告中的 RGB 指**线性 RGB**，除非明确写出 sRGB。公式中的颜色可以大于 1；它们会在最后统一映射到显示范围。
+报告中的 RGB 指**线性 RGB**，除非明确写出 sRGB。公式中的颜色可以大于 1；它们会在最后统一映射到 203 nit diffuse white、1000 nit peak 的 Rec.2020/PQ HDR 输出范围。
 
 ## 数学、实现与验证的关系
 
@@ -113,8 +113,7 @@ OptiX、CUDA、BVH、SBT（GPU 实现）
 - BSDF 与灯光采样：[`evaluate_bsdf`、`sample_bsdf`、`sample_finite_direct_light`、`sample_environment_direct_light`、`accumulate_delta_direct_lights`](../../src/device_programs.cu)
 - Firefly 控制：[`clamp_path_contribution`](../../src/device_programs.cu)
 - GPU 管线与加速结构：[`create_pipeline`、`build_mesh`、`build_ias`、`make_sbt`](../../src/optix_renderer.cpp)
-- 后处理：[`postprocess_kernel`](../../src/postprocess.cu)
-- 主机输出：[`write_png_rgba8`](../../src/image_io.cpp)
+- 主机 HDR 映射与 AVIF 输出：[`write_hdr_avif_rgb32f`](../../src/image_io.cpp)
 - PhysX Python API、private IPC 与 typed handoff：[`physics.py`](../../python/spectraldock/physics.py)
 - CUDA 12.8 / PhysX GPU worker：[`physx_worker.cpp`](../../tools/physx_worker.cpp)
 - Kinetic Foundry 物理程序：[`kinetic-foundry.py`](../../scenes/kinetic-foundry.py)
@@ -124,4 +123,4 @@ OptiX、CUDA、BVH、SBT（GPU 实现）
 - 体积密度与传输：[`flame_density`、`track_volume`](../../src/device_programs.cu)
 - 水面与介质传输：[`water_height`、`__intersection__water_surface`、`direct_segment_transmittance`、`sample_bsdf`](../../src/device_programs.cu)
 
-这是一份“与当前实现一致”的技术报告，不把 SpectralDock 描述成通用物理仿真器，也不把 Python 父进程与隔离 PhysX worker 组成的即时场景构建描述成同进程逐帧物理。每章都会明确当前实现的近似与边界。
+这是一份“与当前实现一致”的技术报告，不把 SpectralDock 描述成通用物理仿真器，也不把 Python 父进程与隔离 PhysX worker 组成的即时场景构建描述成同进程逐帧物理。运行时不绑定 CPU 架构或 GPU 型号；OptiX 必须能执行，PhysX 必须同时使用 GPU dynamics 与 GPU broadphase，CPU PhysX fallback 禁止，RT Core 不是前提。每章都会明确当前实现的近似与边界。

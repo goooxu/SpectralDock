@@ -133,7 +133,7 @@ def create_renderer(seed: int = DEFAULT_SEED) -> Renderer:
 
 
 def main() -> None:
-    output = ROOT / "output/examples/benchmark-harbor.png"
+    output = ROOT / "output/examples/benchmark-harbor.avif"
     create_renderer(DEFAULT_SEED).render(
         output=output,
         stats_output=output.with_suffix(".stats.json"),

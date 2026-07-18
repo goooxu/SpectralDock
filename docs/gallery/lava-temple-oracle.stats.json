@@ -1,14 +1,15 @@
 {
-  "scene": "scenes/generated/lava-temple-oracle.json",
-  "output": "docs/gallery/lava-temple-oracle.png",
+  "scene": "lava-temple-oracle",
+  "output": "/workspace/output/examples/lava-temple-oracle.avif",
+  "schema_version": 2,
   "hardware": {
-    "gpu": "NVIDIA GeForce RTX 5090",
-    "compute_capability": "12.0"
+    "gpu": "NVIDIA GB200",
+    "compute_capability": "10.0"
   },
   "versions": {
-    "driver": "615.36",
-    "cuda_driver_api": 13040,
-    "cuda_runtime": 13030,
+    "driver": "595.84.01",
+    "cuda_driver_api": 13020,
+    "cuda_runtime": 13000,
     "optix": 90100
   },
   "render": {
@@ -23,14 +24,30 @@
     "clamp_indirect": 16.0
   },
   "timings_ms": {
-    "bvh_build": 66.21395111083984,
-    "render": 743705.1875,
-    "denoise": 22.633087158203125,
-    "total": 750371.02515
+    "bvh_build": 110.5024642944336,
+    "render": 5419768.5,
+    "denoise": 20.261856079101562,
+    "avif_encode": 2361.935987,
+    "total": 5423704.55362
+  },
+  "hdr_avif": {
+    "bit_depth": 10,
+    "yuv_format": "4:4:4",
+    "full_range": true,
+    "cicp": [
+      9,
+      16,
+      9
+    ],
+    "diffuse_white_nits": 203,
+    "peak_nits": 1000,
+    "lossless": true,
+    "max_cll": 1000,
+    "max_pall": 10
   },
   "memory": {
-    "peak_device_bytes": 4249157632,
-    "peak_tracked_device_bytes": 2898949240
+    "peak_device_bytes": 4636803072,
+    "peak_tracked_device_bytes": 2855035236
   },
   "geometry": {
     "objects": 450,
@@ -40,29 +57,29 @@
     "gas_count": 450
   },
   "performance": {
-    "traced_rays": 294345540582,
-    "rays_per_second": 395782556.7567391
+    "traced_rays": 292746357219,
+    "rays_per_second": 54014550.108367175
   },
   "firefly": {
-    "direct_clamped_contributions": 30504182,
-    "indirect_clamped_contributions": 1360014
+    "direct_clamped_contributions": 31020542,
+    "indirect_clamped_contributions": 2731629
   },
   "volume": {
-    "volume_density_evaluations": 312207027302,
-    "volume_real_collisions": 5966434375,
-    "volume_light_samples": 57557356560,
+    "volume_density_evaluations": 311879096557,
+    "volume_real_collisions": 5956444081,
+    "volume_light_samples": 57365681930,
     "volume_majorant_violations": 0,
     "volume_tracking_overflows": 0
   },
   "water": {
-    "water_height_evaluations": 308648046113,
-    "water_tile_tests": 37936343787,
-    "water_roots_reported": 7482772769,
-    "water_medium_segments": 2446684411,
+    "water_height_evaluations": 259930913055,
+    "water_tile_tests": 25693296556,
+    "water_roots_reported": 6822905424,
+    "water_medium_segments": 2437485270,
     "water_solver_overflows": 0,
     "water_medium_errors": 0,
-    "water_rough_nee_attempts": 16658170907,
-    "water_rough_nee_contributions": 4816810187,
+    "water_rough_nee_attempts": 16601428480,
+    "water_rough_nee_contributions": 4778787039,
     "water_delta_splits": 0
   }
 }

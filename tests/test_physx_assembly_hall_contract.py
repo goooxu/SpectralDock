@@ -197,4 +197,4 @@ def test_formal_render_contract_and_generated_asset_paths():
     assert (SCENE.FORMAL_WIDTH, SCENE.FORMAL_HEIGHT) == (2560, 1440)
     assert (SCENE.FORMAL_SPP, SCENE.FORMAL_DEPTH) == (2048, 12)
     assert SCENE.ENVIRONMENT.name == "assembly-hall-noon.hdr"
-    assert SCENE.GEAR_ALPHA.name == "assembly-hall-gear-alpha.png"
+    assert SCENE.GEAR_ALPHA.name == "assembly-hall-gear-alpha.avif"

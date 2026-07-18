@@ -34,7 +34,7 @@ REQUIRED_OPTIX_FLOW_SNIPPETS = {
     "conditional-gas-compaction",
     "mesh-gas-resource-reuse",
     "optix-context-pipeline-setup",
-    "optix-ir-build-command",
+    "optix-portable-ptx-build-command",
     "optix-ias-instance-binding",
     "optix-launch-params-population",
     "optix-mesh-upload-build-input",
@@ -43,13 +43,15 @@ REQUIRED_OPTIX_FLOW_SNIPPETS = {
     "optix-shallow-pipeline-stack",
     "optix-state-teardown",
     "optix-two-dimensional-launch",
+    "output-avif-lossless-encoder",
     "output-denoiser-guide-wiring",
-    "output-linear-pfm",
-    "output-postprocess-kernel",
+    "output-hdr-avif-profile",
+    "output-pq-yuv-quantization",
+    "output-rec2020-soft-shoulder",
     "shadow-ray-visibility-query",
 }
 OPTIX_CHAPTER_SNIPPET_ORDER = (
-    "optix-ir-build-command",
+    "optix-portable-ptx-build-command",
     "optix-context-pipeline-setup",
     "optix-shallow-pipeline-stack",
     "optix-sbt-hit-records",
@@ -313,7 +315,7 @@ def test_technical_report_source_snippets_match_the_repository():
         "roughness=0.12",
         "512 spp",
         "MNEE",
-        "PFM",
+        "进程内线性捕获",
     ):
         assert boundary in water_chapter
     assert "roughness: 0.12" not in water_chapter

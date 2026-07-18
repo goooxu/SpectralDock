@@ -4,15 +4,14 @@
 from __future__ import annotations
 
 import argparse
-import binascii
 import hashlib
 import math
 import os
 from pathlib import Path
-import struct
 import sys
 import tempfile
-import zlib
+
+from spectraldock import _native
 
 
 VERSION = "spectraldock-assembly-hall-assets/1.0"
@@ -25,7 +24,7 @@ DEFAULT_HDR_OUTPUT = (
     ROOT / "assets/examples/environments/assembly-hall-noon.hdr"
 )
 DEFAULT_ALPHA_OUTPUT = (
-    ROOT / "assets/examples/textures/assembly-hall-gear-alpha.png"
+    ROOT / "assets/examples/textures/assembly-hall-gear-alpha.avif"
 )
 
 SUN_AZIMUTH_DEGREES = 45.0
@@ -239,17 +238,6 @@ def generate_hdr(output):
     return byte_count, digest.hexdigest()
 
 
-def png_chunk(chunk_type, payload):
-    checksum = binascii.crc32(chunk_type)
-    checksum = binascii.crc32(payload, checksum) & 0xFFFFFFFF
-    return (
-        struct.pack(">I", len(payload))
-        + chunk_type
-        + payload
-        + struct.pack(">I", checksum)
-    )
-
-
 def gear_alpha_at(x, y):
     """Return the binary alpha of a toothed ring, hub, and eight spokes."""
     dx = x - ALPHA_SIZE // 2
@@ -279,41 +267,16 @@ def build_gear_rgba():
     return pixels
 
 
-def encode_rgba8_png(width, height, pixels):
-    expected = width * height * 4
-    if len(pixels) != expected:
-        raise ValueError(
-            "RGBA8 payload has {} bytes, expected {}".format(
-                len(pixels), expected
-            )
-        )
-    row_bytes = width * 4
-    scanlines = bytearray((row_bytes + 1) * height)
-    for y in range(height):
-        source = y * row_bytes
-        destination = y * (row_bytes + 1)
-        scanlines[destination] = 0
-        scanlines[destination + 1 : destination + row_bytes + 1] = pixels[
-            source : source + row_bytes
-        ]
-    ihdr = struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)
-    return b"".join(
-        (
-            b"\x89PNG\r\n\x1a\n",
-            png_chunk(b"IHDR", ihdr),
-            png_chunk(b"IDAT", zlib.compress(bytes(scanlines), level=9)),
-            png_chunk(b"IEND", b""),
-        )
-    )
-
-
 def generate_alpha(output):
-    data = encode_rgba8_png(ALPHA_SIZE, ALPHA_SIZE, build_gear_rgba())
-
-    def write(stream):
-        stream.write(data)
-
-    _atomic_stream(Path(output), write)
+    output = Path(output)
+    _native.write_texture_avif(
+        os.fspath(output),
+        ALPHA_SIZE,
+        ALPHA_SIZE,
+        bytes(build_gear_rgba()),
+        False,
+    )
+    data = output.read_bytes()
     return len(data), hashlib.sha256(data).hexdigest()
 
 
@@ -339,7 +302,7 @@ def main(argv=None):
     args = parse_args(argv)
     try:
         records = generate(args.hdr_output, args.alpha_output)
-    except (OSError, ValueError) as error:
+    except (OSError, RuntimeError, ValueError) as error:
         print("error: {}".format(error), file=sys.stderr)
         return 2
     hdr_size, hdr_digest = records["hdr"]

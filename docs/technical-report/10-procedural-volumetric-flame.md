@@ -233,7 +233,7 @@ $$
 
 stats 单独记录 density evaluations、real collisions、light samples、majorant violations 和 tracking overflows。`traced_rays` 仍只计 `optixTrace`，所以新增大量纯 CUDA 密度求值可能增加 path trace 时间，却不增加射线数；此时 rays/s 不能单独代表火焰算法效率。
 
-Ember Forge 的正式配置使用 2048 spp、depth 12、direct 64 / indirect 16 贡献钳位且关闭 Denoiser。原因不是 Denoiser 不能处理亮色，而是当前 albedo/normal guide 只描述首次表面，没有体积特征或透射 guide；正式图保留未经神经重建的体积结构，同时用显式有偏钳位控制少量极端 firefly。要检查原始 Monte Carlo 长尾或比较能量，必须调用 `render(clamp_direct=0, clamp_indirect=0, ...)`；PFM 本身不会绕过钳位。
+Ember Forge 的正式配置使用 2048 spp、depth 12、direct 64 / indirect 16 贡献钳位且关闭 Denoiser。原因不是 Denoiser 不能处理亮色，而是当前 albedo/normal guide 只描述首次表面，没有体积特征或透射 guide；正式图保留未经神经重建的体积结构，同时用显式有偏钳位控制少量极端 firefly。要检查原始 Monte Carlo 长尾或比较能量，定向测试必须使用 `clamp_direct=0, clamp_indirect=0` 和显式的进程内线性捕获；捕获不会绕过钳位，也不是公共文件输出。
 
 ## 7. 当前边界
 

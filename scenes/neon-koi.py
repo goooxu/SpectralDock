@@ -393,7 +393,7 @@ def create_renderer() -> Renderer:
 
 
 def main() -> None:
-    output = ROOT / "output/examples/neon-koi.png"
+    output = ROOT / "output/examples/neon-koi.avif"
     create_renderer().render(
         output=output,
         stats_output=output.with_suffix(".stats.json"),

@@ -308,6 +308,8 @@ std::int32_t SceneBuilder::add_image_texture(
   const std::string where = "textures[" +
                             std::to_string(scene_.textures.size()) + "]";
   const auto absolute = std::filesystem::absolute(path).lexically_normal();
+  if (absolute.extension() != ".avif")
+    fail(where + ".path", "image textures must use the lowercase .avif extension");
   if (!std::filesystem::is_regular_file(absolute))
     fail(where + ".path", "asset not found: " + absolute.string());
   const auto id = insert_unique(texture_ids_, name, scene_.textures.size(),
