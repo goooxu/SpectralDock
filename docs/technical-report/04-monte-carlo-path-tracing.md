@@ -248,7 +248,7 @@ static __forceinline__ __device__ ContinuationResolution resolve_continuation(
 
 ## 6. Firefly 与两级贡献钳位
 
-低概率路径若同时带有很大的 $f_s/p$、俄罗斯轮盘补偿或尖锐间接高光，会在有限样本图像中形成少量极亮像素，即 firefly。仅增加 spp 能按统计规律缓慢降低它们，但布光预览往往更需要一个可控的稳定输出。因此 `Renderer.integrator()` 提供 `clamp_direct` 与 `clamp_indirect`；默认分别是 64 和 16，`Renderer.render()` 也可逐次覆盖，0 表示关闭。
+低概率路径若同时带有很大的 $f_s/p$、俄罗斯轮盘补偿或尖锐间接高光，会在有限样本图像中形成少量极亮像素，即 firefly。仅增加 spp 能按统计规律缓慢降低它们，但布光预览往往更需要一个可控的稳定输出。因此 `Renderer.integrator()` 提供 `clamp_direct` 与 `clamp_indirect`；默认分别是 64 和 16，`Renderer.render()` 也可逐次、逐项覆盖，0 表示关闭。省略覆盖时 `render_optix` 直接读取冻结 Scene 的阈值；覆盖只对当前一次渲染有效，stats 保存解析后的实际值。
 
 对已经乘过 throughput、可见性、介质透射和 MIS 权重的一份完整 RGB 路径贡献 $\mathbf C$，令
 

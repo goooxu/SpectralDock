@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -16,8 +17,10 @@ struct RenderSettings {
   std::uint32_t spp = 256;
   std::uint32_t max_depth = 12;
   std::uint32_t seed = 1;
-  float clamp_direct = 64.0f;
-  float clamp_indirect = 16.0f;
+  // Empty values use the immutable Scene integrator thresholds. Present
+  // values are one-render overrides and never mutate the Scene.
+  std::optional<float> clamp_direct;
+  std::optional<float> clamp_indirect;
   bool denoise = false;
   bool validation = false;
 };

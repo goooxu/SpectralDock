@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
 # Both NVIDIA images are multi-architecture. Docker therefore selects the
-# native x86-64 or aarch64 layer without hard-coding the host ISA.
+# native target layer without hard-coding the host ISA.
 ARG PHYSX_CUDA_IMAGE=nvidia/cuda:12.8.1-devel-ubuntu24.04
 ARG RENDER_CUDA_IMAGE=nvidia/cuda:13.0.1-devel-ubuntu24.04
 
@@ -35,7 +35,6 @@ ENV SPECTRALDOCK_CUDA_ROOT=/usr/local/cuda-13.0 \
     SPECTRALDOCK_PHYSX_CUDA_ROOT=/usr/local/cuda-12.8 \
     OPTIX_ROOT=/opt/optix \
     PHYSX_ROOT=/opt/physx \
-    CMAKE_BUILD_PARALLEL_LEVEL=32 \
     PYTHONDONTWRITEBYTECODE=1
 
 # Mount the repository at /workspace, OptiX 9.1 headers at /opt/optix, and the

@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <tuple>
@@ -56,6 +57,13 @@ TextureWrap texture_wrap(const std::string& value) {
   if (value == "repeat") return TextureWrap::Repeat;
   if (value == "mirrored_repeat") return TextureWrap::MirroredRepeat;
   throw std::invalid_argument("unsupported texture wrap mode: " + value);
+}
+
+TextureColorSpace texture_color_space(const std::string& value) {
+  if (value == "linear") return TextureColorSpace::Linear;
+  if (value == "srgb") return TextureColorSpace::Srgb;
+  if (value == "hdr") return TextureColorSpace::Hdr;
+  throw std::invalid_argument("unsupported texture color space: " + value);
 }
 
 DirectLightSampling light_sampling(const std::string& value) {
@@ -238,13 +246,15 @@ PYBIND11_MODULE(_native, module) {
       .def(
           "add_image_texture",
           [](SceneBuilder& self, const std::string& name,
-             const std::filesystem::path& path, bool srgb,
+             const std::filesystem::path& path,
+             const std::string& color_space,
              const std::string& wrap_u, const std::string& wrap_v) {
-            return self.add_image_texture(name, path, srgb,
+            return self.add_image_texture(name, path,
+                                          texture_color_space(color_space),
                                           texture_wrap(wrap_u),
                                           texture_wrap(wrap_v));
           },
-          py::arg("name"), py::arg("path"), py::arg("srgb"),
+          py::arg("name"), py::arg("path"), py::arg("color_space"),
           py::arg("wrap_u"), py::arg("wrap_v"))
       .def(
           "add_material",
@@ -479,7 +489,8 @@ PYBIND11_MODULE(_native, module) {
       [](const NativeScene& native_scene, const std::string& output,
          int device, std::uint32_t width, std::uint32_t height,
          std::uint32_t spp, std::uint32_t max_depth, std::uint32_t seed,
-         float exposure, float clamp_direct, float clamp_indirect,
+         std::optional<float> clamp_direct,
+         std::optional<float> clamp_indirect,
          bool denoise, bool validation, bool test_capture_linear) -> py::dict {
 #if SPECTRALDOCK_ENABLE_GPU
         if (!native_scene.value)
@@ -509,7 +520,7 @@ PYBIND11_MODULE(_native, module) {
           const auto encode_begin = std::chrono::steady_clock::now();
           const HdrAvifInfo info = write_hdr_avif_rgb32f(
               output_path, result.width, result.height, result.linear_rgb,
-              exposure);
+              native_scene.value->background.exposure);
           result.stats.avif_encode_ms =
               std::chrono::duration<double, std::milli>(
                   std::chrono::steady_clock::now() - encode_begin).count();
@@ -534,7 +545,6 @@ PYBIND11_MODULE(_native, module) {
         (void)spp;
         (void)max_depth;
         (void)seed;
-        (void)exposure;
         (void)clamp_direct;
         (void)clamp_indirect;
         (void)denoise;
@@ -546,7 +556,7 @@ PYBIND11_MODULE(_native, module) {
       },
       py::arg("scene"), py::arg("output"), py::arg("device"),
       py::arg("width"), py::arg("height"), py::arg("spp"),
-      py::arg("max_depth"), py::arg("seed"), py::arg("exposure"),
+      py::arg("max_depth"), py::arg("seed"),
       py::arg("clamp_direct"), py::arg("clamp_indirect"),
       py::arg("denoise"), py::arg("validation") = false,
       py::arg("test_capture_linear") = false);

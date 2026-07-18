@@ -57,7 +57,13 @@ def test_generator_reconstructs_both_tracked_assets(tmp_path):
             )
         )
     assert read_avif_rgba(alpha) == read_avif_rgba(TRACKED_ALPHA)
-    assert b"-Y 1024 +X 2048\n" in hdr.read_bytes()[:512]
+    hdr_header = hdr.read_bytes()[:512]
+    assert (
+        b"PRIMARIES=0.6400 0.3300 0.3000 0.6000 "
+        b"0.1500 0.0600 0.3127 0.3290\n"
+        in hdr_header
+    )
+    assert b"-Y 1024 +X 2048\n" in hdr_header
 
 
 def test_noon_environment_is_finite_seamless_and_sun_dominated():

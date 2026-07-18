@@ -14,7 +14,7 @@ import tempfile
 from spectraldock import _native
 
 
-VERSION = "spectraldock-assembly-hall-assets/1.0"
+VERSION = "spectraldock-assembly-hall-assets/1.1"
 HDR_WIDTH = 2048
 HDR_HEIGHT = 1024
 ALPHA_SIZE = 1024
@@ -188,6 +188,7 @@ def hdr_header():
     return (
         "#?RADIANCE\n"
         "# Generated deterministically by {}\n"
+        "PRIMARIES=0.6400 0.3300 0.3000 0.6000 0.1500 0.0600 0.3127 0.3290\n"
         "FORMAT=32-bit_rle_rgbe\n"
         "\n"
         "-Y {} +X {}\n".format(VERSION, HDR_HEIGHT, HDR_WIDTH)

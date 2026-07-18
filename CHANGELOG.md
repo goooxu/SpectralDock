@@ -43,13 +43,19 @@ commit 列表仍以 Git 历史为准。发布新版本时，应把 `Unreleased` 
   4:4:4 full range、203 nit diffuse white、1000 nit peak，并在量化后固定使用
   AOM AV1 lossless。删除公共线性文件输出。
 - 所有普通颜色纹理和材质数据图统一为 8 bit lossless AVIF；数据图采用严格的
-  BT.709/linear/identity/full-range 4:4:4 profile。Radiance RGBE `.hdr` 继续只
-  用于环境贴图。
+  BT.709/linear/identity/full-range 4:4:4 profile。自发光纹理可额外使用
+  CICP `9/16/9` 的 10/12 bit HDR AVIF，并解码、上传为保留大于 `1.0` 能量的
+  线性 Rec.709 float texture；HDR profile 禁止用于表面数据槽和 alpha。
+  Radiance RGBE `.hdr` 继续只用于环境贴图。
+- Radiance 环境路径必须使用小写 `.hdr`；加载器累计消除 `EXPOSURE` 与
+  `COLORCORR`，并按单个 `PRIMARIES`（缺省为 Radiance 标准值）经白点适配
+  转换到线性 Rec.709/D65。项目生成器显式声明其 Rec.709/D65 色彩语义。
 - 栅格 I/O 改为固定 libavif 1.4.2 commit 与其 AOM 3.14.1 local backend；构建
   不再引入旧栅格编解码依赖，AOM 保留运行时 CPU dispatch。
-- 平台契约不绑定 CPU 架构、GPU 型号或 RT Core；Linux x86-64/aarch64 使用
-  原生工具链。GPU 必须能运行 OptiX；物理验收必须同时证明 PhysX GPU
-  dynamics、GPU broadphase 和有效 CUDA context，CPU PhysX fallback 禁止。
+- 平台契约不绑定 CPU 架构、GPU 型号或 RT Core；host 对象由当前原生工具链
+  构建，PhysX SDK layout 由发现逻辑或显式目录提供。GPU 必须能运行 OptiX；
+  物理验收必须同时证明 PhysX GPU dynamics、GPU broadphase 和有效 CUDA
+  context，CPU PhysX fallback 禁止。
 
 - 将 Capsule Mascot 的 OBJ、MTL 与 manifest 归整到独立模型目录，与 Sparky
   和 Spot 的资产包布局保持一致；使用该模型的九个场景只同步仓库内路径。
@@ -77,6 +83,12 @@ commit 列表仍以 Git 历史为准。发布新版本时，应把 `Unreleased` 
 
 ### 修复
 
+- Scene 成为曝光与积分器默认阈值的唯一真源；逐次 clamp override 不再改写
+  Scene，并删除 Python 镜像状态。HDR AVIF 编码现在拒绝 NaN/无穷，不再静默
+  写成黑色。
+- AVIF 容器在 component 解码前拒绝多帧/分层、ICC、gain map、像素变换、
+  预乘 alpha 与 Sample Transform；输入输出统一限制单边 16384、总计 $2^{25}$
+  像素，避免极端长宽组合触发数 GiB 临时分配。
 - 修正表面派生射线在极大坐标与极小几何上的自交/漏交风险：交点现在携带
   primitive-aware 位置误差界；triangle/mesh 计入顶点 extent、对象到世界重建与
   traversal 的世界到对象仿射误差，解析 primitive 使用命中点、位移和包围 extent 的保守 fallback，

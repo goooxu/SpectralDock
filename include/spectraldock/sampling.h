@@ -20,7 +20,10 @@ struct ImageRgb32f {
 
 // Reads a Radiance RGBE image with FORMAT=32-bit_rle_rgbe and the conventional
 // -Y height +X width orientation. Both modern per-channel RLE and raw RGBE
-// scanlines are accepted. Returned samples are linear Rec.709 RGB values.
+// scanlines are accepted. Repeated EXPOSURE and COLORCORR headers are divided
+// out cumulatively. A single PRIMARIES header is converted from its declared
+// linear RGB space to linear Rec.709/D65 with Bradford white adaptation; files
+// without one use the standard Radiance primaries and equal-energy white.
 ImageRgb32f load_radiance_hdr(const std::filesystem::path& path);
 
 struct FiniteLightDistribution {

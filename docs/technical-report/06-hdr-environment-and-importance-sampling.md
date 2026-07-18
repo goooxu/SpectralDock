@@ -12,7 +12,7 @@ $$
 \mathbf L=(R,G,B)\,2^{E-136}.
 $$
 
-这里的 $\mathbf L$ 是线性 Rec.709 RGB 相对辐亮度，可以远大于 1。减去 136 包含 128 的指数偏置和 8 bit 尾数的 $1/256$ 缩放。它不会在读取时执行 sRGB 解码、曝光或色调映射；曝光只在最终显示管线中执行。
+这里先得到的是文件所声明色域中的线性 RGB 码值，而不是天然的 Rec.709，也不是显示颜色；数值可以远大于 1。减去 136 包含 128 的指数偏置和 8 bit 尾数的 $1/256$ 缩放。RGBE 不执行 sRGB 解码或色调映射，但 Radiance header 本身可以记录生成文件时已经乘入的曝光和逐通道校正，加载器必须把它们消掉，不能和场景的显示曝光混为一谈。
 
 <!-- source-snippet id="hdr-rgbe-linear-decode" path="src/sampling.cpp" anchor="std::ldexp" -->
 ```cpp
@@ -25,7 +25,42 @@ Vec3 decode_rgbe(const std::uint8_t* rgbe) {
 }
 ```
 
-加载器只接受 `FORMAT=32-bit_rle_rgbe` 和 `-Y H +X W`。它支持现代逐通道 RLE 与原始 RGBE scanline，并拒绝错误签名、重复或缺失格式、非法 packet、截断数据和分辨率不匹配。宽、高和像素总数分别限制为 8192、4096 和 $2^{25}$，使文件大小在分配前已有确定上界。首版不读取 OpenEXR，也不把线性 beauty 写成 HDR 文件。
+若 header 中依次出现 $n$ 个 `EXPOSURE` 和 $m$ 个 `COLORCORR`，先计算
+
+$$
+e=\prod_{i=1}^{n}e_i,
+\qquad
+\mathbf c=\mathop{\bigodot}_{j=1}^{m}\mathbf c_j,
+\qquad
+\mathbf L_s=\frac{\mathbf L_{RGBE}}{e\,\mathbf c}.
+$$
+
+除法逐通道进行。每项及累计结果都必须有限且严格为正；零、负数、`NaN`、无穷和累计上溢/下溢都会使整个文件失败。多个 header 不是“最后一项覆盖前一项”，而是按 Radiance 语义累计相乘。
+
+文件最多可有一个合法 `PRIMARIES=x_r y_r x_g y_g x_b y_b x_w y_w`。缺省时采用 Radiance 标准值：红 $(0.640,0.330)$、绿 $(0.290,0.600)$、蓝 $(0.150,0.060)$、等能白点 $(0.3333,0.3333)$。项目的两个确定性生成器知道其数值实际处于 Rec.709/D65，因此显式写入
+
+```text
+PRIMARIES=0.6400 0.3300 0.3000 0.6000 0.1500 0.0600 0.3127 0.3290
+```
+
+色彩转换不把 xy 坐标直接套在线性 RGB 上。对每个 chromaticity 构造单位 $Y$ 的 XYZ 列向量，解出使白点成立的三个 primary scale，得到源矩阵 $M_s$；随后用 Bradford 矩阵 $B$ 把源白点适配到 D65：
+
+$$
+A=B^{-1}\,\mathrm{diag}\!\left(
+\frac{B\mathbf w_{D65}}{B\mathbf w_s}
+\right)B,
+\qquad
+\boxed{\mathbf L_{709}=M_{709}^{-1}A M_s\mathbf L_s}.
+$$
+
+这一步在 double 中完成，最后才存为 float。加载器拒绝重复/缺项/多项
+`PRIMARIES`、非法 xy、奇异或病态 primary matrix、白点落在 primary gamut 外、
+不可适配白点，以及非有限或绝对值超出 float 范围的转换结果。合法的源色域颜色
+可能落在 Rec.709 gamut 外；此时有限且可表示的负 Rec.709 分量逐通道裁剪为零，
+可表示的正能量保持不变。这与 HDR AVIF 自发光纹理的输入策略一致，也使返回给
+重要性分布和设备纹理的样本具有明确的非负线性 Rec.709/D65 语义。
+
+除此之外，加载器只接受 `FORMAT=32-bit_rle_rgbe` 和 `-Y H +X W`。它支持现代逐通道 RLE 与原始 RGBE scanline，并拒绝错误签名、重复或缺失格式、非法 packet、截断数据和分辨率不匹配。宽、高和像素总数分别限制为 8192、4096 和 $2^{25}$，使文件大小在分配前已有确定上界。SceneBuilder 还要求环境路径使用严格小写 `.hdr`；Radiance 文件只作为环境输入，beauty 则写成 HDR AVIF。
 
 ## 2. 从世界方向到纬经纹素
 
@@ -289,7 +324,12 @@ point/directional 不受该开关影响，始终逐灯求值。
 
 ## 8. 验证边界
 
-Host 测试覆盖 RGBE 原始/RLE scanline、坏 packet、尺寸上限、CDF 单调归一、最终 float 区间概率、全黑退化和有限灯代理。程序化环境生成器还必须逐字节重建 tracked HDR 资产。
+Host 测试覆盖 RGBE 原始/RLE scanline、累计 `EXPOSURE`/`COLORCORR` 除法、
+缺省 Radiance 色域、显式非平凡 primary 变换、宽色域转换的负分量裁剪与正能量
+保留、重复/畸形 header、非有限或超出 float 的转换结果、坏 packet、尺寸上限、
+严格小写 `.hdr` 后缀、CDF 单调归一、最终 float 区间概率、全黑退化和有限灯
+代理。程序化环境生成器还必须写出显式 Rec.709/D65 `PRIMARIES` 并逐字节重建
+tracked HDR 资产。
 
 GPU 定向测试检查环境唯一照明、`intensity=0` 精确黑场、旋转响应、固定 seed 确定性和 depth 1 环境 NEE；高 spp 的 uniform/importance 均值必须收敛，低 spp 下热点环境与强弱多灯的 ROI MSE 必须由 importance 明显降低。有限灯测试还用两盏不等功率且绑定可见 emitter 几何的面积灯，在 depth 2 同时触发 NEE 与 BSDF-hit 路径，验证两侧 MIS 都使用同一 $q_i$；sphere 对所有连续表面验证可见锥。delta fixture 检查 point 逆平方、directional 距离不变、遮挡和不扰动有限灯 RNG。水面 fixture 另按等散射阶数验证确定性双选灯、可见立体角和反射分支过采样后的收敛均值不变。所有均值/MSE 对照都用 clamp 0/0。
 

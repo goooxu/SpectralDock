@@ -10,7 +10,7 @@ import tempfile
 from pathlib import Path
 
 
-VERSION = "spectraldock-hdr-environment-generator/2.0"
+VERSION = "spectraldock-hdr-environment-generator/2.1"
 WIDTH = 2048
 HEIGHT = 1024
 ROOT = Path(__file__).resolve().parents[1]
@@ -339,6 +339,7 @@ def header_bytes():
     return (
         "#?RADIANCE\n"
         "# Generated deterministically by {}\n"
+        "PRIMARIES=0.6400 0.3300 0.3000 0.6000 0.1500 0.0600 0.3127 0.3290\n"
         "FORMAT=32-bit_rle_rgbe\n"
         "\n"
         "-Y {} +X {}\n".format(VERSION, HEIGHT, WIDTH)

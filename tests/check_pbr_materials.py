@@ -400,6 +400,51 @@ def check_srgb_filtering_and_wrap(directory: Path, *, device: int) -> None:
         raise RuntimeError(f"unexpected CUDA V-wrap samples: {wrapped_v!r}")
 
 
+def check_hdr_float_texture(directory: Path, *, device: int) -> None:
+    hdr_texture = directory / "hdr-emission-source.avif"
+    source = common_renderer(device=device)
+    source.background(type="constant", color=(4.0, 4.0, 4.0), exposure=0.0)
+    black = source.material(
+        name="offscreen-black", type="lambertian", base_color=(0.0, 0.0, 0.0)
+    )
+    source.object(
+        name="offscreen-object",
+        type="sphere",
+        center=(100.0, 100.0, 100.0),
+        radius=1.0,
+        material=black,
+    )
+    source.render(
+        output=hdr_texture,
+        stats_output=hdr_texture.with_suffix(".stats.json"),
+        width=1,
+        height=1,
+        spp=1,
+        depth=1,
+        seed=SEED,
+        denoise=False,
+        clamp_direct=0.0,
+        clamp_indirect=0.0,
+    )
+    assert_avif_dimensions(hdr_texture, 1, 1)
+
+    sampled = render_probe(
+        textured_emitter_renderer(
+            device=device,
+            texture_path=hdr_texture,
+            mesh_path=QUAD,
+            color_space="hdr",
+        ),
+        directory,
+        "hdr-float-texture",
+    )
+    if min(sampled) <= 2.5:
+        raise RuntimeError(
+            "HDR AVIF texture was clipped or normalized during GPU upload: "
+            f"{sampled!r}"
+        )
+
+
 def check_metallic_roughness(directory: Path, *, device: int) -> None:
     base = directory / "base-color.avif"
     write_rgba(base, (1, 1), [(128, 64, 255, 255)])
@@ -671,6 +716,7 @@ def check_sampled_transport(directory: Path, *, device: int) -> None:
 
 def run_check(directory: Path, *, device: int) -> None:
     check_srgb_filtering_and_wrap(directory, device=device)
+    check_hdr_float_texture(directory, device=device)
     check_metallic_roughness(directory, device=device)
     check_normal_mapping(directory, device=device)
     check_sampled_transport(directory, device=device)

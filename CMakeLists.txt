@@ -75,8 +75,13 @@ endif()
 
 if(SPECTRALDOCK_ENABLE_PHYSX_SCENE)
   list(PREPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
-  set(PHYSX_ROOT "/opt/physx" CACHE PATH
+  set(_spectraldock_physx_root_default "/opt/physx")
+  if(DEFINED ENV{PHYSX_ROOT} AND NOT "$ENV{PHYSX_ROOT}" STREQUAL "")
+    set(_spectraldock_physx_root_default "$ENV{PHYSX_ROOT}")
+  endif()
+  set(PHYSX_ROOT "${_spectraldock_physx_root_default}" CACHE PATH
     "Installed NVIDIA PhysX SDK root")
+  unset(_spectraldock_physx_root_default)
   set(PHYSX_BUILD_TYPE "checked" CACHE STRING
     "PhysX library configuration")
   set_property(CACHE PHYSX_BUILD_TYPE PROPERTY STRINGS

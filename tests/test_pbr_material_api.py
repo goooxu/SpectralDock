@@ -15,6 +15,7 @@ DEGENERATE_UV_QUAD = ROOT / "tests/assets/pbr-quad-degenerate-uv.obj"
 class RecordingBuilder:
     def __init__(self) -> None:
         self.image_texture_calls = []
+        self.material_calls = []
         self.pbr_material_calls = []
 
     def add_image_texture(self, *arguments):
@@ -24,6 +25,10 @@ class RecordingBuilder:
     def add_pbr_material(self, *arguments):
         self.pbr_material_calls.append(arguments)
         return len(self.pbr_material_calls) + 20
+
+    def add_material(self, *arguments):
+        self.material_calls.append(arguments)
+        return len(self.material_calls) + 30
 
 
 def recording_renderer() -> tuple[Renderer, RecordingBuilder]:
@@ -66,9 +71,30 @@ def test_image_texture_forwards_default_and_explicit_wrap_modes():
     )
 
     assert builder.image_texture_calls == [
-        ("default", "default.avif", True, "clamp_to_edge", "clamp_to_edge"),
-        ("tiled", "tiled.avif", False, "repeat", "mirrored_repeat"),
+        ("default", "default.avif", "srgb", "clamp_to_edge", "clamp_to_edge"),
+        ("tiled", "tiled.avif", "linear", "repeat", "mirrored_repeat"),
     ]
+
+
+def test_hdr_image_texture_forwards_explicit_color_space():
+    renderer, builder = recording_renderer()
+
+    texture = image_texture(renderer, "emission", color_space="hdr")
+
+    assert texture._color_space == "hdr"
+    assert builder.image_texture_calls == [
+        ("emission", "emission.avif", "hdr", "clamp_to_edge", "clamp_to_edge")
+    ]
+
+
+@pytest.mark.parametrize("color_space", ["HDR", "pq", "", None, 3])
+def test_image_texture_rejects_unknown_color_space(color_space):
+    renderer, builder = recording_renderer()
+
+    with pytest.raises((TypeError, ValueError), match="color_space"):
+        image_texture(renderer, "invalid", color_space=color_space)
+
+    assert builder.image_texture_calls == []
 
 
 @pytest.mark.parametrize("path", ["legacy.png", "upper.AVIF", "linear.pfm"])
@@ -151,14 +177,53 @@ def test_pbr_material_forwards_independent_texture_slots_and_factors():
     "keyword",
     ["metallic_roughness_texture", "normal_texture"],
 )
-def test_pbr_data_textures_must_be_linear(keyword):
+@pytest.mark.parametrize("color_space", ["srgb", "hdr"])
+def test_pbr_data_textures_must_be_linear(keyword, color_space):
     renderer, builder = recording_renderer()
-    encoded = image_texture(renderer, "encoded", color_space="srgb")
+    encoded = image_texture(renderer, "encoded", color_space=color_space)
 
     with pytest.raises(ValueError, match=rf"{keyword}.*linear"):
         renderer.material(name="invalid", type="pbr", **{keyword: encoded})
 
     assert builder.pbr_material_calls == []
+
+
+def test_hdr_texture_is_restricted_to_emitter_materials():
+    renderer, builder = recording_renderer()
+    hdr = image_texture(renderer, "hdr", color_space="hdr")
+
+    with pytest.raises(ValueError, match="only by emitter"):
+        renderer.material(name="invalid", type="lambertian", texture=hdr)
+
+    emitter = renderer.material(name="emitter", type="emitter", texture=hdr)
+    assert emitter.id == 31
+    assert len(builder.material_calls) == 1
+
+
+def test_pbr_base_color_rejects_hdr_texture():
+    renderer, builder = recording_renderer()
+    hdr = image_texture(renderer, "hdr", color_space="hdr")
+
+    with pytest.raises(ValueError, match="only by emitter"):
+        renderer.material(name="invalid", type="pbr", base_color_texture=hdr)
+
+    assert builder.pbr_material_calls == []
+
+
+def test_alpha_mask_rejects_hdr_texture():
+    renderer, _ = recording_renderer()
+    hdr = image_texture(renderer, "hdr", color_space="hdr")
+    surface = renderer.material(name="surface", type="lambertian")
+
+    with pytest.raises(ValueError, match="alpha_texture.*hdr"):
+        renderer.object(
+            name="invalid",
+            type="sphere",
+            center=(0.0, 0.0, 0.0),
+            radius=1.0,
+            material=surface,
+            alpha_texture=hdr,
+        )
 
 
 @pytest.mark.parametrize(

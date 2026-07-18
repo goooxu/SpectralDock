@@ -6,6 +6,7 @@
 #include <cmath>
 #include <fstream>
 #include <limits>
+#include <locale>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -95,6 +96,313 @@ Vec3 decode_rgbe(const std::uint8_t* rgbe) {
   return {static_cast<float>(rgbe[0]) * scale,
           static_cast<float>(rgbe[1]) * scale,
           static_cast<float>(rgbe[2]) * scale};
+}
+
+struct Chromaticities {
+  std::array<double, 2> red;
+  std::array<double, 2> green;
+  std::array<double, 2> blue;
+  std::array<double, 2> white;
+};
+
+// Radiance's historical defaults use the standard Radiance RGB primaries and
+// an equal-energy white. Files produced by this project declare Rec.709/D65
+// explicitly, so the default is only used for otherwise valid legacy files.
+constexpr Chromaticities kRadianceStandardChromaticities{
+    {0.640, 0.330}, {0.290, 0.600}, {0.150, 0.060}, {0.3333, 0.3333}};
+constexpr Chromaticities kRec709D65Chromaticities{
+    {0.640, 0.330}, {0.300, 0.600}, {0.150, 0.060}, {0.3127, 0.3290}};
+
+struct Matrix3 {
+  std::array<double, 9> values{};
+};
+
+double matrix_value(const Matrix3& matrix, std::size_t row,
+                    std::size_t column) {
+  return matrix.values[row * 3 + column];
+}
+
+double& matrix_value(Matrix3& matrix, std::size_t row, std::size_t column) {
+  return matrix.values[row * 3 + column];
+}
+
+std::array<double, 3> multiply(const Matrix3& matrix,
+                               const std::array<double, 3>& vector) {
+  std::array<double, 3> result{};
+  for (std::size_t row = 0; row < 3; ++row) {
+    for (std::size_t column = 0; column < 3; ++column) {
+      result[row] += matrix_value(matrix, row, column) * vector[column];
+    }
+  }
+  return result;
+}
+
+Matrix3 multiply(const Matrix3& first, const Matrix3& second) {
+  Matrix3 result;
+  for (std::size_t row = 0; row < 3; ++row) {
+    for (std::size_t column = 0; column < 3; ++column) {
+      for (std::size_t inner = 0; inner < 3; ++inner) {
+        matrix_value(result, row, column) +=
+            matrix_value(first, row, inner) *
+            matrix_value(second, inner, column);
+      }
+    }
+  }
+  return result;
+}
+
+Matrix3 inverse(const Matrix3& matrix, const std::filesystem::path& path,
+                const char* description) {
+  double scale = 0.0;
+  for (const double value : matrix.values) {
+    if (!std::isfinite(value))
+      hdr_error(path, std::string(description) + " matrix is non-finite");
+    scale = std::max(scale, std::fabs(value));
+  }
+  if (!(scale > 0.0))
+    hdr_error(path, std::string(description) + " matrix is singular");
+
+  Matrix3 normalized = matrix;
+  for (double& value : normalized.values) value /= scale;
+  const double a = normalized.values[0];
+  const double b = normalized.values[1];
+  const double c = normalized.values[2];
+  const double d = normalized.values[3];
+  const double e = normalized.values[4];
+  const double f = normalized.values[5];
+  const double g = normalized.values[6];
+  const double h = normalized.values[7];
+  const double i = normalized.values[8];
+  const double determinant =
+      a * (e * i - f * h) - b * (d * i - f * g) +
+      c * (d * h - e * g);
+  if (!std::isfinite(determinant) || std::fabs(determinant) <= 1.0e-12)
+    hdr_error(path, std::string(description) + " matrix is singular");
+
+  Matrix3 result{{
+      (e * i - f * h) / determinant,
+      (c * h - b * i) / determinant,
+      (b * f - c * e) / determinant,
+      (f * g - d * i) / determinant,
+      (a * i - c * g) / determinant,
+      (c * d - a * f) / determinant,
+      (d * h - e * g) / determinant,
+      (b * g - a * h) / determinant,
+      (a * e - b * d) / determinant,
+  }};
+  for (double& value : result.values) {
+    value /= scale;
+    if (!std::isfinite(value))
+      hdr_error(path, std::string(description) + " matrix is ill-conditioned");
+  }
+  return result;
+}
+
+std::array<double, 3> xy_to_xyz(const std::array<double, 2>& xy,
+                                const std::filesystem::path& path,
+                                const char* description) {
+  const double x = xy[0];
+  const double y = xy[1];
+  const std::array<double, 3> xyz{x / y, 1.0, (1.0 - x - y) / y};
+  if (!std::isfinite(xyz[0]) || !std::isfinite(xyz[2]))
+    hdr_error(path, std::string(description) +
+                        " chromaticity cannot be represented");
+  return xyz;
+}
+
+void validate_chromaticity(const std::array<double, 2>& xy,
+                           const std::filesystem::path& path,
+                           const char* description, bool white) {
+  const double x = xy[0];
+  const double y = xy[1];
+  if (!std::isfinite(x) || !std::isfinite(y) || !(x > 0.0) ||
+      !(y > 0.0) || x >= 1.0 || y >= 1.0 || x + y > 1.0 ||
+      (white && x + y >= 1.0)) {
+    hdr_error(path, std::string("malformed PRIMARIES header: ") +
+                        description + " chromaticity is invalid");
+  }
+}
+
+Matrix3 rgb_to_xyz_matrix(const Chromaticities& chromaticities,
+                          const std::filesystem::path& path,
+                          const char* description) {
+  validate_chromaticity(chromaticities.red, path, "red", false);
+  validate_chromaticity(chromaticities.green, path, "green", false);
+  validate_chromaticity(chromaticities.blue, path, "blue", false);
+  validate_chromaticity(chromaticities.white, path, "white", true);
+
+  const std::array<double, 3> red =
+      xy_to_xyz(chromaticities.red, path, "red primary");
+  const std::array<double, 3> green =
+      xy_to_xyz(chromaticities.green, path, "green primary");
+  const std::array<double, 3> blue =
+      xy_to_xyz(chromaticities.blue, path, "blue primary");
+  Matrix3 primary_matrix{{red[0], green[0], blue[0], red[1], green[1],
+                          blue[1], red[2], green[2], blue[2]}};
+  const std::array<double, 3> white =
+      xy_to_xyz(chromaticities.white, path, "white point");
+  const std::array<double, 3> scales =
+      multiply(inverse(primary_matrix, path, description), white);
+  for (const double value : scales) {
+    if (!std::isfinite(value) || !(value > 0.0))
+      hdr_error(path, std::string("malformed PRIMARIES header: ") +
+                          "white point is outside the primary gamut");
+  }
+  for (std::size_t row = 0; row < 3; ++row) {
+    for (std::size_t column = 0; column < 3; ++column) {
+      matrix_value(primary_matrix, row, column) *= scales[column];
+    }
+  }
+  return primary_matrix;
+}
+
+Matrix3 source_to_rec709_matrix(const Chromaticities& source,
+                                const std::filesystem::path& path) {
+  const Matrix3 source_to_xyz =
+      rgb_to_xyz_matrix(source, path, "source RGB-to-XYZ");
+  const Matrix3 rec709_to_xyz = rgb_to_xyz_matrix(
+      kRec709D65Chromaticities, path, "Rec.709 RGB-to-XYZ");
+
+  // Bradford adaptation preserves neutral colors while moving a legacy
+  // Radiance equal-energy white (or a declared source white) to D65.
+  const Matrix3 bradford{{0.8951, 0.2664, -0.1614,
+                          -0.7502, 1.7135, 0.0367,
+                          0.0389, -0.0685, 1.0296}};
+  const std::array<double, 3> source_white =
+      xy_to_xyz(source.white, path, "source white point");
+  const std::array<double, 3> target_white =
+      xy_to_xyz(kRec709D65Chromaticities.white, path, "D65 white point");
+  const std::array<double, 3> source_cone = multiply(bradford, source_white);
+  const std::array<double, 3> target_cone = multiply(bradford, target_white);
+  Matrix3 cone_scale;
+  for (std::size_t component = 0; component < 3; ++component) {
+    if (!std::isfinite(source_cone[component]) ||
+        !std::isfinite(target_cone[component]) ||
+        !(source_cone[component] > 0.0) ||
+        !(target_cone[component] > 0.0)) {
+      hdr_error(path, "PRIMARIES white point cannot be Bradford-adapted");
+    }
+    matrix_value(cone_scale, component, component) =
+        target_cone[component] / source_cone[component];
+  }
+  const Matrix3 adaptation =
+      multiply(multiply(inverse(bradford, path, "Bradford"), cone_scale),
+               bradford);
+  const Matrix3 result =
+      multiply(multiply(inverse(rec709_to_xyz, path, "Rec.709 XYZ-to-RGB"),
+                        adaptation),
+               source_to_xyz);
+  for (const double value : result.values) {
+    if (!std::isfinite(value))
+      hdr_error(path, "PRIMARIES color conversion is non-finite");
+  }
+  return result;
+}
+
+template <std::size_t Count>
+std::array<double, Count> parse_header_numbers(
+    const std::string& line, const char* prefix,
+    const std::filesystem::path& path, const char* name) {
+  std::istringstream values(line.substr(std::char_traits<char>::length(prefix)));
+  values.imbue(std::locale::classic());
+  std::array<double, Count> result{};
+  for (double& value : result) {
+    if (!(values >> value))
+      hdr_error(path, std::string("malformed ") + name + " header");
+  }
+  values >> std::ws;
+  if (!values.eof())
+    hdr_error(path, std::string("malformed ") + name + " header");
+  return result;
+}
+
+struct RadianceHeader {
+  double exposure = 1.0;
+  std::array<double, 3> color_correction{1.0, 1.0, 1.0};
+  Chromaticities primaries = kRadianceStandardChromaticities;
+  bool found_primaries = false;
+};
+
+void multiply_header_factor(double& cumulative, double value,
+                            const std::filesystem::path& path,
+                            const char* name) {
+  if (!std::isfinite(value) || !(value > 0.0))
+    hdr_error(path, std::string(name) +
+                        " header values must be finite and positive");
+  cumulative *= value;
+  if (!std::isfinite(cumulative) || !(cumulative > 0.0))
+    hdr_error(path, std::string("cumulative ") + name +
+                        " header value must be finite and positive");
+}
+
+void parse_exposure(const std::string& line, RadianceHeader& header,
+                    const std::filesystem::path& path) {
+  const auto values =
+      parse_header_numbers<1>(line, "EXPOSURE=", path, "EXPOSURE");
+  multiply_header_factor(header.exposure, values[0], path, "EXPOSURE");
+}
+
+void parse_color_correction(const std::string& line, RadianceHeader& header,
+                            const std::filesystem::path& path) {
+  const auto values =
+      parse_header_numbers<3>(line, "COLORCORR=", path, "COLORCORR");
+  for (std::size_t component = 0; component < 3; ++component) {
+    multiply_header_factor(header.color_correction[component],
+                           values[component], path, "COLORCORR");
+  }
+}
+
+void parse_primaries(const std::string& line, RadianceHeader& header,
+                     const std::filesystem::path& path) {
+  if (header.found_primaries)
+    hdr_error(path, "duplicate PRIMARIES header");
+  const auto values =
+      parse_header_numbers<8>(line, "PRIMARIES=", path, "PRIMARIES");
+  header.primaries = {{values[0], values[1]}, {values[2], values[3]},
+                      {values[4], values[5]}, {values[6], values[7]}};
+  // This validates the chromaticities, primary independence and whether the
+  // declared white can be represented by positive RGB values.
+  (void)rgb_to_xyz_matrix(header.primaries, path, "source RGB-to-XYZ");
+  header.found_primaries = true;
+}
+
+bool malformed_known_header(const std::string& line, const char* name) {
+  const std::size_t length = std::char_traits<char>::length(name);
+  if (line.compare(0, length, name) != 0) return false;
+  if (line.size() == length) return true;
+  return line[length] == ' ' || line[length] == '\t' || line[length] == ':';
+}
+
+Vec3 normalize_and_convert_rgbe(const std::uint8_t* rgbe,
+                                const RadianceHeader& header,
+                                const Matrix3& color_conversion,
+                                const std::filesystem::path& path) {
+  const Vec3 decoded = decode_rgbe(rgbe);
+  const std::array<double, 3> source{
+      static_cast<double>(decoded.x) / header.exposure /
+          header.color_correction[0],
+      static_cast<double>(decoded.y) / header.exposure /
+          header.color_correction[1],
+      static_cast<double>(decoded.z) / header.exposure /
+          header.color_correction[2],
+  };
+  for (const double value : source) {
+    if (!std::isfinite(value) || value < 0.0)
+      hdr_error(path, "header normalization produced an invalid RGB sample");
+  }
+  std::array<double, 3> converted = multiply(color_conversion, source);
+  for (double& value : converted) {
+    if (!std::isfinite(value) ||
+        std::fabs(value) > std::numeric_limits<float>::max())
+      hdr_error(path,
+                "color conversion produced a non-finite or out-of-range sample");
+    // A valid source-gamut color can lie outside Rec.709 and therefore
+    // produce negative Rec.709 components. Match the HDR AVIF input policy:
+    // preserve representable positive energy and clip only those negatives.
+    value = std::max(0.0, value);
+  }
+  return {static_cast<float>(converted[0]), static_cast<float>(converted[1]),
+          static_cast<float>(converted[2])};
 }
 
 struct FloatCdf {
@@ -205,6 +513,7 @@ ImageRgb32f load_radiance_hdr(const std::filesystem::path& path) {
 
   bool found_format = false;
   bool ended_header = false;
+  RadianceHeader header;
   while (std::getline(input, line)) {
     if (!line.empty() && line.back() == '\r') line.pop_back();
     if (line.size() > 4096) hdr_error(path, "header line is too long");
@@ -217,10 +526,22 @@ ImageRgb32f load_radiance_hdr(const std::filesystem::path& path) {
         hdr_error(path, "unsupported FORMAT (expected 32-bit_rle_rgbe)");
       if (found_format) hdr_error(path, "duplicate FORMAT header");
       found_format = true;
+    } else if (line.rfind("EXPOSURE=", 0) == 0) {
+      parse_exposure(line, header, path);
+    } else if (line.rfind("COLORCORR=", 0) == 0) {
+      parse_color_correction(line, header, path);
+    } else if (line.rfind("PRIMARIES=", 0) == 0) {
+      parse_primaries(line, header, path);
+    } else if (malformed_known_header(line, "EXPOSURE") ||
+               malformed_known_header(line, "COLORCORR") ||
+               malformed_known_header(line, "PRIMARIES")) {
+      hdr_error(path, "malformed Radiance header variable");
     }
   }
   if (!ended_header) hdr_error(path, "unterminated header");
   if (!found_format) hdr_error(path, "missing FORMAT=32-bit_rle_rgbe header");
+  const Matrix3 color_conversion =
+      source_to_rec709_matrix(header.primaries, path);
 
   if (!std::getline(input, line)) hdr_error(path, "missing resolution line");
   if (!line.empty() && line.back() == '\r') line.pop_back();
@@ -278,7 +599,8 @@ ImageRgb32f load_radiance_hdr(const std::filesystem::path& path) {
         std::copy_n(raw.data() + static_cast<std::size_t>(x) * 4, 4,
                     rgbe.data());
       }
-      const Vec3 rgb = decode_rgbe(rgbe.data());
+      const Vec3 rgb = normalize_and_convert_rgbe(
+          rgbe.data(), header, color_conversion, path);
       const std::size_t destination =
           (static_cast<std::size_t>(y) * width + x) * 3;
       image.pixels[destination] = rgb.x;

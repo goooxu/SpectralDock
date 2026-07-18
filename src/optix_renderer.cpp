@@ -348,25 +348,54 @@ TextureHandle make_texture(const Texture& source, TextureData& out,
   cudaChannelFormatDesc channel{};
   cudaTextureReadMode read_mode = cudaReadModeElementType;
   float4 constant = make_float4(source.color.x, source.color.y, source.color.z, 1.0f);
-  std::vector<std::uint8_t> pixels;
+  std::vector<std::uint8_t> rgba8_pixels;
+  std::vector<float4> rgba32f_pixels;
+  std::size_t element_size = sizeof(float4);
   if (source.type == TextureType::Image) {
-    ImageRgba8 image = load_avif_rgba8(source.image_path, source.srgb);
-    if (image.empty()) throw std::runtime_error("empty texture: " + source.image_path.string());
-    w = image.width; height = image.height; pixels = std::move(image.pixels);
-    channel = cudaCreateChannelDesc<uchar4>();
-    read_mode = cudaReadModeNormalizedFloat;
-    h.bytes = static_cast<std::size_t>(w) * height * sizeof(uchar4);
+    if (source.color_space == TextureColorSpace::Hdr) {
+      ImageRgba32f image = load_hdr_avif_rgba32f(source.image_path);
+      if (image.empty())
+        throw std::runtime_error("empty HDR texture: " +
+                                 source.image_path.string());
+      w = image.width;
+      height = image.height;
+      const std::size_t pixel_count =
+          static_cast<std::size_t>(w) * height;
+      if (image.pixels.size() != pixel_count * 4u)
+        throw std::runtime_error("HDR texture pixel buffer size mismatch: " +
+                                 source.image_path.string());
+      rgba32f_pixels.resize(pixel_count);
+      for (std::size_t i = 0; i < pixel_count; ++i) {
+        rgba32f_pixels[i] =
+            make_float4(image.pixels[4u * i], image.pixels[4u * i + 1u],
+                        image.pixels[4u * i + 2u],
+                        image.pixels[4u * i + 3u]);
+      }
+      channel = cudaCreateChannelDesc<float4>();
+    } else {
+      ImageRgba8 image =
+          load_avif_rgba8(source.image_path, source.color_space);
+      if (image.empty())
+        throw std::runtime_error("empty texture: " +
+                                 source.image_path.string());
+      w = image.width;
+      height = image.height;
+      rgba8_pixels = std::move(image.pixels);
+      channel = cudaCreateChannelDesc<uchar4>();
+      read_mode = cudaReadModeNormalizedFloat;
+      element_size = sizeof(uchar4);
+    }
+    h.bytes = static_cast<std::size_t>(w) * height * element_size;
   } else {
     channel = cudaCreateChannelDesc<float4>();
     h.bytes = sizeof(float4);
   }
   check_cuda(cudaMallocArray(&h.array, &channel, w, height), "cudaMallocArray");
   tracker.add(h.bytes);
-  const void* src = source.type == TextureType::Image
-                        ? static_cast<const void*>(pixels.data())
-                        : static_cast<const void*>(&constant);
-  const std::size_t pitch = static_cast<std::size_t>(w) *
-      (source.type == TextureType::Image ? sizeof(uchar4) : sizeof(float4));
+  const void* src = &constant;
+  if (!rgba8_pixels.empty()) src = rgba8_pixels.data();
+  if (!rgba32f_pixels.empty()) src = rgba32f_pixels.data();
+  const std::size_t pitch = static_cast<std::size_t>(w) * element_size;
   check_cuda(cudaMemcpy2DToArray(h.array, 0, 0, src, pitch, pitch, height,
                                  cudaMemcpyHostToDevice), "cudaMemcpy2DToArray");
   cudaResourceDesc rd{}; rd.resType = cudaResourceTypeArray; rd.res.array.array = h.array;
@@ -375,12 +404,14 @@ TextureHandle make_texture(const Texture& source, TextureData& out,
   td.addressMode[1] = texture_address_mode(source.wrap_v);
   td.filterMode = cudaFilterModeLinear;
   td.readMode = read_mode;
-  td.sRGB = source.type == TextureType::Image && source.srgb ? 1 : 0;
+  td.sRGB = source.type == TextureType::Image &&
+                    source.color_space == TextureColorSpace::Srgb
+                ? 1
+                : 0;
   td.normalizedCoords = 1;
   check_cuda(cudaCreateTextureObject(&h.object, &rd, &td, nullptr),
              "cudaCreateTextureObject");
   out.object = static_cast<std::uint64_t>(h.object);
-  out.flags = 0u;
   return h;
 }
 
@@ -1169,14 +1200,25 @@ RenderResult render_optix(const Scene& scene,
       !settings.max_depth)
     throw std::runtime_error(
         "width, height, spp, and max-depth must be positive");
-  if (!std::isfinite(settings.clamp_direct) || settings.clamp_direct < 0.0f ||
-      !std::isfinite(settings.clamp_indirect) ||
-      settings.clamp_indirect < 0.0f) {
+  if (settings.width > kMaximumAvifDimension ||
+      settings.height > kMaximumAvifDimension) {
+    throw std::runtime_error(
+        "render width and height must be at most 16384");
+  }
+  const float clamp_direct =
+      settings.clamp_direct.value_or(scene.integrator.clamp_direct);
+  const float clamp_indirect =
+      settings.clamp_indirect.value_or(scene.integrator.clamp_indirect);
+  if (!std::isfinite(clamp_direct) || clamp_direct < 0.0f ||
+      !std::isfinite(clamp_indirect) || clamp_indirect < 0.0f) {
     throw std::runtime_error(
         "clamp-direct and clamp-indirect must be finite and non-negative");
   }
   const std::size_t pixel_count =
       checked_product(settings.width, settings.height, "pixel count");
+  if (pixel_count > kMaximumAvifPixels) {
+    throw std::runtime_error("render pixel count must be at most 2^25");
+  }
   const auto total_begin = std::chrono::steady_clock::now();
 
   if (settings.device < 0)
@@ -1362,7 +1404,7 @@ RenderResult render_optix(const Scene& scene,
                    : checked_product(pixel_count, sizeof(WaterCounters),
                                      "water counters"));
   const bool firefly_clamp_enabled =
-      settings.clamp_direct > 0.0f || settings.clamp_indirect > 0.0f;
+      clamp_direct > 0.0f || clamp_indirect > 0.0f;
   DeviceBuffer firefly_count(
       tracker, firefly_clamp_enabled ? sizeof(FireflyCounters) : 0u);
   beauty.clear(stream);
@@ -1453,8 +1495,8 @@ RenderResult render_optix(const Scene& scene,
   parameters.flame_count = checked_u32(flame_count, "flame count");
   parameters.water_surface_count =
       checked_u32(water_surface_count, "water surface count");
-  parameters.clamp_direct = settings.clamp_direct;
-  parameters.clamp_indirect = settings.clamp_indirect;
+  parameters.clamp_direct = clamp_direct;
+  parameters.clamp_indirect = clamp_indirect;
   parameters.traced_rays =
       reinterpret_cast<unsigned long long*>(ray_count.pointer());
   parameters.volume_counters =
@@ -1587,8 +1629,8 @@ RenderResult render_optix(const Scene& scene,
       scene.integrator.direct_light_sampling == DirectLightSampling::Uniform
           ? "uniform"
           : "importance";
-  result.stats.clamp_direct = settings.clamp_direct;
-  result.stats.clamp_indirect = settings.clamp_indirect;
+  result.stats.clamp_direct = clamp_direct;
+  result.stats.clamp_indirect = clamp_indirect;
   result.stats.firefly_direct_clamped_contributions =
       firefly_counts.direct_clamped_contributions;
   result.stats.firefly_indirect_clamped_contributions =

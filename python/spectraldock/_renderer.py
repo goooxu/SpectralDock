@@ -145,6 +145,18 @@ def _write_json_atomic(path: Path, value: Mapping[str, Any]) -> None:
                 pass
 
 
+def _paths_refer_to_same_file(first: Path, second: Path) -> bool:
+    try:
+        if first.resolve(strict=False) == second.resolve(strict=False):
+            return True
+    except (OSError, RuntimeError) as error:
+        raise ValueError("output paths could not be resolved safely") from error
+    try:
+        return first.samefile(second)
+    except OSError:
+        return False
+
+
 class Renderer:
     """Build and render one immutable OptiX scene from ordinary Python code.
 
@@ -160,9 +172,6 @@ class Renderer:
         self._owner = object()
         self._builder = _native.SceneBuilder()
         self._scene: Any | None = None
-        self._exposure = 0.0
-        self._clamp_direct = 64.0
-        self._clamp_indirect = 16.0
 
     def _editable(self) -> None:
         if self._scene is not None:
@@ -191,8 +200,6 @@ class Renderer:
         direct = _scalar(clamp_direct, "clamp_direct")
         indirect = _scalar(clamp_indirect, "clamp_indirect")
         self._builder.set_integrator(direct_light_sampling, direct, indirect)
-        self._clamp_direct = direct
-        self._clamp_indirect = indirect
 
     def camera(
         self,
@@ -256,7 +263,6 @@ class Renderer:
             )
         else:
             raise ValueError(f"unsupported background type: {kind!r}")
-        self._exposure = exposure
 
     def texture(self, name: str, type: str, **parameters: Any) -> TextureHandle:
         self._editable()
@@ -273,8 +279,8 @@ class Renderer:
                     "image texture path must use the lowercase .avif extension"
                 )
             color_space = _take(parameters, "color_space", "srgb")
-            if color_space not in {"srgb", "linear"}:
-                raise ValueError("color_space must be 'srgb' or 'linear'")
+            if color_space not in {"srgb", "linear", "hdr"}:
+                raise ValueError("color_space must be 'srgb', 'linear', or 'hdr'")
             wrap_u = _take(parameters, "wrap_u", "clamp_to_edge")
             wrap_v = _take(parameters, "wrap_v", "clamp_to_edge")
             wraps = {"clamp_to_edge", "repeat", "mirrored_repeat"}
@@ -290,7 +296,7 @@ class Renderer:
                 )
             _reject_extra(parameters, "image texture")
             identifier = self._builder.add_image_texture(
-                resource_name, path, color_space == "srgb", wrap_u, wrap_v
+                resource_name, path, color_space, wrap_u, wrap_v
             )
         else:
             raise ValueError(f"unsupported texture type: {kind!r}")
@@ -362,6 +368,14 @@ class Renderer:
             normal_texture_id = self._handle(
                 normal_texture, TextureHandle, "normal_texture", optional=True
             )
+            if (
+                base_color_texture is not None
+                and base_color_texture._color_space == "hdr"
+            ):
+                raise ValueError(
+                    "base_color_texture cannot use color_space='hdr'; "
+                    "HDR textures are supported only by emitter materials"
+                )
             for label, value in (
                 ("metallic_roughness_texture", metallic_roughness_texture),
                 ("normal_texture", normal_texture),
@@ -425,6 +439,8 @@ class Renderer:
             )
             ior_value = 1.5 if ior is None else _scalar(ior, "ior")
         texture_id = self._handle(texture, TextureHandle, "texture", optional=True)
+        if texture is not None and texture._color_space == "hdr" and kind != "emitter":
+            raise ValueError("HDR textures are supported only by emitter materials")
         identifier = self._builder.add_material(
             resource_name,
             kind,
@@ -487,10 +503,15 @@ class Renderer:
             back = None
         alpha = _take(parameters, "alpha_texture", None)
         cutoff = _scalar(_take(parameters, "alpha_cutoff", 0.5), "alpha_cutoff")
+        alpha_id = self._handle(
+            alpha, TextureHandle, "alpha_texture", optional=True
+        )
+        if alpha is not None and alpha._color_space == "hdr":
+            raise ValueError("alpha_texture cannot use color_space='hdr'")
         return (
             self._handle(front, MaterialHandle, "front_material", optional=True),
             self._handle(back, MaterialHandle, "back_material", optional=True),
-            self._handle(alpha, TextureHandle, "alpha_texture", optional=True),
+            alpha_id,
             cutoff,
         )
 
@@ -755,6 +776,8 @@ class Renderer:
     ) -> dict[str, Any]:
         width_value = _integer(width, "width", 1, 16384)
         height_value = _integer(height, "height", 1, 16384)
+        if width_value * height_value > 2**25:
+            raise ValueError("width * height must be at most 2^25 pixels")
         spp_value = _integer(spp, "spp", 1, 1_000_000)
         depth_value = _integer(depth, "depth", 1, 64)
         seed_value = _integer(seed, "seed", 0, 2**32 - 1)
@@ -768,13 +791,26 @@ class Renderer:
         output_path = Path(_path(output, "output"))
         if output_path.suffix != ".avif":
             raise ValueError("output must use the lowercase .avif extension")
-        direct_clamp = self._clamp_direct if clamp_direct is None else _scalar(
-            clamp_direct, "clamp_direct"
+        destination = (
+            output_path.with_suffix(".stats.json")
+            if stats_output is None
+            else Path(_path(stats_output, "stats_output"))
         )
-        indirect_clamp = self._clamp_indirect if clamp_indirect is None else _scalar(
-            clamp_indirect, "clamp_indirect"
+        if _paths_refer_to_same_file(output_path, destination):
+            raise ValueError("output and stats_output must refer to different files")
+        if destination.suffix != ".json":
+            raise ValueError("stats_output must use the lowercase .json extension")
+        direct_clamp = (
+            None if clamp_direct is None else _scalar(clamp_direct, "clamp_direct")
         )
-        if direct_clamp < 0.0 or indirect_clamp < 0.0:
+        indirect_clamp = (
+            None
+            if clamp_indirect is None
+            else _scalar(clamp_indirect, "clamp_indirect")
+        )
+        if (direct_clamp is not None and direct_clamp < 0.0) or (
+            indirect_clamp is not None and indirect_clamp < 0.0
+        ):
             raise ValueError("clamp_direct and clamp_indirect must be non-negative")
         if self._scene is None:
             self._scene = self._builder.finish()
@@ -787,7 +823,6 @@ class Renderer:
             spp_value,
             depth_value,
             seed_value,
-            self._exposure,
             direct_clamp,
             indirect_clamp,
             denoise,
@@ -799,9 +834,6 @@ class Renderer:
             "output": os.fspath(output_path),
         }
         stats.update(dict(native_stats))
-        destination = output_path.with_suffix(".stats.json") if stats_output is None else Path(
-            _path(stats_output, "stats_output")
-        )
         _write_json_atomic(
             destination,
             {key: value for key, value in stats.items()

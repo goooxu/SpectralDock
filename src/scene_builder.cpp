@@ -26,6 +26,12 @@ void require_finite(float value, const std::string& where) {
   if (!finite(value)) fail(where, "must be a finite float32 value");
 }
 
+void require_exposure(float value, const std::string& where) {
+  require_finite(value, where);
+  if (value < kMinimumExposureEv || value > kMaximumExposureEv)
+    fail(where, "must be in [-128, 128] EV");
+}
+
 void require_finite(Vec2 value, const std::string& where) {
   require_finite(value.x, where + "[0]");
   require_finite(value.y, where + "[1]");
@@ -229,7 +235,7 @@ void SceneBuilder::set_integrator(DirectLightSampling direct_light_sampling,
 void SceneBuilder::set_constant_background(Vec3 color, float exposure) {
   require_open();
   require_nonnegative(color, "background.color");
-  require_finite(exposure, "background.exposure");
+  require_exposure(exposure, "background.exposure");
   Background result;
   result.type = BackgroundType::Constant;
   result.color = color;
@@ -247,7 +253,7 @@ void SceneBuilder::set_sky_background(Vec3 bottom, Vec3 top,
   require_nonnegative(sun_color, "background.sun_color");
   sun_direction = unit_vector(sun_direction, "background.sun_direction");
   require_finite(sun_cos_angle, "background.sun_cos_angle");
-  require_finite(exposure, "background.exposure");
+  require_exposure(exposure, "background.exposure");
   if (sun_cos_angle < -1.0f || sun_cos_angle > 2.0f)
     fail("background.sun_cos_angle", "must be in [-1, 2]");
   Background result;
@@ -268,10 +274,13 @@ void SceneBuilder::set_environment_background(
   require_open();
   require_finite(intensity, "background.intensity");
   require_finite(rotation_degrees, "background.rotation_degrees");
-  require_finite(exposure, "background.exposure");
+  require_exposure(exposure, "background.exposure");
   if (intensity < 0.0f)
     fail("background.intensity", "must be non-negative");
   const auto absolute = std::filesystem::absolute(path).lexically_normal();
+  if (absolute.extension() != ".hdr")
+    fail("background.path",
+         "environment backgrounds must use the lowercase .hdr extension");
   if (!std::filesystem::is_regular_file(absolute))
     fail("background.path", "asset not found: " + absolute.string());
   Background result;
@@ -293,17 +302,16 @@ std::int32_t SceneBuilder::add_constant_texture(const std::string& name,
   const auto id = insert_unique(texture_ids_, name, scene_.textures.size(),
                                 where);
   Texture texture;
-  texture.name = name;
   texture.type = TextureType::Constant;
   texture.color = color;
-  texture.srgb = false;
+  texture.color_space = TextureColorSpace::Linear;
   scene_.textures.push_back(std::move(texture));
   return id;
 }
 
 std::int32_t SceneBuilder::add_image_texture(
-    const std::string& name, const std::filesystem::path& path, bool srgb,
-    TextureWrap wrap_u, TextureWrap wrap_v) {
+    const std::string& name, const std::filesystem::path& path,
+    TextureColorSpace color_space, TextureWrap wrap_u, TextureWrap wrap_v) {
   require_open();
   const std::string where = "textures[" +
                             std::to_string(scene_.textures.size()) + "]";
@@ -315,10 +323,9 @@ std::int32_t SceneBuilder::add_image_texture(
   const auto id = insert_unique(texture_ids_, name, scene_.textures.size(),
                                 where);
   Texture texture;
-  texture.name = name;
   texture.type = TextureType::Image;
   texture.image_path = absolute;
-  texture.srgb = srgb;
+  texture.color_space = color_space;
   texture.wrap_u = wrap_u;
   texture.wrap_v = wrap_v;
   scene_.textures.push_back(std::move(texture));
@@ -340,6 +347,16 @@ std::int32_t SceneBuilder::add_material(
   require_finite(ior, where + ".ior");
   if (type == MaterialType::Pbr)
     fail(where + ".type", "PBR materials require add_pbr_material");
+  if (texture_id != kInvalidId) {
+    const Texture& texture =
+        scene_.textures[static_cast<std::size_t>(texture_id)];
+    if (texture.type == TextureType::Image &&
+        texture.color_space == TextureColorSpace::Hdr &&
+        type != MaterialType::Emitter) {
+      fail(where + ".texture",
+           "HDR textures are supported only by emitter materials");
+    }
+  }
   if (roughness < 0.0f || roughness > 1.0f)
     fail(where + ".roughness", "must be in [0, 1]");
   if (type == MaterialType::Water) {
@@ -356,7 +373,6 @@ std::int32_t SceneBuilder::add_material(
   const auto id = insert_unique(material_ids_, name, scene_.materials.size(),
                                 where);
   Material material;
-  material.name = name;
   material.type = type;
   material.texture_id = texture_id;
   material.base_color = base_color;
@@ -397,6 +413,11 @@ std::int32_t SceneBuilder::add_pbr_material(
   if (base_color_texture_id != kInvalidId) {
     const Texture& texture =
         scene_.textures[static_cast<std::size_t>(base_color_texture_id)];
+    if (texture.type == TextureType::Image &&
+        texture.color_space == TextureColorSpace::Hdr) {
+      fail(where + ".base_color_texture",
+           "HDR textures are supported only by emitter materials");
+    }
     if (texture.type == TextureType::Constant &&
         (texture.color.x > 1.0f || texture.color.y > 1.0f ||
          texture.color.z > 1.0f))
@@ -408,7 +429,8 @@ std::int32_t SceneBuilder::add_pbr_material(
     if (texture_id == kInvalidId) return;
     const Texture& texture =
         scene_.textures[static_cast<std::size_t>(texture_id)];
-    if (texture.type == TextureType::Image && texture.srgb)
+    if (texture.type == TextureType::Image &&
+        texture.color_space != TextureColorSpace::Linear)
       fail(where + "." + field,
            "requires a texture with color_space='linear'");
   };
@@ -419,7 +441,6 @@ std::int32_t SceneBuilder::add_pbr_material(
   const auto id = insert_unique(material_ids_, name, scene_.materials.size(),
                                 where);
   Material material;
-  material.name = name;
   material.type = MaterialType::Pbr;
   material.texture_id = base_color_texture_id;
   material.metallic_roughness_texture_id =
@@ -446,7 +467,6 @@ std::int32_t SceneBuilder::add_mesh(const std::string& name,
     fail(where + ".path", "asset not found: " + absolute.string());
   MeshResource resource;
   resource.name = name;
-  resource.path = absolute;
   std::unordered_map<std::string, std::int32_t> bindings;
   std::vector<std::string> triangle_slots;
   if (!material_bindings.empty()) {
@@ -529,6 +549,15 @@ std::int32_t SceneBuilder::add_object(Object object) {
              where + ".back_material", true);
   require_id(object.alpha_texture, scene_.textures.size(),
              where + ".alpha_texture", true);
+  if (object.alpha_texture != kInvalidId) {
+    const Texture& texture =
+        scene_.textures[static_cast<std::size_t>(object.alpha_texture)];
+    if (texture.type == TextureType::Image &&
+        texture.color_space == TextureColorSpace::Hdr) {
+      fail(where + ".alpha_texture",
+           "HDR textures cannot be used as alpha masks");
+    }
+  }
   const MeshResource* mesh_resource =
       mesh_resource_for_object(scene_, object);
   const bool has_mapped_mesh_materials =

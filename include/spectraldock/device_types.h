@@ -59,7 +59,6 @@ constexpr std::int32_t kInvalidIndex = -1;
 // zero is the top row; device code flips the scene's bottom-left-origin v.
 struct TextureData {
   std::uint64_t object = 0;
-  std::uint32_t flags = 0;
 };
 
 struct MaterialData {

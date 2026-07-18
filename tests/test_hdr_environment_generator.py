@@ -57,6 +57,11 @@ def test_hdr_environment_generator_reconstructs_tracked_asset(tmp_path):
         )
     )
     assert actual.startswith(b"#?RADIANCE\n")
+    assert (
+        b"PRIMARIES=0.6400 0.3300 0.3000 0.6000 "
+        b"0.1500 0.0600 0.3127 0.3290\n"
+        in actual[:512]
+    )
     assert b"FORMAT=32-bit_rle_rgbe\n" in actual[:512]
     assert b"-Y 1024 +X 2048\n" in actual[:512]
 

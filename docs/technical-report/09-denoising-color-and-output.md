@@ -4,9 +4,10 @@
 SDR：每次渲染固定写出带完整色彩标识的 HDR AVIF。当前颜色管线是：
 
 ~~~text
-8 bit AVIF 纹理 → 在线性 RGB 中采样与积分 → direct/indirect 贡献钳位
+8 bit SDR AVIF / 10–12 bit PQ HDR emitter 纹理 → 在线性 RGB 中采样与积分
+  → direct/indirect 贡献钳位
   → spp 平均 → 可选 OptiX HDR Denoiser → float RGB D2H
-  → 2^EV 曝光 → 线性 Rec.709 到 Rec.2020
+  → 2^EV 曝光（有限 EV ∈ [-128, 128]）→ 线性 Rec.709 到 Rec.2020
   → 保色相 max-RGB soft shoulder（203 nit diffuse white，1000 nit peak）
   → SMPTE ST 2084 PQ → BT.2020 NCL YUV → 10 bit 4:4:4 full range
   → libavif/AOM AV1 lossless → 单帧 HDR AVIF（CICP 9/16/9）
@@ -20,11 +21,25 @@ AVIF 保留 PQ HDR 显示范围，但它仍是经过曝光、肩部映射和 10 
 
 ## 1. AVIF 纹理与线性积分
 
-颜色纹理和材质数据图都使用单帧 8 bit AVIF。颜色纹理由 Python API 标记为
+普通颜色纹理和材质数据图使用单帧 8 bit AVIF。颜色纹理由 Python API 标记为
 `srgb`；normal、metallic-roughness 和 alpha 等数据图标记为 `linear`。后者还
 必须满足 YUV 4:4:4 full range、BT.709 primaries、linear transfer、identity
-matrix 和非预乘 alpha 的严格输入契约。Radiance RGBE `.hdr` 仅保留为线性环境
-贴图输入。
+matrix 和非预乘 alpha 的严格输入契约。
+
+自发光纹理可以标记为 `hdr`，但文件必须是单帧 10/12 bit AVIF，且显式采用
+CICP `9/16/9`（BT.2020 primaries、PQ transfer、BT.2020 NCL matrix）。加载器
+先把 PQ 码值恢复为绝对亮度和线性 BT.2020，再转换到线性 Rec.709，并以
+203 nit=`1.0` 归一化后上传 CUDA `float4` texture；负的出域 Rec.709 分量截到
+零，高于 diffuse white 的正能量保持大于 `1.0`。HDR texture 只能绑定 emitter，
+不能充当 base color、metallic-roughness、normal 或 alpha。
+
+所有 AVIF texture 均拒绝动画/分层、ICC、gain map、预乘 alpha 和像素变换。
+解码器主动请求 Sample Transform 内容，再明确拒绝其 16 bit 派生结果，避免
+静默使用低精度 base image。decoder 同时把帧数限制为一、单边限制为 16384、
+总像素数限制为 $2^{25}$，并在 AV1 component 解码前执行上述容器级校验；
+解码后再按 inner AV1 信息完整复验 profile。Radiance RGBE 仅以小写 `.hdr` 保留为环境贴图
+输入；其 header 校正与 primaries/白点转换在进入本章线性 Rec.709 积分管线前
+完成，详见[第 6 章](06-hdr-environment-and-importance-sampling.md)。
 
 标记为 sRGB 的纹理由 CUDA texture hardware 在 filtering **之前**完成 transfer
 conversion，再在线性空间双线性过滤：
@@ -44,15 +59,18 @@ $$
   td.addressMode[1] = texture_address_mode(source.wrap_v);
   td.filterMode = cudaFilterModeLinear;
   td.readMode = read_mode;
-  td.sRGB = source.type == TextureType::Image && source.srgb ? 1 : 0;
+  td.sRGB = source.type == TextureType::Image &&
+                    source.color_space == TextureColorSpace::Srgb
+                ? 1
+                : 0;
   td.normalizedCoords = 1;
   check_cuda(cudaCreateTextureObject(&h.object, &rd, &td, nullptr),
              "cudaCreateTextureObject");
 ```
 
-alpha 不做 sRGB 解码。所有 BSDF、吞吐量、直接光、路径累积与 spp 平均继续在
-线性 RGB 中完成；色彩空间来自 typed texture 属性，着色器不根据文件名或 MTL
-槽名猜测。
+linear、HDR 和 alpha 不做硬件 sRGB 解码。所有 BSDF、吞吐量、直接光、路径
+累积与 spp 平均继续在线性 RGB 中完成；色彩空间来自 typed texture 属性，
+着色器不根据文件名或 MTL 槽名猜测。
 
 ## 2. 首命中引导层与 HDR Denoiser
 
@@ -118,7 +136,8 @@ OptiX 路径结束后，`render_optix` 把原始或降噪后的 float RGB beauty
 也不是持久输出格式。
 
 主机函数 `write_hdr_avif_rgb32f` 完成曝光、色域转换、亮度映射、PQ、YUV 与
-编码。这样 AVIF 元数据和由它描述的像素来自同一处实现，并且不依赖主机字节序
+编码；EV 直接来自冻结的 `Scene.background.exposure`，没有独立 Python 镜像
+状态。这样 AVIF 元数据和由它描述的像素来自同一处实现，并且不依赖主机字节序
 或某个 GPU 型号。
 
 ## 4. 固定 HDR AVIF profile
@@ -157,8 +176,22 @@ AOM encoder 固定使用 lossless quality。这里的“lossless”是指 PQ/YUV
 
 ## 5. 曝光、色域和保色相 soft shoulder
 
-输入中的负数、NaN 与无穷先归零；其余通道乘 $2^{EV}$。随后用固定线性矩阵
-把 Rec.709/sRGB primaries 转成 Rec.2020 primaries。令转换后的
+场景构建器与编码器边界都要求 EV 有限且位于 $[-128,128]$。
+越界会在创建输出文件前失败；实现不会先把曝光 clamp 到这个区间，
+因此合法 EV 始终严格乘 $2^{EV}$，也没有未记录的端点饱和。
+
+<!-- source-snippet id="output-exposure-range" path="src/image_io.cpp" anchor="kMinimumExposureEv" -->
+```cpp
+  if (!std::isfinite(exposure) || exposure < kMinimumExposureEv ||
+      exposure > kMaximumExposureEv) {
+    throw std::runtime_error(
+        "HDR AVIF exposure must be finite and in [-128, 128] EV");
+  }
+```
+
+输入中的负数归零；NaN 与正负无穷同样会使整次编码失败，避免把数值错误
+静默伪装成黑色。曝光后用固定线性矩阵把
+Rec.709/sRGB primaries 转成 Rec.2020 primaries。令转换后的
 $m=\max(R,G,B)$，目标最大亮度为
 
 $$
@@ -232,7 +265,7 @@ $c_2=2413/128$、$c_3=2392/128$。PQ component signals 再按 BT.2020 NCL
 
 - 输入 AVIF 解码、profile 验证和 HDR AVIF 编码：
   [`src/image_io.cpp`](../../src/image_io.cpp)
-- 输入纹理的硬件 sRGB 解码与过滤配置：
+- 输入纹理的 float HDR 上传、硬件 sRGB 解码与过滤配置：
   [`make_texture`](../../src/optix_renderer.cpp)
 - spp 平均和首命中 guide：
   [`__raygen__pathtrace`](../../src/device_programs.cu)

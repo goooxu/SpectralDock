@@ -25,31 +25,11 @@ class RgbaImage:
         self.size = (width, height)
         self._rgba = rgba
 
-    def copy(self) -> "RgbaImage":
-        return RgbaImage(self.width, self.height, self._rgba)
-
-    def tobytes(self) -> bytes:
-        return self._rgba
-
-    def getpixel(self, coordinate: tuple[int, int]) -> tuple[int, int, int, int]:
-        x, y = coordinate
-        offset = (y * self.width + x) * 4
-        return tuple(self._rgba[offset : offset + 4])
-
     def getdata(self):
         return (
             tuple(self._rgba[offset : offset + 4])
             for offset in range(0, len(self._rgba), 4)
         )
-
-    def crop(self, box: tuple[int, int, int, int]) -> "RgbaImage":
-        left, top, right, bottom = box
-        pixels = bytearray()
-        for y in range(top, bottom):
-            start = (y * self.width + left) * 4
-            end = (y * self.width + right) * 4
-            pixels.extend(self._rgba[start:end])
-        return RgbaImage(right - left, bottom - top, bytes(pixels))
 
 
 class FloatRgbImage:
@@ -86,18 +66,7 @@ class FloatRgbImage:
 
 
 def read_avif_rgba(path: Path) -> tuple[int, int, bytes, dict]:
-    decoded = _native.read_avif(os.fspath(path))
-    if isinstance(decoded, dict):
-        width = decoded["width"]
-        height = decoded["height"]
-        rgba = decoded.get("rgba", decoded.get("pixels"))
-        metadata = decoded.get("metadata", decoded)
-    else:
-        if len(decoded) == 3:
-            width, height, rgba = decoded
-            metadata = {}
-        else:
-            width, height, rgba, metadata = decoded
+    width, height, rgba, metadata = _native.read_avif(os.fspath(path))
     rgba = bytes(rgba)
     if len(rgba) != int(width) * int(height) * 4:
         raise RuntimeError(

@@ -38,11 +38,13 @@ contributors. This Markdown sidecar is licensed under Apache-2.0.
 ## `environments/radiance-pavilion.hdr`
 
 - Runtime size and encoding: 2048 x 1024 Radiance RGBE, linear Rec.709 RGB,
-  `FORMAT=32-bit_rle_rgbe`, `-Y 1024 +X 2048`, modern per-component scanline
-  RLE.
-- Runtime byte size: 2,876,893 bytes.
+  explicit Rec.709/D65
+  `PRIMARIES=0.6400 0.3300 0.3000 0.6000 0.1500 0.0600 0.3127 0.3290`,
+  `FORMAT=32-bit_rle_rgbe`, `-Y 1024 +X 2048`, modern per-component
+  scanline RLE.
+- Runtime byte size: 2,876,959 bytes.
 - Runtime SHA-256:
-  `33b6e651abbacbf7458aac0c2610f96705a763251a1699e5548615ca36dbf6d7`.
+  `d0f26d10f7b4d732ae20488e67ba7ce40354e1c791f625ea8baaa8a53f8e0737`.
 - Deterministic rebuild:
   `python3 tools/generate_hdr_environment.py`.
 - Construction: an analytical sunset coast combines a cool zenith, layered
@@ -57,11 +59,13 @@ contributors. This Markdown sidecar is licensed under Apache-2.0.
 ## `environments/assembly-hall-noon.hdr`
 
 - Runtime size and encoding: 2048 x 1024 Radiance RGBE, linear Rec.709 RGB,
-  `FORMAT=32-bit_rle_rgbe`, `-Y 1024 +X 2048`, modern per-component scanline
-  RLE.
-- Runtime byte size: 249,620 bytes.
+  explicit Rec.709/D65
+  `PRIMARIES=0.6400 0.3300 0.3000 0.6000 0.1500 0.0600 0.3127 0.3290`,
+  `FORMAT=32-bit_rle_rgbe`, `-Y 1024 +X 2048`, modern per-component
+  scanline RLE.
+- Runtime byte size: 249,686 bytes.
 - Runtime SHA-256:
-  `032f091333a6035ec2898430aec6d7b8decb8cdc2667edde52fed4040812fb07`.
+  `f931b478aae7e95f0dab598992ff259791bf55f067f3789a94fcd8c6bb4ff144`.
 - Construction and rebuild: the deterministic Python generator
   `python3 tools/generate_assembly_hall_assets.py` analytically constructs a
   bright noon sky and compact solar hotspot in a fixed equirectangular order.

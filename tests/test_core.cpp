@@ -4,6 +4,8 @@
 #include "spectraldock/scene_builder.h"
 #include "spectraldock/scene_types.h"
 
+#include <avif/avif.h>
+
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -73,6 +75,236 @@ void write_binary(const std::filesystem::path& path,
     throw std::runtime_error("cannot write test file: " + path.string());
 }
 
+void write_12bit_hdr_avif(const std::filesystem::path& path,
+                          double neutral_nits,
+                          avifColorPrimaries primaries =
+                              AVIF_COLOR_PRIMARIES_BT2020) {
+  auto image = std::unique_ptr<avifImage, decltype(&avifImageDestroy)>(
+      avifImageCreate(1, 1, 12, AVIF_PIXEL_FORMAT_YUV444),
+      &avifImageDestroy);
+  if (!image) throw std::runtime_error("cannot create test AVIF image");
+  image->colorPrimaries = primaries;
+  image->transferCharacteristics =
+      AVIF_TRANSFER_CHARACTERISTICS_SMPTE2084;
+  image->matrixCoefficients = AVIF_MATRIX_COEFFICIENTS_BT2020_NCL;
+  image->yuvRange = AVIF_RANGE_FULL;
+  avifResult result = avifImageAllocatePlanes(image.get(), AVIF_PLANES_YUV);
+  if (result != AVIF_RESULT_OK) {
+    throw std::runtime_error(std::string("cannot allocate test AVIF: ") +
+                             avifResultToString(result));
+  }
+
+  constexpr double m1 = 2610.0 / 16384.0;
+  constexpr double m2 = 2523.0 / 32.0;
+  constexpr double c1 = 3424.0 / 4096.0;
+  constexpr double c2 = 2413.0 / 128.0;
+  constexpr double c3 = 2392.0 / 128.0;
+  const double normalized = std::clamp(neutral_nits / 10000.0, 0.0, 1.0);
+  const double powered = std::pow(normalized, m1);
+  const double pq = std::pow((c1 + c2 * powered) /
+                                 (1.0 + c3 * powered),
+                             m2);
+  const std::uint16_t luma = static_cast<std::uint16_t>(
+      std::floor(pq * 4095.0 + 0.5));
+  const std::uint16_t neutral_chroma = 2048u;
+  std::memcpy(image->yuvPlanes[AVIF_CHAN_Y], &luma, sizeof(luma));
+  std::memcpy(image->yuvPlanes[AVIF_CHAN_U], &neutral_chroma,
+              sizeof(neutral_chroma));
+  std::memcpy(image->yuvPlanes[AVIF_CHAN_V], &neutral_chroma,
+              sizeof(neutral_chroma));
+
+  auto encoder = std::unique_ptr<avifEncoder, decltype(&avifEncoderDestroy)>(
+      avifEncoderCreate(), &avifEncoderDestroy);
+  if (!encoder) throw std::runtime_error("cannot create test AVIF encoder");
+  encoder->codecChoice = AVIF_CODEC_CHOICE_AOM;
+  encoder->maxThreads = 1;
+  encoder->speed = 6;
+  encoder->quality = AVIF_QUALITY_LOSSLESS;
+  encoder->qualityAlpha = AVIF_QUALITY_LOSSLESS;
+  avifRWData encoded = AVIF_DATA_EMPTY;
+  result = avifEncoderWrite(encoder.get(), image.get(), &encoded);
+  if (result != AVIF_RESULT_OK) {
+    avifRWDataFree(&encoded);
+    throw std::runtime_error(std::string("cannot encode test AVIF: ") +
+                             avifResultToString(result));
+  }
+  const std::vector<std::uint8_t> payload(encoded.data,
+                                          encoded.data + encoded.size);
+  avifRWDataFree(&encoded);
+  write_binary(path, payload);
+}
+
+using TestAvifImage =
+    std::unique_ptr<avifImage, decltype(&avifImageDestroy)>;
+using TestAvifEncoder =
+    std::unique_ptr<avifEncoder, decltype(&avifEncoderDestroy)>;
+
+void fill_test_avif_plane(avifImage& image, int channel,
+                          std::uint16_t value) {
+  std::uint8_t* plane = avifImagePlane(&image, channel);
+  const std::uint32_t row_bytes = avifImagePlaneRowBytes(&image, channel);
+  const std::uint32_t width = avifImagePlaneWidth(&image, channel);
+  const std::uint32_t height = avifImagePlaneHeight(&image, channel);
+  if (plane == nullptr || row_bytes == 0 || width == 0 || height == 0)
+    throw std::runtime_error("cannot access test AVIF plane");
+  for (std::uint32_t y = 0; y < height; ++y) {
+    std::uint8_t* row = plane + static_cast<std::size_t>(y) * row_bytes;
+    if (image.depth > 8) {
+      std::fill_n(reinterpret_cast<std::uint16_t*>(row), width, value);
+    } else {
+      std::fill_n(row, width, static_cast<std::uint8_t>(value));
+    }
+  }
+}
+
+TestAvifImage make_test_avif_image(std::uint32_t depth = 8,
+                                   bool with_alpha = false) {
+  TestAvifImage image(
+      avifImageCreate(2, 2, depth, AVIF_PIXEL_FORMAT_YUV444),
+      &avifImageDestroy);
+  if (!image) throw std::runtime_error("cannot create test AVIF image");
+  image->yuvRange = AVIF_RANGE_FULL;
+  if (depth == 16) {
+    image->colorPrimaries = AVIF_COLOR_PRIMARIES_BT2020;
+    image->transferCharacteristics =
+        AVIF_TRANSFER_CHARACTERISTICS_SMPTE2084;
+    image->matrixCoefficients = AVIF_MATRIX_COEFFICIENTS_BT2020_NCL;
+  } else {
+    image->colorPrimaries = AVIF_COLOR_PRIMARIES_BT709;
+    image->transferCharacteristics = AVIF_TRANSFER_CHARACTERISTICS_SRGB;
+    image->matrixCoefficients = AVIF_MATRIX_COEFFICIENTS_BT709;
+  }
+  const avifPlanesFlags planes =
+      with_alpha ? AVIF_PLANES_ALL : AVIF_PLANES_YUV;
+  const avifResult result = avifImageAllocatePlanes(image.get(), planes);
+  if (result != AVIF_RESULT_OK) {
+    throw std::runtime_error(std::string("cannot allocate test AVIF: ") +
+                             avifResultToString(result));
+  }
+  const std::uint32_t maximum =
+      depth == 16 ? 65535u : ((std::uint32_t{1} << depth) - 1u);
+  const std::uint16_t neutral =
+      static_cast<std::uint16_t>(std::uint32_t{1} << (depth - 1u));
+  fill_test_avif_plane(*image, AVIF_CHAN_Y,
+                       static_cast<std::uint16_t>(maximum / 4u));
+  fill_test_avif_plane(*image, AVIF_CHAN_U, neutral);
+  fill_test_avif_plane(*image, AVIF_CHAN_V, neutral);
+  if (with_alpha) {
+    fill_test_avif_plane(*image, AVIF_CHAN_A,
+                         static_cast<std::uint16_t>(maximum / 2u));
+  }
+  return image;
+}
+
+TestAvifEncoder make_test_avif_encoder() {
+  TestAvifEncoder encoder(avifEncoderCreate(), &avifEncoderDestroy);
+  if (!encoder) throw std::runtime_error("cannot create test AVIF encoder");
+  encoder->codecChoice = AVIF_CODEC_CHOICE_AOM;
+  encoder->maxThreads = 1;
+  encoder->speed = AVIF_SPEED_FASTEST;
+  encoder->quality = AVIF_QUALITY_LOSSLESS;
+  encoder->qualityAlpha = AVIF_QUALITY_LOSSLESS;
+  encoder->qualityGainMap = AVIF_QUALITY_LOSSLESS;
+  return encoder;
+}
+
+void finish_test_avif(const std::filesystem::path& path,
+                      avifEncoder& encoder) {
+  avifRWData encoded = AVIF_DATA_EMPTY;
+  const avifResult result = avifEncoderFinish(&encoder, &encoded);
+  if (result != AVIF_RESULT_OK) {
+    avifRWDataFree(&encoded);
+    throw std::runtime_error(std::string("cannot finish test AVIF: ") +
+                             avifResultToString(result) + ": " +
+                             encoder.diag.error);
+  }
+  const std::vector<std::uint8_t> payload(encoded.data,
+                                          encoded.data + encoded.size);
+  avifRWDataFree(&encoded);
+  write_binary(path, payload);
+}
+
+void write_test_avif(
+    const std::filesystem::path& path, const avifImage& image,
+    avifSampleTransformRecipe sample_transform = AVIF_SAMPLE_TRANSFORM_NONE) {
+  TestAvifEncoder encoder = make_test_avif_encoder();
+  encoder->sampleTransformRecipe = sample_transform;
+  const avifResult result = avifEncoderAddImage(
+      encoder.get(), &image, 1, AVIF_ADD_IMAGE_FLAG_SINGLE);
+  if (result != AVIF_RESULT_OK) {
+    throw std::runtime_error(std::string("cannot add test AVIF image: ") +
+                             avifResultToString(result) + ": " +
+                             encoder->diag.error);
+  }
+  finish_test_avif(path, *encoder);
+}
+
+void write_animated_test_avif(const std::filesystem::path& path) {
+  TestAvifImage image = make_test_avif_image();
+  TestAvifEncoder encoder = make_test_avif_encoder();
+  encoder->timescale = 1;
+  avifResult result = avifEncoderAddImage(
+      encoder.get(), image.get(), 1, AVIF_ADD_IMAGE_FLAG_NONE);
+  if (result != AVIF_RESULT_OK) {
+    throw std::runtime_error(std::string("cannot add first AVIF frame: ") +
+                             avifResultToString(result) + ": " +
+                             encoder->diag.error);
+  }
+  fill_test_avif_plane(*image, AVIF_CHAN_Y, 192u);
+  result = avifEncoderAddImage(encoder.get(), image.get(), 1,
+                               AVIF_ADD_IMAGE_FLAG_NONE);
+  if (result != AVIF_RESULT_OK) {
+    throw std::runtime_error(std::string("cannot add second AVIF frame: ") +
+                             avifResultToString(result) + ": " +
+                             encoder->diag.error);
+  }
+  finish_test_avif(path, *encoder);
+}
+
+void attach_test_gain_map(avifImage& image) {
+  image.gainMap = avifGainMapCreate();
+  if (image.gainMap == nullptr)
+    throw std::runtime_error("cannot create test AVIF gain map");
+  image.gainMap->image =
+      avifImageCreate(2, 2, 8, AVIF_PIXEL_FORMAT_YUV444);
+  if (image.gainMap->image == nullptr)
+    throw std::runtime_error("cannot create test AVIF gain-map image");
+  avifImage& gain_image = *image.gainMap->image;
+  gain_image.yuvRange = AVIF_RANGE_FULL;
+  gain_image.colorPrimaries = AVIF_COLOR_PRIMARIES_UNSPECIFIED;
+  gain_image.transferCharacteristics =
+      AVIF_TRANSFER_CHARACTERISTICS_UNSPECIFIED;
+  gain_image.matrixCoefficients = AVIF_MATRIX_COEFFICIENTS_BT709;
+  const avifResult result =
+      avifImageAllocatePlanes(&gain_image, AVIF_PLANES_YUV);
+  if (result != AVIF_RESULT_OK) {
+    throw std::runtime_error(std::string("cannot allocate test gain map: ") +
+                             avifResultToString(result));
+  }
+  fill_test_avif_plane(gain_image, AVIF_CHAN_Y, 128u);
+  fill_test_avif_plane(gain_image, AVIF_CHAN_U, 128u);
+  fill_test_avif_plane(gain_image, AVIF_CHAN_V, 128u);
+
+  avifGainMap& gain_map = *image.gainMap;
+  gain_map.useBaseColorSpace = AVIF_TRUE;
+  gain_map.baseHdrHeadroom = {0, 1};
+  gain_map.alternateHdrHeadroom = {3, 1};
+  for (std::size_t channel = 0; channel < 3; ++channel) {
+    gain_map.gainMapMin[channel] = {0, 1};
+    gain_map.gainMapMax[channel] = {1, 1};
+    gain_map.gainMapGamma[channel] = {1, 1};
+    gain_map.baseOffset[channel] = {0, 1};
+    gain_map.alternateOffset[channel] = {0, 1};
+  }
+  gain_map.altColorPrimaries = AVIF_COLOR_PRIMARIES_BT2020;
+  gain_map.altTransferCharacteristics =
+      AVIF_TRANSFER_CHARACTERISTICS_SMPTE2084;
+  gain_map.altMatrixCoefficients = AVIF_MATRIX_COEFFICIENTS_BT2020_NCL;
+  gain_map.altYUVRange = AVIF_RANGE_FULL;
+  gain_map.altDepth = 10;
+  gain_map.altPlaneCount = 3;
+}
+
 void expect_error(const std::function<void()>& action,
                   const std::string& expected,
                   const std::string& message) {
@@ -83,6 +315,116 @@ void expect_error(const std::function<void()>& action,
     throw std::runtime_error(message + ": unexpected error: " + error.what());
   }
   throw std::runtime_error(message + ": expected an exception");
+}
+
+void expect_texture_profile_rejection(const std::filesystem::path& path,
+                                      const std::string& expected,
+                                      const std::string& message) {
+  expect_error(
+      [&] { (void)load_avif_rgba8(path, TextureColorSpace::Srgb); },
+      expected, message + " through the 8-bit loader");
+  expect_error([&] { (void)load_hdr_avif_rgba32f(path); }, expected,
+               message + " through the HDR loader");
+}
+
+void test_avif_texture_profile_rejections() {
+  TemporaryDirectory directory;
+
+  const auto animation = directory.path / "animation.avif";
+  write_animated_test_avif(animation);
+  expect_texture_profile_rejection(
+      animation, "animated or layered images are not supported",
+      "two-frame AVIF rejection");
+
+  const auto icc = directory.path / "icc.avif";
+  {
+    TestAvifImage image = make_test_avif_image();
+    std::array<std::uint8_t, 132> profile{};
+    profile[3] = static_cast<std::uint8_t>(profile.size());
+    profile[36] = 'a';
+    profile[37] = 'c';
+    profile[38] = 's';
+    profile[39] = 'p';
+    const avifResult result =
+        avifImageSetProfileICC(image.get(), profile.data(), profile.size());
+    if (result != AVIF_RESULT_OK) {
+      throw std::runtime_error(std::string("cannot set test ICC profile: ") +
+                               avifResultToString(result));
+    }
+    write_test_avif(icc, *image);
+  }
+  expect_texture_profile_rejection(icc, "ICC profiles are forbidden",
+                                   "ICC AVIF rejection");
+
+  struct TransformCase {
+    avifTransformFlag flag;
+    const char* name;
+  };
+  const std::array<TransformCase, 4> transforms{{
+      {AVIF_TRANSFORM_PASP, "pasp"},
+      {AVIF_TRANSFORM_CLAP, "clap"},
+      {AVIF_TRANSFORM_IROT, "irot"},
+      {AVIF_TRANSFORM_IMIR, "imir"},
+  }};
+  for (const TransformCase& transform : transforms) {
+    const auto path = directory.path /
+                      (std::string("transform-") + transform.name + ".avif");
+    TestAvifImage image = make_test_avif_image();
+    image->transformFlags = transform.flag;
+    switch (transform.flag) {
+      case AVIF_TRANSFORM_PASP:
+        image->pasp = {2u, 1u};
+        break;
+      case AVIF_TRANSFORM_CLAP:
+        image->clap = {2u, 1u, 2u, 1u, 0u, 1u, 0u, 1u};
+        break;
+      case AVIF_TRANSFORM_IROT:
+        image->irot.angle = 1u;
+        break;
+      case AVIF_TRANSFORM_IMIR:
+        image->imir.axis = 1u;
+        break;
+      case AVIF_TRANSFORM_NONE:
+        throw std::runtime_error("invalid test AVIF transform case");
+    }
+    write_test_avif(path, *image);
+    expect_texture_profile_rejection(
+        path,
+        "pixel-aspect, clean-aperture, rotation, and mirroring transforms "
+        "are forbidden",
+        std::string(transform.name) + " AVIF rejection");
+  }
+
+  const auto premultiplied = directory.path / "premultiplied.avif";
+  {
+    TestAvifImage image = make_test_avif_image(8, true);
+    image->alphaPremultiplied = AVIF_TRUE;
+    write_test_avif(premultiplied, *image);
+  }
+  expect_texture_profile_rejection(
+      premultiplied, "premultiplied alpha is forbidden",
+      "premultiplied-alpha AVIF rejection");
+
+  const auto gain_map = directory.path / "gain-map.avif";
+  {
+    TestAvifImage image = make_test_avif_image();
+    attach_test_gain_map(*image);
+    write_test_avif(gain_map, *image);
+  }
+  expect_texture_profile_rejection(gain_map,
+                                   "gain maps are not supported",
+                                   "gain-map AVIF rejection");
+
+  const auto sample_transform = directory.path / "sample-transform.avif";
+  {
+    TestAvifImage image = make_test_avif_image(16);
+    write_test_avif(sample_transform, *image,
+                    AVIF_SAMPLE_TRANSFORM_BIT_DEPTH_EXTENSION_8B_8B);
+  }
+  expect_texture_profile_rejection(
+      sample_transform,
+      "Sample Transform and other 16-bit images are not supported",
+      "16-bit Sample Transform AVIF rejection");
 }
 
 Vec3 apply_transform(const TransformMatrix3x4& matrix, Vec3 point) {
@@ -112,7 +454,8 @@ void test_image_io() {
       255, 0, 0, 255, 0, 255, 0, 128,
       0, 0, 255, 64, 255, 255, 255, 0};
   write_texture_avif_rgba8(srgb_avif, 2, 2, expected, true);
-  const ImageRgba8 srgb = load_avif_rgba8(srgb_avif, true);
+  const ImageRgba8 srgb =
+      load_avif_rgba8(srgb_avif, TextureColorSpace::Srgb);
   check(srgb.width == 2 && srgb.height == 2, "sRGB AVIF dimensions");
   check(srgb.pixels == expected, "sRGB AVIF lossless RGBA round trip");
   const DecodedAvif srgb_info = read_avif_rgba8(srgb_avif);
@@ -135,12 +478,15 @@ void test_image_io() {
 
   const auto linear_avif = temporary("-linear.avif");
   write_texture_avif_rgba8(linear_avif, 2, 2, expected, false);
-  const ImageRgba8 linear = load_avif_rgba8(linear_avif, false);
+  const ImageRgba8 linear =
+      load_avif_rgba8(linear_avif, TextureColorSpace::Linear);
   check(linear.pixels == expected, "linear AVIF lossless RGBA round trip");
   const DecodedAvif linear_info = read_avif_rgba8(linear_avif);
   check(linear_info.info.transfer_characteristics == 8 &&
             linear_info.info.matrix_coefficients == 0,
         "linear AVIF canonical profile");
+  expect_error([&] { (void)load_hdr_avif_rgba32f(linear_avif); },
+               "10-bit or 12-bit", "8-bit AVIF rejects HDR decoding");
   std::filesystem::remove(linear_avif);
 
   const auto hdr_avif = temporary("-hdr.avif");
@@ -159,7 +505,48 @@ void test_image_io() {
   check(decoded_hdr.image.pixels[0] > decoded_hdr.image.pixels[1] + 40 &&
             decoded_hdr.image.pixels[5] > decoded_hdr.image.pixels[4] + 20,
         "HDR AVIF colorful vectors retain BT.2020 chroma saturation");
+  expect_error(
+      [&] {
+        (void)load_avif_rgba8(hdr_avif, TextureColorSpace::Srgb);
+      },
+      "sRGB textures must be 8-bit", "HDR AVIF rejects sRGB decoding");
+  expect_error(
+      [&] {
+        (void)load_avif_rgba8(hdr_avif, TextureColorSpace::Hdr);
+      },
+      "require load_hdr_avif_rgba32f",
+      "HDR AVIF rejects byte-oriented decoding");
   std::filesystem::remove(hdr_avif);
+
+  const auto bright_hdr_avif = temporary("-bright-hdr.avif");
+  write_hdr_avif_rgb32f(bright_hdr_avif, 1, 1, {4.0f, 4.0f, 4.0f},
+                        0.0f);
+  const ImageRgba32f bright_hdr =
+      load_hdr_avif_rgba32f(bright_hdr_avif);
+  check(bright_hdr.width == 1 && bright_hdr.height == 1 &&
+            bright_hdr.pixels.size() == 4,
+        "10-bit HDR AVIF float dimensions");
+  check(bright_hdr.pixels[0] > 2.5f && bright_hdr.pixels[1] > 2.5f &&
+            bright_hdr.pixels[2] > 2.5f,
+        "10-bit HDR AVIF retains values above diffuse white");
+  near(bright_hdr.pixels[3], 1.0f, 0.0f,
+       "opaque HDR AVIF alpha is one");
+  std::filesystem::remove(bright_hdr_avif);
+
+  const auto hdr12_avif = temporary("-12bit-hdr.avif");
+  write_12bit_hdr_avif(hdr12_avif, 406.0);
+  const ImageRgba32f hdr12 = load_hdr_avif_rgba32f(hdr12_avif);
+  near(hdr12.pixels[0], 2.0f, 0.03f, "12-bit HDR AVIF red");
+  near(hdr12.pixels[1], 2.0f, 0.03f, "12-bit HDR AVIF green");
+  near(hdr12.pixels[2], 2.0f, 0.03f, "12-bit HDR AVIF blue");
+  std::filesystem::remove(hdr12_avif);
+
+  const auto wrong_cicp_avif = temporary("-wrong-cicp.avif");
+  write_12bit_hdr_avif(wrong_cicp_avif, 406.0,
+                       AVIF_COLOR_PRIMARIES_BT709);
+  expect_error([&] { (void)load_hdr_avif_rgba32f(wrong_cicp_avif); },
+               "CICP 9/16/9", "HDR AVIF rejects conflicting CICP");
+  std::filesystem::remove(wrong_cicp_avif);
 
   const auto black_hdr_avif = temporary("-black-hdr.avif");
   const HdrAvifInfo black_hdr = write_hdr_avif_rgb32f(
@@ -171,6 +558,54 @@ void test_image_io() {
         "black HDR AVIF keeps explicit known CLLI upper bounds");
   std::filesystem::remove(black_hdr_avif);
 
+  const auto nonfinite_hdr_avif = temporary("-nonfinite-hdr.avif");
+  expect_error(
+      [&] {
+        write_hdr_avif_rgb32f(
+            nonfinite_hdr_avif, 1, 1,
+            {0.0f, std::numeric_limits<float>::quiet_NaN(), 0.0f}, 0.0f);
+      },
+      "non-finite RGB sample at pixel 0, channel G",
+      "NaN HDR output rejection");
+  expect_error(
+      [&] {
+        write_hdr_avif_rgb32f(
+            nonfinite_hdr_avif, 1, 1,
+            {0.0f, 0.0f, std::numeric_limits<float>::infinity()}, 0.0f);
+      },
+      "non-finite RGB sample at pixel 0, channel B",
+      "infinite HDR output rejection");
+  check(!std::filesystem::exists(nonfinite_hdr_avif),
+        "non-finite HDR output is rejected before file creation");
+
+  const auto invalid_exposure_hdr_avif =
+      temporary("-invalid-exposure-hdr.avif");
+  expect_error(
+      [&] {
+        write_hdr_avif_rgb32f(invalid_exposure_hdr_avif, 1, 1,
+                              {1.0f, 1.0f, 1.0f}, 129.0f);
+      },
+      "[-128, 128] EV", "high HDR exposure rejection");
+  expect_error(
+      [&] {
+        write_hdr_avif_rgb32f(invalid_exposure_hdr_avif, 1, 1,
+                              {1.0f, 1.0f, 1.0f}, -129.0f);
+      },
+      "[-128, 128] EV", "low HDR exposure rejection");
+  check(!std::filesystem::exists(invalid_exposure_hdr_avif),
+        "invalid HDR exposure is rejected before file creation");
+
+  const auto exposure_boundary_hdr_avif =
+      temporary("-exposure-boundary-hdr.avif");
+  const float inverse_high_exposure = std::ldexp(1.0f, -128);
+  const HdrAvifInfo exposure_boundary = write_hdr_avif_rgb32f(
+      exposure_boundary_hdr_avif, 1, 1,
+      {inverse_high_exposure, 0.0f, 0.0f},
+      kMaximumExposureEv);
+  check(exposure_boundary.max_cll == 128,
+        "maximum supported exposure applies exact 2^EV scaling");
+  std::filesystem::remove(exposure_boundary_hdr_avif);
+
   expect_error(
       [&] { write_texture_avif_rgba8(temporary(".png"), 1, 1, expected, true); },
       ".avif extension", "PNG extension rejection");
@@ -179,7 +614,9 @@ void test_image_io() {
 void test_hdr_and_sampling_distributions() {
   TemporaryDirectory directory;
   const std::string header =
-      "#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 1 +X 2\n";
+      "#?RADIANCE\n"
+      "PRIMARIES=0.6400 0.3300 0.3000 0.6000 0.1500 0.0600 0.3127 0.3290\n"
+      "FORMAT=32-bit_rle_rgbe\n\n-Y 1 +X 2\n";
   std::vector<std::uint8_t> raw(header.begin(), header.end());
   raw.insert(raw.end(), {128, 64, 32, 129, 0, 0, 0, 0});
   const auto path = directory.path / "raw.hdr";
@@ -196,6 +633,130 @@ void test_hdr_and_sampling_distributions() {
   write_binary(trailing_path, trailing);
   expect_error([&] { (void)load_radiance_hdr(trailing_path); },
                "unexpected trailing data", "trailing HDR rejection");
+
+  const auto write_hdr = [&](const std::string& name,
+                             const std::string& variables,
+                             std::array<std::uint8_t, 4> rgbe) {
+    const std::string file_header =
+        "#?RADIANCE\n" + variables +
+        "FORMAT=32-bit_rle_rgbe\n\n-Y 1 +X 1\n";
+    std::vector<std::uint8_t> contents(file_header.begin(), file_header.end());
+    contents.insert(contents.end(), rgbe.begin(), rgbe.end());
+    const auto result = directory.path / name;
+    write_binary(result, contents);
+    return result;
+  };
+  const std::string rec709_primaries =
+      "PRIMARIES=0.6400 0.3300 0.3000 0.6000 0.1500 0.0600 0.3127 0.3290\n";
+
+  const auto corrected_path = write_hdr(
+      "corrected.hdr",
+      "EXPOSURE=2\nEXPOSURE=4\nCOLORCORR=2 4 8\n"
+      "COLORCORR=0.5 0.5 0.5\n" +
+          rec709_primaries,
+      {128, 64, 32, 129});
+  const ImageRgb32f corrected = load_radiance_hdr(corrected_path);
+  near(corrected.pixels[0], 0.125f, 1.0e-6f,
+       "cumulative HDR exposure correction");
+  near(corrected.pixels[1], 0.03125f, 1.0e-6f,
+       "cumulative HDR green color correction");
+  near(corrected.pixels[2], 0.0078125f, 1.0e-6f,
+       "cumulative HDR blue color correction");
+
+  const auto legacy_path = write_hdr("legacy-default.hdr", "",
+                                     {128, 128, 128, 129});
+  const ImageRgb32f legacy = load_radiance_hdr(legacy_path);
+  near(legacy.pixels[0], 1.0f, 2.0e-5f,
+       "default Radiance primaries adapt neutral red");
+  near(legacy.pixels[1], 1.0f, 2.0e-5f,
+       "default Radiance primaries adapt neutral green");
+  near(legacy.pixels[2], 1.0f, 2.0e-5f,
+       "default Radiance primaries adapt neutral blue");
+
+  const auto permuted_path = write_hdr(
+      "permuted-primaries.hdr",
+      "PRIMARIES=0.3000 0.6000 0.1500 0.0600 0.6400 0.3300 0.3127 0.3290\n",
+      {128, 64, 32, 129});
+  const ImageRgb32f permuted = load_radiance_hdr(permuted_path);
+  near(permuted.pixels[0], 0.25f, 2.0e-5f,
+       "declared primaries convert blue to Rec.709 red");
+  near(permuted.pixels[1], 1.0f, 2.0e-5f,
+       "declared primaries convert red to Rec.709 green");
+  near(permuted.pixels[2], 0.5f, 2.0e-5f,
+       "declared primaries convert green to Rec.709 blue");
+
+  expect_error(
+      [&] {
+        (void)load_radiance_hdr(write_hdr(
+            "zero-exposure.hdr", "EXPOSURE=0\n" + rec709_primaries,
+            {128, 128, 128, 129}));
+      },
+      "EXPOSURE", "non-positive HDR exposure rejection");
+  expect_error(
+      [&] {
+        (void)load_radiance_hdr(write_hdr(
+            "nonfinite-correction.hdr",
+            "COLORCORR=1 inf 1\n" + rec709_primaries,
+            {128, 128, 128, 129}));
+      },
+      "COLORCORR", "non-finite HDR color correction rejection");
+  expect_error(
+      [&] {
+        (void)load_radiance_hdr(write_hdr(
+            "overflow-exposure.hdr",
+            "EXPOSURE=1e308\nEXPOSURE=1e308\n" + rec709_primaries,
+            {128, 128, 128, 129}));
+      },
+      "cumulative EXPOSURE", "overflowing cumulative HDR exposure rejection");
+  expect_error(
+      [&] {
+        (void)load_radiance_hdr(write_hdr(
+            "duplicate-primaries.hdr", rec709_primaries + rec709_primaries,
+            {128, 128, 128, 129}));
+      },
+      "duplicate PRIMARIES", "duplicate HDR primaries rejection");
+  expect_error(
+      [&] {
+        (void)load_radiance_hdr(write_hdr(
+            "short-primaries.hdr",
+            "PRIMARIES=0.64 0.33 0.30 0.60 0.15 0.06 0.3127\n",
+            {128, 128, 128, 129}));
+      },
+      "malformed PRIMARIES", "short HDR primaries rejection");
+  expect_error(
+      [&] {
+        (void)load_radiance_hdr(write_hdr(
+            "singular-primaries.hdr",
+            "PRIMARIES=0.64 0.33 0.64 0.33 0.15 0.06 0.3127 0.3290\n",
+            {128, 128, 128, 129}));
+      },
+      "singular", "singular HDR primaries rejection");
+  expect_error(
+      [&] {
+        (void)load_radiance_hdr(write_hdr(
+            "invalid-white.hdr",
+            "PRIMARIES=0.64 0.33 0.30 0.60 0.15 0.06 0.9 0.2\n",
+            {128, 128, 128, 129}));
+      },
+      "malformed PRIMARIES", "invalid HDR white point rejection");
+  const ImageRgb32f wide_gamut = load_radiance_hdr(write_hdr(
+      "out-of-gamut.hdr",
+      "PRIMARIES=0.708 0.292 0.170 0.797 0.131 0.046 0.3127 0.3290\n",
+      {128, 0, 0, 129}));
+  near(wide_gamut.pixels[0], 1.66049f, 2.0e-4f,
+       "wide-gamut HDR preserves representable red energy");
+  near(wide_gamut.pixels[1], 0.0f, 0.0f,
+       "wide-gamut HDR clips negative Rec.709 green");
+  near(wide_gamut.pixels[2], 0.0f, 0.0f,
+       "wide-gamut HDR clips negative Rec.709 blue");
+  expect_error(
+      [&] {
+        (void)load_radiance_hdr(write_hdr(
+            "overflowing-sample.hdr",
+            "COLORCORR=1e-300 1e-300 1e-300\n" + rec709_primaries,
+            {128, 128, 128, 129}));
+      },
+      "out-of-range", "unrepresentable HDR conversion result rejection");
 
   Light small;
   small.type = LightType::Sphere;
@@ -707,7 +1268,9 @@ vt 0 1
 f 1/1 2/2 3/3
 )obj");
   const std::string header =
-      "#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 1 +X 1\n";
+      "#?RADIANCE\n"
+      "PRIMARIES=0.6400 0.3300 0.3000 0.6000 0.1500 0.0600 0.3127 0.3290\n"
+      "FORMAT=32-bit_rle_rgbe\n\n-Y 1 +X 1\n";
   std::vector<std::uint8_t> pixels(header.begin(), header.end());
   pixels.insert(pixels.end(), {128, 128, 128, 129});
   write_binary(result.environment, pixels);
@@ -738,13 +1301,14 @@ f 1/1/1 2/2/1 3/3/1
 
   SceneBuilder builder;
   const std::int32_t base_color = builder.add_image_texture(
-      "base-color", assets.image, true, TextureWrap::Repeat,
+      "base-color", assets.image, TextureColorSpace::Srgb, TextureWrap::Repeat,
       TextureWrap::MirroredRepeat);
   const std::int32_t metallic_roughness = builder.add_image_texture(
-      "metallic-roughness", assets.image, false, TextureWrap::ClampToEdge,
-      TextureWrap::Repeat);
+      "metallic-roughness", assets.image, TextureColorSpace::Linear,
+      TextureWrap::ClampToEdge, TextureWrap::Repeat);
   const std::int32_t normal = builder.add_image_texture(
-      "normal", assets.image, false, TextureWrap::MirroredRepeat,
+      "normal", assets.image, TextureColorSpace::Linear,
+      TextureWrap::MirroredRepeat,
       TextureWrap::ClampToEdge);
 
   expect_error(
@@ -775,18 +1339,19 @@ f 1/1/1 2/2/1 3/3/1
   const std::shared_ptr<const Scene> scene = builder.finish();
   check(scene->textures.size() == 3 && scene->materials.size() == 1,
         "PBR scene resource dimensions");
-  check(scene->textures[base_color].srgb &&
+  check(scene->textures[base_color].color_space == TextureColorSpace::Srgb &&
             scene->textures[base_color].wrap_u == TextureWrap::Repeat &&
             scene->textures[base_color].wrap_v ==
                 TextureWrap::MirroredRepeat,
         "PBR base-color texture color space and wraps retained");
-  check(!scene->textures[metallic_roughness].srgb &&
+  check(scene->textures[metallic_roughness].color_space ==
+                TextureColorSpace::Linear &&
             scene->textures[metallic_roughness].wrap_u ==
                 TextureWrap::ClampToEdge &&
             scene->textures[metallic_roughness].wrap_v ==
                 TextureWrap::Repeat,
         "PBR metallic-roughness texture color space and wraps retained");
-  check(!scene->textures[normal].srgb &&
+  check(scene->textures[normal].color_space == TextureColorSpace::Linear &&
             scene->textures[normal].wrap_u ==
                 TextureWrap::MirroredRepeat &&
             scene->textures[normal].wrap_v == TextureWrap::ClampToEdge,
@@ -811,6 +1376,63 @@ f 1/1/1 2/2/1 3/3/1
         "normal-mapped PBR OBJ material slot retains UV/tangent data");
 }
 
+void test_scene_builder_hdr_texture_contract() {
+  TemporaryDirectory directory;
+  const Assets assets = make_assets(directory);
+  SceneBuilder builder;
+  const std::int32_t hdr = builder.add_image_texture(
+      "hdr-emission", assets.image, TextureColorSpace::Hdr);
+
+  expect_error(
+      [&] {
+        builder.add_material("hdr-lambert", MaterialType::Lambertian, hdr,
+                             Vec3{1.0f}, Vec3{0.0f}, 0.5f, 1.5f,
+                             Vec3{0.0f});
+      },
+      "only by emitter", "Lambertian material rejects HDR texture");
+  expect_error(
+      [&] {
+        builder.add_pbr_material("hdr-base", hdr, kInvalidId, kInvalidId,
+                                 Vec3{1.0f}, 0.0f, 1.0f, 1.0f);
+      },
+      "only by emitter", "PBR base color rejects HDR texture");
+  expect_error(
+      [&] {
+        builder.add_pbr_material("hdr-metallic-roughness", kInvalidId, hdr,
+                                 kInvalidId, Vec3{1.0f}, 0.0f, 1.0f, 1.0f);
+      },
+      "color_space='linear'",
+      "PBR metallic-roughness rejects HDR texture");
+  expect_error(
+      [&] {
+        builder.add_pbr_material("hdr-normal", kInvalidId, kInvalidId, hdr,
+                                 Vec3{1.0f}, 0.0f, 1.0f, 1.0f);
+      },
+      "color_space='linear'", "PBR normal map rejects HDR texture");
+
+  const std::int32_t emitter = builder.add_material(
+      "hdr-emitter", MaterialType::Emitter, hdr, Vec3{1.0f}, Vec3{0.0f},
+      0.5f, 1.5f, Vec3{0.0f});
+  expect_error(
+      [&] {
+        builder.add_rectangle("hdr-alpha", {-1.0f, -1.0f, 0.0f},
+                              {-1.0f, 1.0f, 0.0f},
+                              {1.0f, 1.0f, 0.0f}, emitter, emitter, hdr,
+                              0.5f);
+      },
+      "cannot be used as alpha", "alpha mask rejects HDR texture");
+  builder.add_rectangle("emitter", {-1.0f, -1.0f, 0.0f},
+                        {-1.0f, 1.0f, 0.0f}, {1.0f, 1.0f, 0.0f}, emitter,
+                        emitter, kInvalidId, 0.5f);
+  set_camera_and_background(builder);
+  const std::shared_ptr<const Scene> scene = builder.finish();
+  check(scene->textures[hdr].color_space == TextureColorSpace::Hdr,
+        "HDR texture color space retained");
+  check(scene->materials[emitter].type == MaterialType::Emitter &&
+            max_component(scene->materials[emitter].emission) == 0.0f,
+        "texture-only emitter retains its established unit-multiplier contract");
+}
+
 void test_scene_builder_complete_scene() {
   TemporaryDirectory directory;
   const Assets assets = make_assets(directory);
@@ -823,7 +1445,8 @@ void test_scene_builder_complete_scene() {
   const std::int32_t mask =
       builder.add_constant_texture("mask", {1.0f, 1.0f, 1.0f});
   const std::int32_t image =
-      builder.add_image_texture("image", assets.image, true);
+      builder.add_image_texture("image", assets.image,
+                                TextureColorSpace::Srgb);
   const std::int32_t diffuse = add_diffuse(builder, "diffuse", image);
   const std::int32_t metal = builder.add_material(
       "metal", MaterialType::Metal, kInvalidId, {0.8f, 0.6f, 0.2f},
@@ -910,8 +1533,10 @@ void test_scene_builder_complete_scene() {
         "integrator mode");
   near(scene->integrator.clamp_direct, 12.0f, 0.0f,
        "integrator direct clamp");
+  near(scene->integrator.clamp_indirect, 3.0f, 0.0f,
+       "integrator indirect clamp");
   check(scene->textures[1].type == TextureType::Image &&
-            scene->textures[1].srgb,
+            scene->textures[1].color_space == TextureColorSpace::Srgb,
         "image texture fields");
   check(scene->materials[2].type == MaterialType::Dielectric &&
             scene->materials[4].type == MaterialType::Water,
@@ -1035,6 +1660,22 @@ void test_scene_builder_configuration_and_resources() {
   near(environment_scene->background.environment_rotation_degrees, -45.0f,
        0.0f, "environment rotation");
   SceneBuilder bad_background;
+  const auto uppercase_environment = directory.path / "studio.HDR";
+  const auto disguised_environment = directory.path / "studio.hdr.avif";
+  write_text(uppercase_environment, "not an HDR file");
+  write_text(disguised_environment, "not an HDR file");
+  expect_error(
+      [&] {
+        bad_background.set_environment_background(uppercase_environment,
+                                                  1.0f, 0.0f, 0.0f);
+      },
+      "lowercase .hdr extension", "uppercase environment suffix rejection");
+  expect_error(
+      [&] {
+        bad_background.set_environment_background(disguised_environment,
+                                                  1.0f, 0.0f, 0.0f);
+      },
+      "lowercase .hdr extension", "disguised environment suffix rejection");
   expect_error(
       [&] {
         bad_background.set_environment_background(
@@ -1044,6 +1685,25 @@ void test_scene_builder_configuration_and_resources() {
   expect_error(
       [&] { bad_background.set_constant_background({-1.0f, 0.0f, 0.0f}, 0.0f); },
       "non-negative", "negative constant background");
+  expect_error(
+      [&] {
+        bad_background.set_constant_background(Vec3{0.0f},
+                                               kMaximumExposureEv + 1.0f);
+      },
+      "[-128, 128] EV", "constant background exposure range");
+  expect_error(
+      [&] {
+        bad_background.set_sky_background(
+            Vec3{0.0f}, Vec3{0.0f}, {1.0f, 0.0f, 0.0f}, Vec3{0.0f},
+            2.0f, kMinimumExposureEv - 1.0f);
+      },
+      "[-128, 128] EV", "sky background exposure range");
+  expect_error(
+      [&] {
+        bad_background.set_environment_background(
+            assets.environment, 1.0f, 0.0f, kMaximumExposureEv + 1.0f);
+      },
+      "[-128, 128] EV", "environment background exposure range");
   expect_error(
       [&] {
         bad_background.set_sky_background(
@@ -1068,7 +1728,7 @@ void test_scene_builder_configuration_and_resources() {
   expect_error(
       [&] {
         resources.add_image_texture("missing", directory.path / "none.avif",
-                                    true);
+                                    TextureColorSpace::Srgb);
       },
       "asset not found", "missing image texture");
   expect_error(
@@ -1442,11 +2102,13 @@ int main() {
   try {
     test_vectors();
     test_image_io();
+    test_avif_texture_profile_rejections();
     test_hdr_and_sampling_distributions();
     test_obj_loader();
     test_obj_material_bindings();
     test_transform_order();
     test_scene_builder_pbr_materials();
+    test_scene_builder_hdr_texture_contract();
     test_scene_builder_complete_scene();
     test_scene_builder_configuration_and_resources();
     test_scene_builder_geometry_validation();

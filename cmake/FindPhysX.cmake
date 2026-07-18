@@ -12,15 +12,6 @@
 
 include(FindPackageHandleStandardArgs)
 
-if(NOT PHYSX_ROOT)
-  set(PHYSX_ROOT "$ENV{PHYSX_ROOT}")
-endif()
-if(NOT PHYSX_ROOT)
-  set(PHYSX_ROOT "/opt/physx")
-endif()
-if(NOT PHYSX_BUILD_TYPE)
-  set(PHYSX_BUILD_TYPE "checked")
-endif()
 set(PHYSX_LIBRARY_DIR "${PHYSX_LIBRARY_DIR}" CACHE PATH
   "PhysX static-library directory (optional layout override)")
 set(PHYSX_RUNTIME_DIR "${PHYSX_RUNTIME_DIR}" CACHE PATH

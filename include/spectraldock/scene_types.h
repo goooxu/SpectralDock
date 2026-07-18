@@ -14,8 +14,18 @@
 namespace spectraldock {
 
 constexpr std::int32_t kInvalidId = -1;
+// Exposure is evaluated as 2^EV by the HDR AVIF encoder. Keeping the public
+// range explicit prevents callers from relying on an undocumented saturation
+// step at extreme finite values.
+constexpr float kMinimumExposureEv = -128.0f;
+constexpr float kMaximumExposureEv = 128.0f;
+// Shared AVIF input/output bounds. The total-pixel cap keeps pixel-buffer
+// allocations bounded independently of image aspect ratio.
+constexpr std::uint32_t kMaximumAvifDimension = 16384;
+constexpr std::uint32_t kMaximumAvifPixels = std::uint32_t{1} << 25;
 
 enum class TextureType : std::uint32_t { Constant, Image };
+enum class TextureColorSpace : std::uint32_t { Linear, Srgb, Hdr };
 enum class TextureWrap : std::uint32_t {
   ClampToEdge,
   Repeat,
@@ -71,7 +81,9 @@ struct Background {
   std::filesystem::path environment_path;
   float environment_intensity = 1.0f;
   float environment_rotation_degrees = 0.0f;
-  float exposure = 0.0f;       // Exposure value in stops (EV).
+  // Exposure value in stops (EV), constrained to
+  // [kMinimumExposureEv, kMaximumExposureEv].
+  float exposure = 0.0f;
 };
 
 struct Integrator {
@@ -83,17 +95,15 @@ struct Integrator {
 };
 
 struct Texture {
-  std::string name;
   TextureType type = TextureType::Constant;
   Vec3 color{1.0f};
   std::filesystem::path image_path;
-  bool srgb = true;
+  TextureColorSpace color_space = TextureColorSpace::Srgb;
   TextureWrap wrap_u = TextureWrap::ClampToEdge;
   TextureWrap wrap_v = TextureWrap::ClampToEdge;
 };
 
 struct Material {
-  std::string name;
   MaterialType type = MaterialType::Lambertian;
   std::int32_t texture_id = kInvalidId;
   Vec3 base_color{1.0f};
@@ -167,7 +177,6 @@ struct TriangleMesh {
 
 struct MeshResource {
   std::string name;
-  std::filesystem::path path;
   TriangleMesh mesh;
   // Empty preserves the legacy per-instance front/back material path. When
   // populated, each entry is the global Scene material id for the matching
@@ -297,6 +306,16 @@ struct ImageRgba8 {
   bool empty() const noexcept { return width == 0 || height == 0 || pixels.empty(); }
 };
 
+struct ImageRgba32f {
+  std::uint32_t width = 0;
+  std::uint32_t height = 0;
+  std::vector<float> pixels;
+
+  bool empty() const noexcept {
+    return width == 0 || height == 0 || pixels.empty();
+  }
+};
+
 struct AvifImageInfo {
   std::uint32_t bit_depth = 0;
   std::string yuv_format;
@@ -316,9 +335,15 @@ struct DecodedAvif {
   AvifImageInfo info;
 };
 
-// AVIF texture pixels use top-to-bottom RGBA byte order. The color-space flag
-// is part of the file contract, not a request to transform sample codes.
-ImageRgba8 load_avif_rgba8(const std::filesystem::path& path, bool srgb);
+// SDR AVIF texture pixels use top-to-bottom RGBA byte order. The color-space
+// value is part of the file contract, not a request to reinterpret sample
+// codes. TextureColorSpace::Hdr is rejected by this byte-oriented loader.
+ImageRgba8 load_avif_rgba8(const std::filesystem::path& path,
+                           TextureColorSpace color_space);
+// HDR AVIF input is decoded to top-to-bottom, scene-linear Rec.709 RGBA.
+// The renderer's diffuse white convention is 203 cd/m2 == 1.0. Image inputs
+// are limited to 16384 pixels per dimension and 2^25 pixels in total.
+ImageRgba32f load_hdr_avif_rgba32f(const std::filesystem::path& path);
 DecodedAvif read_avif_rgba8(const std::filesystem::path& path);
 void write_texture_avif_rgba8(const std::filesystem::path& path,
                               std::uint32_t width,
@@ -339,6 +364,7 @@ struct HdrAvifInfo {
 
 // Maps top-to-bottom linear Rec.709 RGB floats to the renderer's fixed
 // 10-bit Rec.2020/PQ, 4:4:4, full-range, lossless AVIF output profile.
+// Exposure must be finite and in [kMinimumExposureEv, kMaximumExposureEv].
 HdrAvifInfo write_hdr_avif_rgb32f(const std::filesystem::path& path,
                                   std::uint32_t width,
                                   std::uint32_t height,

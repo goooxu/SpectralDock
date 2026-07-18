@@ -40,9 +40,11 @@ vendored 第三方源码，不适用仓库级 Apache-2.0；两个文件顶部保
   `python3 tools/generate_mascot.py [--output PATH] [--manifest PATH]`
 - 零依赖确定性 HDR 环境生成器：
   `python3 tools/generate_hdr_environment.py [--output PATH]`
-- 零依赖确定性 Showcase Panel 生成器：
+- 确定性 Showcase Panel 生成器（AVIF 编码需先激活已构建的
+  SpectralDock native extension）：
   `python3 tools/generate_showcase_panel.py [--output-dir PATH]`
-- 零依赖确定性 Assembly Hall HDR/alpha 生成器：
+- 确定性 Assembly Hall HDR/alpha 生成器（alpha AVIF 编码需先激活
+  已构建的 SpectralDock native extension）：
   `python3 tools/generate_assembly_hall_assets.py [--hdr-output PATH] [--alpha-output PATH]`
 - 视觉资产 CC0 范围与官方法典链接：
   [`assets/examples/models/CC0-1.0.txt`](../assets/examples/models/CC0-1.0.txt)
@@ -55,8 +57,8 @@ vendored 第三方源码，不适用仓库级 Apache-2.0；两个文件顶部保
 | `planet-ember.avif` | 1774×887、2,407,774 bytes、8 bit、BT.709/sRGB、4:4:4 full、AV1 lossless | `12feceb14a29b0aba84152eb564f382c6212fc941b7a79e2bab2a677ede21fbc` |
 | `models/sparky/sparky_albedo.avif` | 1024×1024、8,604 bytes、8 bit RGB（decoder 合成不透明 alpha）、BT.709/sRGB、4:4:4 full、AV1 lossless | `1ef9ac86df962af208ec37f8401939a9fe195fa0043c9f12fed6638fe720f2be` |
 | `models/spot/spot_texture.avif` | 1024×1024、65,222 bytes、8 bit、BT.709/sRGB、4:4:4 full、AV1 lossless | `9cb5eb3a7a184a7085c93d330698b9df324697db83a083b343a771f55b42fc16` |
-| `environments/radiance-pavilion.hdr` | 2048×1024 Radiance RGBE，modern RLE | `33b6e651abbacbf7458aac0c2610f96705a763251a1699e5548615ca36dbf6d7` |
-| `environments/assembly-hall-noon.hdr` | 2048×1024 Radiance RGBE，modern RLE | `032f091333a6035ec2898430aec6d7b8decb8cdc2667edde52fed4040812fb07` |
+| `environments/radiance-pavilion.hdr` | 2048×1024、2,876,959 bytes、Radiance RGBE，显式 Rec.709/D65 `PRIMARIES`，modern RLE | `d0f26d10f7b4d732ae20488e67ba7ce40354e1c791f625ea8baaa8a53f8e0737` |
+| `environments/assembly-hall-noon.hdr` | 2048×1024、249,686 bytes、Radiance RGBE，显式 Rec.709/D65 `PRIMARIES`，modern RLE | `f931b478aae7e95f0dab598992ff259791bf55f067f3789a94fcd8c6bb4ff144` |
 | `textures/assembly-hall-gear-alpha.avif` | 1024×1024、3,835 bytes、8 bit RGBA、BT.709/linear/identity、4:4:4 full、AV1 lossless | `0a4ed9b5a52510da6b9a707f8e307b706516c8696798f5fe6cb3161e09730592` |
 | `models/showcase-panel/showcase-panel-normal.avif` | 1024×1024、262,480 bytes、8 bit、BT.709/linear/identity、4:4:4 full、OpenGL/+Y、AV1 lossless | `c9e4f7488fce3f84c021985e62224e1657eb82d814d06e52879c6e60b2f56740` |
 | `models/showcase-panel/showcase-panel-metallic-roughness.avif` | 1024×1024、6,197 bytes、8 bit、BT.709/linear/identity、4:4:4 full、G=roughness、B=metallic、AV1 lossless | `a2c09a209e4f0d49e194ab0c482fb2cf56e58d2315d4268eabb47232a4f7acee` |
@@ -82,17 +84,22 @@ vendored 第三方源码，不适用仓库级 Apache-2.0；两个文件顶部保
 `radiance-pavilion.hdr` 不是 AI 生成图。它由 Python 标准库生成器按固定
 球面解析公式构造冷色天顶、暖色分层云、低角度金色夕阳、暗青海面、太阳
 反光带和远岛剪影，再按固定顺序转换为 RGBE 与 modern RLE；
+header 显式声明实际使用的 Rec.709/D65 `PRIMARIES`，
 文件不含时间戳或机器相关元数据。生成器按 Apache-2.0 提供，明确列出的
 `.hdr` 输出按 CC0-1.0 提供。
 
 `assembly-hall-noon.hdr` 与 `assembly-hall-gear-alpha.avif` 也不是 AI 生成图。
-同一个 Python 标准库生成器分别构造带小面积正午太阳热点的线性 RGBE 环境，
-以及后墙齿轮的确定性 RGBA alpha mask；输出不含时间戳或机器相关元数据。
+同一个生成器用 Python 标准库分别构造带小面积正午太阳热点的线性 RGBE
+环境和后墙齿轮的确定性 RGBA alpha mask，再通过项目 native
+extension 中的固定 libavif/AOM 路径编码 alpha AVIF；HDR header
+显式声明实际使用的 Rec.709/D65 `PRIMARIES`，输出不含时间戳或机器
+相关元数据。
 HDR 由环境重要性采样使用，AVIF 通过 rectangle 的 alpha 裁剪路径使用；二者
 按 CC0-1.0 提供，生成器按 Apache-2.0 提供。
 
-两张 Showcase Panel AVIF 也不是 AI 生成图；它们由 Python 标准库生成器按
-整数算法确定性构造。normal map 使用渲染器约定的 OpenGL/+Y tangent-space
+两张 Showcase Panel AVIF 也不是 AI 生成图；生成器用 Python 标准库的整数
+算法确定性构造像素，再通过项目 native extension 中的固定
+libavif/AOM 路径编码。normal map 使用渲染器约定的 OpenGL/+Y tangent-space
 法线，metallic-roughness map 是 linear 数据贴图，G 通道表示 roughness、B
 通道表示 metallic，R 通道固定为未使用值。两图均为 1024×1024 RGB8，不带
 色彩 profile，场景必须通过 typed texture API 按 linear 数据读取，不能执行

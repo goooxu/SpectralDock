@@ -37,7 +37,7 @@ class SceneBuilder {
   std::int32_t add_constant_texture(const std::string& name, Vec3 color);
   std::int32_t add_image_texture(const std::string& name,
                                  const std::filesystem::path& path,
-                                 bool srgb,
+                                 TextureColorSpace color_space,
                                  TextureWrap wrap_u = TextureWrap::ClampToEdge,
                                  TextureWrap wrap_v = TextureWrap::ClampToEdge);
   std::int32_t add_material(const std::string& name, MaterialType type,

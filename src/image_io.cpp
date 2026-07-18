@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <limits>
@@ -21,7 +22,6 @@
 namespace spectraldock {
 namespace {
 
-constexpr std::uint32_t kMaximumTextureDimension = 16384;
 constexpr double kDiffuseWhiteNits = 203.0;
 constexpr double kPeakNits = 1000.0;
 
@@ -93,10 +93,15 @@ std::size_t checked_sample_count(std::uint32_t width, std::uint32_t height,
     throw std::runtime_error(std::string(description) +
                              " dimensions must be non-zero");
   }
-  if (width > kMaximumTextureDimension ||
-      height > kMaximumTextureDimension) {
+  if (width > kMaximumAvifDimension || height > kMaximumAvifDimension) {
     throw std::runtime_error(std::string(description) +
                              " dimensions exceed the 16384-pixel limit");
+  }
+  const std::uint64_t pixel_count =
+      static_cast<std::uint64_t>(width) * height;
+  if (pixel_count > kMaximumAvifPixels) {
+    throw std::runtime_error(std::string(description) +
+                             " pixel count exceeds the 2^25 limit");
   }
   if (static_cast<std::size_t>(width) >
       std::numeric_limits<std::size_t>::max() / channels /
@@ -104,7 +109,7 @@ std::size_t checked_sample_count(std::uint32_t width, std::uint32_t height,
     throw std::runtime_error(std::string(description) +
                              " dimensions overflow host address space");
   }
-  return static_cast<std::size_t>(width) * height * channels;
+  return static_cast<std::size_t>(pixel_count) * channels;
 }
 
 std::uint32_t encoder_thread_count() {
@@ -185,61 +190,157 @@ bool transfer_is_unspecified_or(avifTransferCharacteristics actual,
          actual == expected;
 }
 
-void validate_texture_profile(const avifDecoder& decoder,
-                              const std::filesystem::path& path, bool srgb) {
+[[noreturn]] void reject_texture(const std::filesystem::path& path,
+                                 const std::string& reason) {
+  throw std::runtime_error("unsupported AVIF texture '" + path.string() +
+                           "': " + reason);
+}
+
+void validate_texture_container(const avifDecoder& decoder,
+                                const std::filesystem::path& path) {
   const avifImage& image = *decoder.image;
-  const auto reject = [&](const std::string& reason) {
-    throw std::runtime_error("unsupported AVIF texture '" + path.string() +
-                             "': " + reason);
-  };
   if (decoder.imageCount != 1 || decoder.imageSequenceTrackPresent ||
       decoder.progressiveState != AVIF_PROGRESSIVE_STATE_UNAVAILABLE) {
-    reject("animated or layered images are not supported");
+    reject_texture(path, "animated or layered images are not supported");
   }
   if (image.width == 0 || image.height == 0 ||
-      image.width > kMaximumTextureDimension ||
-      image.height > kMaximumTextureDimension) {
-    reject("dimensions must be in [1, 16384]");
+      image.width > kMaximumAvifDimension ||
+      image.height > kMaximumAvifDimension) {
+    reject_texture(path, "dimensions must be in [1, 16384]");
   }
-  if (image.depth != 8) reject("textures must be 8-bit");
-  if (image.yuvFormat == AVIF_PIXEL_FORMAT_NONE ||
-      image.yuvFormat == AVIF_PIXEL_FORMAT_YUV400) {
-    reject("textures must contain RGB color planes");
+  if (static_cast<std::uint64_t>(image.width) * image.height >
+      kMaximumAvifPixels) {
+    reject_texture(path, "pixel count must be at most 2^25");
+  }
+  if (image.depth == 16) {
+    reject_texture(path,
+                   "Sample Transform and other 16-bit images are not supported");
   }
   if (image.transformFlags != AVIF_TRANSFORM_NONE) {
-    reject("clean-aperture, rotation, and mirroring transforms are forbidden");
+    reject_texture(
+        path,
+        "pixel-aspect, clean-aperture, rotation, and mirroring transforms "
+        "are forbidden");
   }
-  if (image.alphaPremultiplied) reject("premultiplied alpha is forbidden");
-  if (image.icc.size != 0) reject("ICC profiles are forbidden");
-  if (image.gainMap != nullptr) reject("gain maps are not supported");
+  if (image.alphaPremultiplied) {
+    reject_texture(path, "premultiplied alpha is forbidden");
+  }
+  if (image.icc.size != 0) reject_texture(path, "ICC profiles are forbidden");
+  if (image.gainMap != nullptr) {
+    reject_texture(path, "gain maps are not supported");
+  }
+}
 
-  if (srgb) {
+DecoderPtr parse_avif(const std::filesystem::path& path) {
+  DecoderPtr decoder(avifDecoderCreate());
+  if (!decoder) throw std::runtime_error("cannot create AVIF decoder");
+  decoder->codecChoice = AVIF_CODEC_CHOICE_AOM;
+  decoder->maxThreads = encoder_thread_count();
+  decoder->imageSizeLimit = kMaximumAvifPixels;
+  decoder->imageDimensionLimit = kMaximumAvifDimension;
+  // Two is enough to distinguish a forbidden sequence/layered image from a
+  // canonical single image while still bounding hostile sample tables.
+  decoder->imageCountLimit = 2;
+  decoder->strictFlags = AVIF_STRICT_ENABLED;
+  decoder->ignoreExif = AVIF_TRUE;
+  decoder->ignoreXMP = AVIF_TRUE;
+  // libavif intentionally ignores Sample Transform derived images unless this
+  // flag is set. Request their declared 16-bit result so the container
+  // validator can reject it before decoding the component images instead of
+  // accepting a precision-losing base image by accident.
+  decoder->imageContentToDecode =
+      AVIF_IMAGE_CONTENT_COLOR_AND_ALPHA |
+      AVIF_IMAGE_CONTENT_SAMPLE_TRANSFORMS;
+  const std::string native_path = path.string();
+  avifResult result =
+      avifDecoderSetIOFile(decoder.get(), native_path.c_str());
+  if (result != AVIF_RESULT_OK) fail_avif("cannot open", path, result);
+  result = avifDecoderParse(decoder.get());
+  if (result != AVIF_RESULT_OK) fail_avif("cannot parse", path, result);
+  return decoder;
+}
+
+void decode_first_image(avifDecoder& decoder,
+                        const std::filesystem::path& path) {
+  const avifResult result = avifDecoderNextImage(&decoder);
+  if (result != AVIF_RESULT_OK) fail_avif("cannot decode", path, result);
+}
+
+void validate_texture_profile(const avifDecoder& decoder,
+                              const std::filesystem::path& path,
+                              TextureColorSpace color_space) {
+  validate_texture_container(decoder, path);
+  const avifImage& image = *decoder.image;
+  if (image.yuvFormat == AVIF_PIXEL_FORMAT_NONE ||
+      image.yuvFormat == AVIF_PIXEL_FORMAT_YUV400) {
+    reject_texture(path, "textures must contain RGB color planes");
+  }
+
+  if (color_space == TextureColorSpace::Hdr) {
+    if (image.depth != 10 && image.depth != 12) {
+      reject_texture(path, "HDR textures must be 10-bit or 12-bit");
+    }
+    if (image.colorPrimaries != AVIF_COLOR_PRIMARIES_BT2020 ||
+        image.transferCharacteristics !=
+            AVIF_TRANSFER_CHARACTERISTICS_SMPTE2084 ||
+        image.matrixCoefficients != AVIF_MATRIX_COEFFICIENTS_BT2020_NCL) {
+      reject_texture(path,
+                     "HDR textures require CICP 9/16/9 (BT.2020, PQ, "
+                     "BT.2020 non-constant luminance)");
+    }
+  } else if (color_space == TextureColorSpace::Srgb) {
+    if (image.depth != 8) {
+      reject_texture(path, "sRGB textures must be 8-bit");
+    }
     if (!primaries_are_unspecified_or(image.colorPrimaries,
                                       AVIF_COLOR_PRIMARIES_BT709)) {
-      reject("sRGB textures require BT.709 primaries");
+      reject_texture(path, "sRGB textures require BT.709 primaries");
     }
     if (!transfer_is_unspecified_or(image.transferCharacteristics,
                                     AVIF_TRANSFER_CHARACTERISTICS_SRGB)) {
-      reject("sRGB textures require the sRGB transfer characteristic");
+      reject_texture(path,
+                     "sRGB textures require the sRGB transfer characteristic");
     }
     const avifMatrixCoefficients matrix = image.matrixCoefficients;
     if (matrix != AVIF_MATRIX_COEFFICIENTS_IDENTITY &&
         matrix != AVIF_MATRIX_COEFFICIENTS_BT709 &&
         matrix != AVIF_MATRIX_COEFFICIENTS_BT601 &&
         matrix != AVIF_MATRIX_COEFFICIENTS_UNSPECIFIED) {
-      reject("sRGB texture matrix coefficients conflict with BT.709");
+      reject_texture(path,
+                     "sRGB texture matrix coefficients conflict with BT.709");
     }
-  } else {
+  } else if (color_space == TextureColorSpace::Linear) {
+    if (image.depth != 8) {
+      reject_texture(path, "linear textures must be 8-bit");
+    }
     if (image.yuvFormat != AVIF_PIXEL_FORMAT_YUV444 ||
         image.yuvRange != AVIF_RANGE_FULL ||
         image.matrixCoefficients != AVIF_MATRIX_COEFFICIENTS_IDENTITY ||
         image.transferCharacteristics !=
             AVIF_TRANSFER_CHARACTERISTICS_LINEAR ||
         image.colorPrimaries != AVIF_COLOR_PRIMARIES_BT709) {
-      reject("linear textures require 8-bit YUV444 full-range, BT.709 "
-             "primaries, linear transfer, and identity matrix");
+      reject_texture(path,
+                     "linear textures require 8-bit YUV444 full-range, "
+                     "BT.709 primaries, linear transfer, and identity matrix");
     }
+  } else {
+    reject_texture(path, "unknown texture color space");
   }
+}
+
+double pq_decode(double signal) {
+  constexpr double m1 = 2610.0 / 16384.0;
+  constexpr double m2 = 2523.0 / 32.0;
+  constexpr double c1 = 3424.0 / 4096.0;
+  constexpr double c2 = 2413.0 / 128.0;
+  constexpr double c3 = 2392.0 / 128.0;
+  const double powered =
+      std::pow(std::clamp(signal, 0.0, 1.0), 1.0 / m2);
+  const double denominator = c2 - c3 * powered;
+  if (!(denominator > 0.0)) return 10000.0;
+  const double normalized =
+      std::pow(std::max(powered - c1, 0.0) / denominator, 1.0 / m1);
+  return 10000.0 * normalized;
 }
 
 double pq_encode(double nits) {
@@ -274,34 +375,25 @@ std::uint16_t content_light_level(double value) {
 
 }  // namespace
 
-ImageRgba8 load_avif_rgba8(const std::filesystem::path& path, bool srgb) {
+ImageRgba8 load_avif_rgba8(const std::filesystem::path& path,
+                           TextureColorSpace color_space) {
   require_avif_path(path);
-  DecoderPtr decoder(avifDecoderCreate());
-  if (!decoder) throw std::runtime_error("cannot create AVIF decoder");
-  decoder->codecChoice = AVIF_CODEC_CHOICE_AOM;
-  decoder->maxThreads = encoder_thread_count();
-  decoder->imageDimensionLimit = kMaximumTextureDimension;
-  decoder->strictFlags = AVIF_STRICT_ENABLED;
-  const std::string native_path = path.string();
-  avifResult result = avifDecoderSetIOFile(decoder.get(), native_path.c_str());
-  if (result != AVIF_RESULT_OK) fail_avif("cannot open", path, result);
-  result = avifDecoderParse(decoder.get());
-  if (result != AVIF_RESULT_OK) fail_avif("cannot parse", path, result);
-  if (decoder->imageCount != 1 || decoder->imageSequenceTrackPresent ||
-      decoder->progressiveState != AVIF_PROGRESSIVE_STATE_UNAVAILABLE) {
-    throw std::runtime_error("unsupported AVIF texture '" + path.string() +
-                             "': animated or layered images are not supported");
+  if (color_space == TextureColorSpace::Hdr) {
+    throw std::runtime_error(
+        "HDR AVIF textures require load_hdr_avif_rgba32f: " +
+        path.string());
   }
-  result = avifDecoderNextImage(decoder.get());
-  if (result != AVIF_RESULT_OK) fail_avif("cannot decode", path, result);
-  validate_texture_profile(*decoder, path, srgb);
+  DecoderPtr decoder = parse_avif(path);
+  validate_texture_container(*decoder, path);
+  decode_first_image(*decoder, path);
+  validate_texture_profile(*decoder, path, color_space);
 
   avifRGBImage rgb;
   avifRGBImageSetDefaults(&rgb, decoder->image);
   rgb.format = AVIF_RGB_FORMAT_RGBA;
   rgb.depth = 8;
   RgbPixels pixels(rgb);
-  result = avifImageYUVToRGB(decoder->image, &rgb);
+  const avifResult result = avifImageYUVToRGB(decoder->image, &rgb);
   if (result != AVIF_RESULT_OK) fail_avif("cannot convert", path, result);
 
   ImageRgba8 output;
@@ -320,31 +412,81 @@ ImageRgba8 load_avif_rgba8(const std::filesystem::path& path, bool srgb) {
   return output;
 }
 
+ImageRgba32f load_hdr_avif_rgba32f(const std::filesystem::path& path) {
+  require_avif_path(path);
+  DecoderPtr decoder = parse_avif(path);
+  validate_texture_container(*decoder, path);
+  decode_first_image(*decoder, path);
+  validate_texture_profile(*decoder, path, TextureColorSpace::Hdr);
+
+  avifRGBImage rgb;
+  avifRGBImageSetDefaults(&rgb, decoder->image);
+  rgb.format = AVIF_RGB_FORMAT_RGBA;
+  rgb.depth = decoder->image->depth;
+  RgbPixels pixels(rgb);
+  const avifResult result = avifImageYUVToRGB(decoder->image, &rgb);
+  if (result != AVIF_RESULT_OK) fail_avif("cannot convert", path, result);
+
+  ImageRgba32f output;
+  output.width = rgb.width;
+  output.height = rgb.height;
+  const std::size_t count =
+      checked_sample_count(output.width, output.height, 4, "HDR AVIF texture");
+  output.pixels.resize(count);
+  const double maximum_code =
+      static_cast<double>((std::uint32_t{1} << rgb.depth) - 1u);
+  constexpr double kR2020To709[3][3] = {
+      {1.6604910021, -0.5876411388, -0.0728498633},
+      {-0.1245504745, 1.1328998971, -0.0083494227},
+      {-0.0181507634, -0.1005788980, 1.1187297614},
+  };
+  for (std::uint32_t y = 0; y < output.height; ++y) {
+    const std::uint8_t* row =
+        rgb.pixels + static_cast<std::size_t>(y) * rgb.rowBytes;
+    for (std::uint32_t x = 0; x < output.width; ++x) {
+      const std::uint8_t* source = row + static_cast<std::size_t>(x) * 8u;
+      std::uint16_t codes[4];
+      std::memcpy(codes, source, sizeof(codes));
+      const double r2020 = pq_decode(codes[0] / maximum_code);
+      const double g2020 = pq_decode(codes[1] / maximum_code);
+      const double b2020 = pq_decode(codes[2] / maximum_code);
+      const double linear2020[3] = {r2020, g2020, b2020};
+      const std::size_t offset =
+          (static_cast<std::size_t>(y) * output.width + x) * 4u;
+      for (std::size_t channel = 0; channel < 3; ++channel) {
+        double linear709 = 0.0;
+        for (std::size_t source_channel = 0; source_channel < 3;
+             ++source_channel) {
+          linear709 += kR2020To709[channel][source_channel] *
+                       linear2020[source_channel];
+        }
+        // BT.2020 colors outside the Rec.709 gamut cannot be represented by
+        // this renderer's scene-linear working space. Preserve their energy
+        // where representable and clip only negative components.
+        output.pixels[offset + channel] = static_cast<float>(
+            std::max(linear709, 0.0) / kDiffuseWhiteNits);
+      }
+      output.pixels[offset + 3u] = static_cast<float>(
+          std::clamp(codes[3] / maximum_code, 0.0, 1.0));
+    }
+  }
+  return output;
+}
+
 DecodedAvif read_avif_rgba8(const std::filesystem::path& path) {
   require_avif_path(path);
-  DecoderPtr decoder(avifDecoderCreate());
-  if (!decoder) throw std::runtime_error("cannot create AVIF decoder");
-  decoder->codecChoice = AVIF_CODEC_CHOICE_AOM;
-  decoder->maxThreads = encoder_thread_count();
-  decoder->imageDimensionLimit = kMaximumTextureDimension;
-  decoder->strictFlags = AVIF_STRICT_ENABLED;
-  const std::string native_path = path.string();
-  avifResult result = avifDecoderSetIOFile(decoder.get(), native_path.c_str());
-  if (result != AVIF_RESULT_OK) fail_avif("cannot open", path, result);
-  result = avifDecoderParse(decoder.get());
-  if (result != AVIF_RESULT_OK) fail_avif("cannot parse", path, result);
+  DecoderPtr decoder = parse_avif(path);
+  decode_first_image(*decoder, path);
   const bool animated =
       decoder->imageCount != 1 || decoder->imageSequenceTrackPresent ||
       decoder->progressiveState != AVIF_PROGRESSIVE_STATE_UNAVAILABLE;
-  result = avifDecoderNextImage(decoder.get());
-  if (result != AVIF_RESULT_OK) fail_avif("cannot decode", path, result);
 
   avifRGBImage rgb;
   avifRGBImageSetDefaults(&rgb, decoder->image);
   rgb.format = AVIF_RGB_FORMAT_RGBA;
   rgb.depth = 8;
   RgbPixels pixels(rgb);
-  result = avifImageYUVToRGB(decoder->image, &rgb);
+  const avifResult result = avifImageYUVToRGB(decoder->image, &rgb);
   if (result != AVIF_RESULT_OK) fail_avif("cannot convert", path, result);
 
   DecodedAvif output;
@@ -460,8 +602,10 @@ HdrAvifInfo write_hdr_avif_rgb32f(const std::filesystem::path& path,
                                   const std::vector<float>& pixels,
                                   float exposure) {
   require_avif_path(path);
-  if (!std::isfinite(exposure)) {
-    throw std::runtime_error("HDR AVIF exposure must be finite");
+  if (!std::isfinite(exposure) || exposure < kMinimumExposureEv ||
+      exposure > kMaximumExposureEv) {
+    throw std::runtime_error(
+        "HDR AVIF exposure must be finite and in [-128, 128] EV");
   }
   const std::size_t required =
       checked_sample_count(width, height, 3, "HDR AVIF");
@@ -469,6 +613,15 @@ HdrAvifInfo write_hdr_avif_rgb32f(const std::filesystem::path& path,
     throw std::runtime_error("cannot write HDR AVIF: expected " +
                              std::to_string(required) + " RGB floats, got " +
                              std::to_string(pixels.size()));
+  }
+  constexpr const char* kChannels = "RGB";
+  for (std::size_t index = 0; index < pixels.size(); ++index) {
+    if (!std::isfinite(pixels[index])) {
+      throw std::runtime_error(
+          "cannot write HDR AVIF: non-finite RGB sample at pixel " +
+          std::to_string(index / 3u) + ", channel " +
+          std::string(1, kChannels[index % 3u]));
+    }
   }
 
   ImagePtr image(avifImageCreate(width, height, 10,
@@ -482,8 +635,7 @@ HdrAvifInfo write_hdr_avif_rgb32f(const std::filesystem::path& path,
   avifResult result = avifImageAllocatePlanes(image.get(), AVIF_PLANES_YUV);
   if (result != AVIF_RESULT_OK) fail_avif("cannot allocate", path, result);
 
-  const double multiplier =
-      std::exp2(std::clamp(static_cast<double>(exposure), -128.0, 128.0));
+  const double multiplier = std::exp2(static_cast<double>(exposure));
   double maximum_light = 0.0;
   long double average_light_sum = 0.0;
   for (std::uint32_t y = 0; y < height; ++y) {
@@ -500,9 +652,7 @@ HdrAvifInfo write_hdr_avif_rgb32f(const std::filesystem::path& path,
       const std::size_t offset =
           (static_cast<std::size_t>(y) * width + x) * 3u;
       const auto clean = [&](float sample) {
-        return std::isfinite(sample) && sample > 0.0f
-                   ? static_cast<double>(sample) * multiplier
-                   : 0.0;
+        return sample > 0.0f ? static_cast<double>(sample) * multiplier : 0.0;
       };
       const double r709 = clean(pixels[offset + 0u]);
       const double g709 = clean(pixels[offset + 1u]);

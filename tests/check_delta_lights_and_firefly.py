@@ -8,7 +8,11 @@ from pathlib import Path
 
 from spectraldock import Renderer
 
-from avif_test_utils import assert_avif_dimensions, captured_linear_rgb
+from avif_test_utils import (
+    assert_avif_dimensions,
+    captured_linear_rgb,
+    read_avif_rgba,
+)
 
 
 WIDTH = 24
@@ -232,8 +236,10 @@ def point_contract(directory):
         raise RuntimeError("fixed-seed point-light linear capture is not deterministic")
 
 
-def hot_directional_renderer():
-    renderer, _ = receiver_renderer()
+def hot_directional_renderer(*, clamp_direct=64.0, clamp_indirect=16.0):
+    renderer, _ = receiver_renderer(
+        clamp_direct=clamp_direct, clamp_indirect=clamp_indirect
+    )
     renderer.light(
         name="hot",
         type="directional",
@@ -321,6 +327,33 @@ def clamp_contract(directory):
     ):
         raise RuntimeError("render clamp disable was not honored")
 
+    configured = hot_directional_renderer(
+        clamp_direct=12.0, clamp_indirect=3.0
+    )
+    _, configured_stats, _ = render(
+        configured, directory, "clamp-scene-defaults"
+    )
+    _, partial_stats, _ = render(
+        configured,
+        directory,
+        "clamp-partial-override",
+        clamp_direct=0.0,
+    )
+    _, restored_stats, _ = render(
+        configured, directory, "clamp-scene-defaults-restored"
+    )
+    if (
+        configured_stats["render"]["clamp_direct"] != 12.0
+        or configured_stats["render"]["clamp_indirect"] != 3.0
+        or partial_stats["render"]["clamp_direct"] != 0.0
+        or partial_stats["render"]["clamp_indirect"] != 3.0
+        or restored_stats["render"]["clamp_direct"] != 12.0
+        or restored_stats["render"]["clamp_indirect"] != 3.0
+    ):
+        raise RuntimeError(
+            "per-render clamp overrides did not preserve Scene defaults"
+        )
+
     _, quiet_stats, quiet_on = render(
         quiet_directional_renderer(), directory, "clamp-no-trigger"
     )
@@ -333,7 +366,6 @@ def clamp_contract(directory):
     )
     if quiet_on != quiet_off or any(quiet_stats["firefly"].values()):
         raise RuntimeError("an untriggered clamp changed linear output")
-
     finite_pixels, finite_stats, finite_on = render(
         quiet_finite_renderer(), directory, "clamp-no-trigger-finite", spp=8
     )
@@ -387,6 +419,59 @@ def clamp_contract(directory):
         raise RuntimeError("indirect fixture incremented the direct counter")
     if indirect_stats["firefly"]["indirect_clamped_contributions"] <= 0:
         raise RuntimeError("indirect firefly counter did not increment")
+
+
+def background_exposure_renderer(exposure):
+    renderer = Renderer()
+    renderer.camera(
+        look_from=(0.0, 0.0, 3.0),
+        look_at=(0.0, 0.0, 0.0),
+        up=(0.0, 1.0, 0.0),
+        vfov=35.0,
+        aperture=0.0,
+        focus_distance=3.0,
+    )
+    renderer.integrator(
+        direct_light_sampling="importance",
+        clamp_direct=0.0,
+        clamp_indirect=0.0,
+    )
+    renderer.background(
+        type="constant", color=(0.25, 0.25, 0.25), exposure=exposure
+    )
+    material = renderer.material(
+        name="offscreen", type="lambertian", base_color=(0.0, 0.0, 0.0)
+    )
+    renderer.object(
+        name="offscreen",
+        type="sphere",
+        center=(100.0, 100.0, 100.0),
+        radius=1.0,
+        material=material,
+    )
+    return renderer
+
+
+def exposure_contract(directory):
+    _, _, zero_linear = render(
+        background_exposure_renderer(0.0), directory, "exposure-zero"
+    )
+    _, _, plus_one_linear = render(
+        background_exposure_renderer(1.0), directory, "exposure-plus-one"
+    )
+    if zero_linear != plus_one_linear:
+        raise RuntimeError("background exposure changed the linear render capture")
+
+    _, _, zero_rgba, _ = read_avif_rgba(directory / "exposure-zero.avif")
+    _, _, plus_one_rgba, _ = read_avif_rgba(
+        directory / "exposure-plus-one.avif"
+    )
+    zero_red = sum(zero_rgba[0::4])
+    plus_one_red = sum(plus_one_rgba[0::4])
+    if plus_one_red <= zero_red:
+        raise RuntimeError(
+            "Scene background exposure was not applied by HDR AVIF encoding"
+        )
 
 
 def rough_transmission_contract(directory):
@@ -485,6 +570,7 @@ def main():
         directional_contract(directory)
         point_contract(directory)
         clamp_contract(directory)
+        exposure_contract(directory)
         rough_transmission_contract(directory)
         water_beer_contract(directory)
     print("delta lights and firefly control checks passed")
